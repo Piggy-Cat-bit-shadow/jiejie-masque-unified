@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mh "github.com/metacubex/http"
+	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
 )
 
@@ -53,6 +54,7 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string) {
 	r.mu.Unlock()
 	defer func() {
 		_ = conn.Close()
+		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
 		_ = stream.Close()
 		r.mu.Lock()
 		delete(r.closers, conn)
@@ -66,6 +68,7 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string) {
 	go func() { _, _ = io.Copy(stream, conn); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
+	stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
 	_ = stream.Close()
 	<-done
 }
@@ -74,6 +77,9 @@ func (r *TCPRelay) Close() {
 	r.mu.Lock()
 	r.closed = true
 	for c := range r.closers {
+		if stream, ok := c.(*http3.Stream); ok {
+			stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
+		}
 		_ = c.Close()
 	}
 	r.mu.Unlock()

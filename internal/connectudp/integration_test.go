@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func integrationConfig(t *testing.T) Config {
 	return c
 }
 
-func startIntegrationServer(t *testing.T) (Config, string, context.CancelFunc) {
+func startIntegrationServer(t *testing.T) (Config, string, func()) {
 	t.Helper()
 	c := integrationConfig(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,18 +79,22 @@ func startIntegrationServer(t *testing.T) (Config, string, context.CancelFunc) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("server start timeout")
 	}
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-errCh:
-			if err != nil {
-				t.Errorf("server shutdown: %v", err)
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case err := <-errCh:
+				if err != nil {
+					t.Errorf("server shutdown: %v", err)
+				}
+			case <-time.After(4 * time.Second):
+				t.Error("server shutdown timeout")
 			}
-		case <-time.After(4 * time.Second):
-			t.Error("server shutdown timeout")
-		}
-	})
-	return c, addr, cancel
+		})
+	}
+	t.Cleanup(shutdown)
+	return c, addr, shutdown
 }
 
 func dialH3(t *testing.T, addr string) *http3.ClientConn {
@@ -117,7 +122,7 @@ func dialH3(t *testing.T, addr string) *http3.ClientConn {
 }
 
 func TestHTTP3ConnectUDPLoopback(t *testing.T) {
-	_, addr, _ := startIntegrationServer(t)
+	_, addr, shutdown := startIntegrationServer(t)
 	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
@@ -164,10 +169,11 @@ func TestHTTP3ConnectUDPLoopback(t *testing.T) {
 	if err != nil || !ok || string(out) != string(payload) {
 		t.Fatalf("roundtrip: %q %v", out, err)
 	}
+	shutdown()
 }
 
 func TestHTTP3TCPConnectLoopback(t *testing.T) {
-	_, addr, _ := startIntegrationServer(t)
+	_, addr, shutdown := startIntegrationServer(t)
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -208,4 +214,5 @@ func TestHTTP3TCPConnectLoopback(t *testing.T) {
 			t.Fatalf("roundtrip: %q", got)
 		}
 	}
+	shutdown()
 }
