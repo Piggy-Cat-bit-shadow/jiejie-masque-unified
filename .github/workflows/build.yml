@@ -54,6 +54,17 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o dist/jiejie-masque-linux-amd64 ./cmd/jiejie-masque
 
+      - name: Release binary gates
+        run: |
+          bytes=$(stat -c '%s' dist/jiejie-masque-linux-amd64)
+          echo "release_size_bytes=$bytes" >> "$GITHUB_STEP_SUMMARY"
+          du -h dist/jiejie-masque-linux-amd64
+          file dist/jiejie-masque-linux-amd64
+          readelf -S dist/jiejie-masque-linux-amd64 | grep -E 'debug|symtab' && exit 1 || true
+          go version -m dist/jiejie-masque-linux-amd64 | tee /tmp/modules.txt
+          if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi
+          if [ "$bytes" -ge $((64 * 1024 * 1024)) ]; then exit 1; fi
+
       - name: Stage systemd executables
         run: |
           sudo install -Dm755 dist/jiejie-masque-linux-amd64 /usr/local/bin/jiejie-masque

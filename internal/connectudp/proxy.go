@@ -20,6 +20,27 @@ const maxUDPPayloadSize = 1500
 
 var contextIDZero = quicvarint.Append([]byte{}, 0)
 
+func parseContextDatagram(data []byte) ([]byte, bool, error) {
+	id, n, err := quicvarint.Parse(data)
+	if err != nil {
+		return nil, false, err
+	}
+	if id != 0 || len(data[n:]) > maxUDPPayloadSize {
+		return nil, false, nil
+	}
+	return data[n:], true, nil
+}
+
+func buildContextDatagram(payload []byte) ([]byte, bool) {
+	if len(payload) > maxUDPPayloadSize {
+		return nil, false
+	}
+	b := make([]byte, 0, len(contextIDZero)+len(payload))
+	b = append(b, contextIDZero...)
+	b = append(b, payload...)
+	return b, true
+}
+
 type proxyEntry struct {
 	str  *http3.Stream
 	conn *net.UDPConn
@@ -202,19 +223,14 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream) error {
 			}
 			return err
 		}
-		contextID, n, err := quicvarint.Parse(data)
+		payload, ok, err := parseContextDatagram(data)
 		if err != nil {
 			return err
 		}
-		if contextID != 0 {
-			// Drop this datagram. We currently only support proxying of UDP payloads.
+		if !ok {
 			continue
 		}
-		if len(data[n:]) > maxUDPPayloadSize {
-			log.Printf("dropping datagram larger than MTU (%d > %d)", len(data[n:]), maxUDPPayloadSize)
-			continue
-		}
-		if _, err := conn.Write(data[n:]); err != nil {
+		if _, err := conn.Write(payload); err != nil {
 			return err
 		}
 	}
@@ -235,7 +251,11 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream) error {
 			log.Printf("dropping UDP packet larger than MTU")
 			continue
 		}
-		if err := str.SendDatagram(b[:len(contextIDZero)+n]); err != nil {
+		packet, ok := buildContextDatagram(b[len(contextIDZero) : len(contextIDZero)+n])
+		if !ok {
+			continue
+		}
+		if err := str.SendDatagram(packet); err != nil {
 			return err
 		}
 	}
