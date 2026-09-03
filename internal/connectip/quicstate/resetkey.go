@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/metacubex/quic-go"
 )
@@ -45,7 +46,14 @@ func LoadOrCreate(path string) (quic.StatelessResetKey, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			return LoadOrCreate(path)
+			for i := 0; i < 100; i++ {
+				if b, readErr := os.ReadFile(path); readErr == nil && len(b) == ResetKeySize {
+					copy(key[:], b)
+					return key, nil
+				}
+				time.Sleep(time.Millisecond)
+			}
+			return key, fmt.Errorf("stateless reset key remained incomplete after concurrent creation")
 		}
 		return key, fmt.Errorf("create stateless reset key: %w", err)
 	}

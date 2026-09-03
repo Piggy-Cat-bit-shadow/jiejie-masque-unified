@@ -41,7 +41,15 @@ func resetKey(path string) (*quic.StatelessResetKey, error) {
 	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
 		if errors.Is(e, os.ErrExist) {
-			return resetKey(path)
+			for i := 0; i < 100; i++ {
+				if b, readErr := os.ReadFile(path); readErr == nil && len(b) == len(quic.StatelessResetKey{}) {
+					var existing quic.StatelessResetKey
+					copy(existing[:], b)
+					return &existing, nil
+				}
+				time.Sleep(time.Millisecond)
+			}
+			return nil, fmt.Errorf("reset key remained incomplete after concurrent creation")
 		}
 		return nil, e
 	}
