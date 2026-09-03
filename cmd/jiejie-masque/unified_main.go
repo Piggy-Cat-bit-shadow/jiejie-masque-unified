@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	ipconfig "github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
 	"gopkg.in/yaml.v3"
 )
 
@@ -53,8 +54,28 @@ func main() {
 	if err := yaml.Unmarshal(b, &env); err != nil {
 		log.Fatal(err)
 	}
+	if strings.TrimSpace(env.Mode) == "connect-udp" {
+		c, err := connectudp.Load(*path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if os.Args[1] == "check-config" {
+			if err := c.Validate(true); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("mode: connect-udp\nvalidation: pass\n")
+			return
+		}
+		if os.Args[1] != "serve" {
+			log.Fatalf("unknown command %q", os.Args[1])
+		}
+		if err := connectudp.Serve(c); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if strings.TrimSpace(env.Mode) != "connect-ip" {
-		log.Fatalf("unsupported mode %q (connect-udp is not yet available)", env.Mode)
+		log.Fatalf("unsupported mode %q", env.Mode)
 	}
 	var c ipconfig.Config
 	if err := yaml.Unmarshal(b, &c); err != nil {

@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+      - "codex/**"
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -30,6 +34,14 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Dependency check
+        run: scripts/verify-deps.sh
+
+      - name: Systemd unit check
+        run: |
+          systemd-analyze verify contrib/jiejie-masque-connect-ip.service
+          systemd-analyze verify contrib/jiejie-masque-connect-udp.service
 
       - name: Build Linux amd64
         run: |
