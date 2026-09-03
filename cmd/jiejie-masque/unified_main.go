@@ -64,6 +64,9 @@ func main() {
 		log.Fatal(err)
 	}
 	if os.Args[1] == "check-config" {
+		if err := checkConfig(*path); err != nil {
+			log.Fatal(err)
+		}
 		fmt.Printf("mode: connect-ip\nvalidation: pass\n")
 		return
 	}

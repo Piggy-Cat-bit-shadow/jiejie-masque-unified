@@ -1,4 +1,4 @@
-name: release-build
+name: unified-build
 
 on:
   push:
@@ -39,30 +39,30 @@ jobs:
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w -buildid=" \
-            -o dist/masque-lite-linux-amd64 \
-            ./cmd/masque-lite
+            -o dist/jiejie-masque-linux-amd64 \
+            ./cmd/jiejie-masque
 
       - name: Generate SHA256
         run: |
           cd dist
-          sha256sum masque-lite-linux-amd64 > masque-lite-linux-amd64.sha256
+          sha256sum jiejie-masque-linux-amd64 > jiejie-masque-linux-amd64.sha256
 
       - name: Report artifact
         run: |
-          stat -c 'size: %s bytes' dist/masque-lite-linux-amd64
-          file dist/masque-lite-linux-amd64
-          cat dist/masque-lite-linux-amd64.sha256
+          stat -c 'size: %s bytes' dist/jiejie-masque-linux-amd64
+          file dist/jiejie-masque-linux-amd64
+          cat dist/jiejie-masque-linux-amd64.sha256
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: masque-lite-linux-amd64
-          path: dist/masque-lite-linux-amd64
+          name: jiejie-masque-linux-amd64
+          path: dist/jiejie-masque-linux-amd64
           if-no-files-found: error
 
       - name: Upload SHA256
         uses: actions/upload-artifact@v4
         with:
-          name: masque-lite-linux-amd64.sha256
-          path: dist/masque-lite-linux-amd64.sha256
+          name: jiejie-masque-linux-amd64.sha256
+          path: dist/jiejie-masque-linux-amd64.sha256
           if-no-files-found: error

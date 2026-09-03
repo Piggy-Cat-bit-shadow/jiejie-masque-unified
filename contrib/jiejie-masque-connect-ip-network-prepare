@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-config=/etc/masque-lite/config.yaml
+config=/etc/jiejie-masque/connect-ip.yaml
 external_interface=${MASQUE_EXTERNAL_INTERFACE:-}
 
 while [ "$#" -gt 0 ]; do
@@ -16,13 +16,13 @@ if [ -z "$external_interface" ]; then
 	external_interface=$(awk '$2 == "00000000" && $4 != "0" { print $1; exit }' /proc/net/route)
 fi
 if [ -z "$external_interface" ]; then
-	echo "masque-lite-network-prepare: external interface not found" >&2
+	echo "jiejie-masque-connect-ip-network-prepare: external interface not found" >&2
 	exit 1
 fi
 
 tunnel_ipv4=$(awk '/^server:[[:space:]]*$/{in_server=1; next} in_server && /^[^[:space:]]/{exit} in_server && $1 == "tunnel_ipv4:" { print $2; exit }' "$config")
 if [ -z "$tunnel_ipv4" ]; then
-	echo "masque-lite-network-prepare: server.tunnel_ipv4 not found in $config" >&2
+	echo "jiejie-masque-connect-ip-network-prepare: server.tunnel_ipv4 not found in $config" >&2
 	exit 1
 fi
 
