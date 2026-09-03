@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -75,8 +74,9 @@ func serveConnectIP() error {
 	}
 	for i := range clients {
 		if clients[i].Name == "" {
-			sum := sha256.Sum256([]byte(clients[i].PublicKeys[0]))
-			clients[i].Name = "client/" + fmt.Sprintf("%x", sum[:6])
+			// This name is only an in-memory session key.  Do not derive it
+			// from the client's public key: it can otherwise turn up in logs.
+			clients[i].Name = fmt.Sprintf("client-%d", i+1)
 		}
 	}
 	byKey := make(map[string]config.ResolvedClient)
@@ -124,14 +124,14 @@ func serveConnectIP() error {
 		reuseDelay, _ := time.ParseDuration(c.Server.SessionNat.ReuseDelay)
 		mgr = session.NewShadowManagerWithClock(pool, c.Server.SessionNat.MaxSessions, excluded, reuseDelay, time.Now, nil)
 		mgr.SetMaxSessionsPerClient(c.Server.SessionNat.MaxSessionsPerClient)
-		log.Printf("shared-session NAT enabled: server=%s shadow=%s max_sessions=%d", serverPrefix.Masked(), pool.Masked(), c.Server.SessionNat.MaxSessions)
+		log.Printf("shared-session NAT enabled: max_sessions=%d", c.Server.SessionNat.MaxSessions)
 	} else {
 		mgr = session.NewManager()
 	}
 	if mgr.IsShadow() {
 		mgr.SetShadowCleanup(func(ip netip.Addr) error {
 			if err := hostnet.CleanupConntrack(ip); err != nil {
-				log.Printf("shadow=%s conntrack cleanup failed: %v", ip, err)
+				log.Printf("conntrack cleanup failed: %v", err)
 				return err
 			}
 			return nil
@@ -298,7 +298,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	s := session.NewWithContextAndPacketPool(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, packetPool, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
 	if mgr.IsShadow() {
 		if err := mgr.Register(s); err != nil {
-			log.Printf("session register failed for %s: %v", client.Name, err)
+			log.Printf("session registration failed: %v", err)
 			s.Close()
 			mh.Error(w, "session capacity unavailable", mh.StatusServiceUnavailable)
 			return
@@ -306,12 +306,12 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	} else {
 		old := mgr.Replace(s)
 		if old != nil {
-			log.Printf("client %s session takeover", client.Name)
+			log.Printf("session takeover")
 		}
 	}
 	release()
 	go sessionWriter(s, tun, c.Server.MTU)
-	log.Printf("session=%d client=%s visible=%s shadow=%s established", s.ID, client.Name, s.VisibleIP, shadowString(s.ShadowIP))
+	log.Printf("session=%d established", s.ID)
 	go sessionReader(s, tun, mgr, serverPrefix)
 	select {
 	case <-r.Context().Done():
@@ -325,7 +325,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	if r.Context().Err() != nil {
 		reason = "context"
 	}
-	log.Printf("session=%d client=%s visible=%s shadow=%s closed reason=%s", s.ID, client.Name, s.VisibleIP, shadowString(s.ShadowIP), reason)
+	log.Printf("session=%d closed reason=%s", s.ID, reason)
 }
 
 func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
@@ -374,7 +374,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 				}
 				if _, werr := tun.Write(icmp); werr != nil {
 					s.SetCloseReason("tun-write-error")
-					log.Printf("session=%d client=%s ICMP write failed: %v", s.ID, s.Identity, werr)
+					log.Printf("session=%d ICMP write failed: %v", s.ID, werr)
 					s.Close()
 					return
 				}
@@ -384,7 +384,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 					return
 				}
 				s.SetCloseReason("write-error")
-				log.Printf("session=%d client=%s packet write failed: %v", s.ID, s.Identity, err)
+				log.Printf("session=%d packet write failed: %v", s.ID, err)
 				s.Close()
 				return
 			}
@@ -400,7 +400,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 				return
 			}
 			s.SetCloseReason("read-error")
-			log.Printf("session=%d client=%s session read failed: %v", s.ID, s.Identity, err)
+			log.Printf("session=%d session read failed: %v", s.ID, err)
 			s.Close()
 			return
 		}
@@ -428,7 +428,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 		}
 		if _, err = tun.Write(pkt); err != nil {
 			s.SetCloseReason("tun-write-error")
-			log.Printf("session=%d client=%s TUN write failed: %v", s.ID, s.Identity, err)
+			log.Printf("session=%d TUN write failed: %v", s.ID, err)
 			s.Close()
 			return
 		}
@@ -453,13 +453,6 @@ func requestTemplate(host string) (*uritemplate.Template, error) {
 		return nil, fmt.Errorf("malformed authority")
 	}
 	return uritemplate.New("https://" + host + "/connect-ip")
-}
-
-func shadowString(ip netip.Addr) string {
-	if !ip.IsValid() {
-		return "-"
-	}
-	return ip.String()
 }
 
 func normalSessionError(err error, ctx context.Context) bool {

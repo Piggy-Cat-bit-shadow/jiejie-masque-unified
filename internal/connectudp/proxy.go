@@ -115,12 +115,10 @@ func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
 	s.mx.Unlock()
 
 	proxyStatus := httpsfv.NewItem(r.Host)
-	// Adds the proxy status to the header.  Returns
-	// the input error, or a new one if serialization fails.
+	// Adds a protocol-safe proxy status to the response. Raw network errors and
+	// resolved next-hop addresses are deliberately not exposed: they can reveal
+	// internal DNS and network topology to a proxy client.
 	writeProxyStatus := func(err error) error {
-		if err != nil {
-			proxyStatus.Params.Add("details", err.Error())
-		}
 		proxyStatusVal, marshalErr := httpsfv.Marshal(proxyStatus)
 		if marshalErr != nil {
 			return marshalErr
@@ -139,8 +137,6 @@ func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
 		w.WriteHeader(errToStatus(err))
 		return err
 	}
-	proxyStatus.Params.Add("next-hop", addr.String())
-
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		proxyStatus.Params.Add("error", "destination_ip_unroutable")
@@ -191,7 +187,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	go func() {
 		defer wg.Done()
 		if err := s.proxyConnSend(conn, str, flow); err != nil {
-			log.Printf("proxying send side to %s failed: %v", conn.RemoteAddr(), err)
+			log.Printf("proxying send side failed: %v", err)
 		}
 		str.Close()
 	}()
@@ -202,7 +198,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 			closed := s.closed
 			s.mx.Unlock()
 			if !closed {
-				log.Printf("proxying receive side to %s failed: %v", conn.RemoteAddr(), err)
+				log.Printf("proxying receive side failed: %v", err)
 			}
 		}
 		str.Close()
