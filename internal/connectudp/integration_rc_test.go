@@ -55,51 +55,71 @@ func authHeader(user, password string) string {
 }
 
 func openRCUDP(t *testing.T, cc *http3.ClientConn, target, user, password string) (*http3.RequestStream, error) {
+	status, str, err := openRCUDPStatus(t, cc, target, user, password)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		_ = str.Close()
+		return nil, fmt.Errorf("udp status %d", status)
+	}
+	return str, nil
+}
+
+func openRCUDPStatus(t *testing.T, cc *http3.ClientConn, target, user, password string) (int, *http3.RequestStream, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	str, err := cc.OpenRequestStream(ctx)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	port := target[strings.LastIndex(target, ":")+1:]
 	req := &mh.Request{Method: "CONNECT", Proto: "connect-udp", Host: "proxy.test", URL: &url.URL{Scheme: "https", Host: "proxy.test", Path: "/.well-known/masque/udp/127.0.0.1/" + port + "/"}, Header: make(mh.Header)}
 	req.Header.Set(http3.CapsuleProtocolHeader, "?1")
-	req.Header.Set("Authorization", authHeader(user, password))
+	if user != "" || password != "" {
+		req.Header.Set("Authorization", authHeader(user, password))
+	}
 	if err := str.SendRequestHeader(req); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	rsp, err := str.ReadResponse()
 	if err != nil {
+		return 0, nil, err
+	}
+	return rsp.StatusCode, str, nil
+}
+
+func openRCTCP(t *testing.T, cc *http3.ClientConn, target, user, password string) (*http3.RequestStream, error) {
+	status, str, err := openRCTCPStatus(t, cc, target, user, password)
+	if err != nil {
 		return nil, err
 	}
-	if rsp.StatusCode != 200 {
+	if status != 200 {
 		_ = str.Close()
-		return nil, fmt.Errorf("udp status %d", rsp.StatusCode)
+		return nil, fmt.Errorf("tcp status %d", status)
 	}
 	return str, nil
 }
 
-func openRCTCP(t *testing.T, cc *http3.ClientConn, target, user, password string) (*http3.RequestStream, error) {
+func openRCTCPStatus(t *testing.T, cc *http3.ClientConn, target, user, password string) (int, *http3.RequestStream, error) {
 	t.Helper()
 	str, err := cc.OpenRequestStream(context.Background())
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	req := &mh.Request{Method: "CONNECT", Host: target, URL: &url.URL{Host: target}, Header: make(mh.Header)}
-	req.Header.Set("Authorization", authHeader(user, password))
+	if user != "" || password != "" {
+		req.Header.Set("Authorization", authHeader(user, password))
+	}
 	if err := str.SendRequestHeader(req); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	rsp, err := str.ReadResponse()
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	if rsp.StatusCode != 200 {
-		_ = str.Close()
-		return nil, fmt.Errorf("tcp status %d", rsp.StatusCode)
-	}
-	return str, nil
+	return rsp.StatusCode, str, nil
 }
 
 func startRCEchoes(t *testing.T) (string, string) {
@@ -424,6 +444,148 @@ func TestRealH3ReconnectAndAbruptClose(t *testing.T) {
 	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRealH3AuthenticationFailures(t *testing.T) {
+	c := rcConfig(t, 8, 8)
+	addr, state, cancel, errs := startRCServer(t, c)
+	defer func() {
+		cancel()
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}()
+	udpTarget, tcpTarget := startRCEchoes(t)
+
+	t.Run("wrong-password", func(t *testing.T) {
+		cc := dialRC(t, addr, "user-a", "wrong-password")
+		status, str, err := openRCUDPStatus(t, cc, udpTarget, "user-a", "wrong-password")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = str.Close()
+		if status != 407 {
+			t.Fatalf("wrong-password status = %d, want 407", status)
+		}
+		_ = cc.CloseWithError(0, "auth failure")
+		eventuallyRC(t, time.Second, func() bool {
+			return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+		})
+	})
+
+	t.Run("unknown-user", func(t *testing.T) {
+		cc := dialRC(t, addr, "unknown-user", "password")
+		status, str, err := openRCTCPStatus(t, cc, tcpTarget, "unknown-user", "password")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = str.Close()
+		if status != 407 {
+			t.Fatalf("unknown-user status = %d, want 407", status)
+		}
+		_ = cc.CloseWithError(0, "auth failure")
+		eventuallyRC(t, time.Second, func() bool {
+			return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+		})
+	})
+
+	t.Run("no-auth", func(t *testing.T) {
+		cc := dialRC(t, addr, "", "")
+		status, str, err := openRCTCPStatus(t, cc, tcpTarget, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = str.Close()
+		if status != 407 {
+			t.Fatalf("no-auth status = %d, want 407", status)
+		}
+		_ = cc.CloseWithError(0, "auth failure")
+		eventuallyRC(t, time.Second, func() bool {
+			return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+		})
+	})
+
+	cc := dialRC(t, addr, "user-b", "password-b")
+	udp, err := openRCUDP(t, cc, udpTarget, "user-b", "password-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := buildContextDatagram([]byte("auth-recovery-udp"))
+	if err = udp.SendDatagram(p); err != nil {
+		t.Fatal(err)
+	}
+	ctx, done := context.WithTimeout(context.Background(), time.Second)
+	if _, err = udp.ReceiveDatagram(ctx); err != nil {
+		done()
+		t.Fatal(err)
+	}
+	done()
+	_ = udp.Close()
+	tcp, err := openRCTCP(t, cc, tcpTarget, "user-b", "password-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tcp.Write([]byte("auth-recovery-tcp")); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("auth-recovery-tcp"))
+	if _, err = io.ReadFull(tcp, got); err != nil || string(got) != "auth-recovery-tcp" {
+		t.Fatalf("auth recovery TCP: %q %v", got, err)
+	}
+	_ = tcp.Close()
+	_ = cc.CloseWithError(0, "auth recovery complete")
+	eventuallyRC(t, time.Second, func() bool {
+		return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+	})
+}
+
+func TestRealH3TCPRefusedAndRecovery(t *testing.T) {
+	c := rcConfig(t, 8, 8)
+	addr, state, cancel, errs := startRCServer(t, c)
+	defer func() {
+		cancel()
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}()
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedTarget := closed.Addr().String()
+	_ = closed.Close()
+	cc := dialRC(t, addr, "user-a", "password-a")
+	status, str, err := openRCTCPStatus(t, cc, closedTarget, "user-a", "password-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = str.Close()
+	if status != 502 {
+		t.Fatalf("refused status = %d, want 502", status)
+	}
+	_ = cc.CloseWithError(0, "refused target")
+	eventuallyRC(t, time.Second, func() bool {
+		return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+	})
+
+	_, tcpTarget := startRCEchoes(t)
+	cc = dialRC(t, addr, "user-a", "password-a")
+	tcp, err := openRCTCP(t, cc, tcpTarget, "user-a", "password-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tcp.Write([]byte("refused-recovery")); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("refused-recovery"))
+	if _, err = io.ReadFull(tcp, got); err != nil || string(got) != "refused-recovery" {
+		t.Fatalf("refused recovery TCP: %q %v", got, err)
+	}
+	_ = tcp.Close()
+	_ = cc.CloseWithError(0, "recovery complete")
+	eventuallyRC(t, time.Second, func() bool {
+		return state.admission.countsTotal() == 0 && state.flows.Count() == 0 && state.relay.activeCount() == 0
+	})
 }
 
 func (a *Admission) countsTotal() int { n, _ := a.Counts(); return n }
