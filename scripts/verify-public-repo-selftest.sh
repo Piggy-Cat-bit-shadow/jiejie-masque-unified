@@ -13,7 +13,7 @@ git -C "$tmp" add README.md && git -C "$tmp" commit -qm fixture
 bin="$tmp/bin"
 mkdir "$bin"
 ln -s "$(command -v git)" "$bin/git"
-if (cd "$tmp" && PATH="$bin:/usr/bin:/bin" bash "$scanner") 2>/dev/null; then
+if (cd "$tmp" && PATH="$bin" /bin/bash "$scanner") 2>/dev/null; then
   echo 'selftest: missing rg was not rejected' >&2
   exit 1
 fi

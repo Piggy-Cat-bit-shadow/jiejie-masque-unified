@@ -44,6 +44,9 @@ jobs:
       - name: Dependency check
         run: scripts/verify-deps.sh
 
+      - name: Install privacy scanner
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
 
