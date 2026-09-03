@@ -1,0 +1,68 @@
+name: release-build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Race test
+        run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build Linux amd64
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w -buildid=" \
+            -o dist/masque-lite-linux-amd64 \
+            ./cmd/masque-lite
+
+      - name: Generate SHA256
+        run: |
+          cd dist
+          sha256sum masque-lite-linux-amd64 > masque-lite-linux-amd64.sha256
+
+      - name: Report artifact
+        run: |
+          stat -c 'size: %s bytes' dist/masque-lite-linux-amd64
+          file dist/masque-lite-linux-amd64
+          cat dist/masque-lite-linux-amd64.sha256
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: masque-lite-linux-amd64
+          path: dist/masque-lite-linux-amd64
+          if-no-files-found: error
+
+      - name: Upload SHA256
+        uses: actions/upload-artifact@v4
+        with:
+          name: masque-lite-linux-amd64.sha256
+          path: dist/masque-lite-linux-amd64.sha256
+          if-no-files-found: error

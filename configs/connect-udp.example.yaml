@@ -1,0 +1,15 @@
+mode: connect-udp
+listen: 127.0.0.1:4433
+public_authority: proxy.example.com:443
+tls:
+  cert: /etc/ssl/proxy.example.com/fullchain.pem
+  key: /etc/ssl/proxy.example.com/private.key
+auth:
+  username: ""
+  password: ""
+  username_env: JIEJIE_MASQUE_USERNAME
+  password_env: JIEJIE_MASQUE_PASSWORD
+quic:
+  keep_alive_period: 15s
+  max_idle_timeout: 2m
+  stateless_reset_key_file: /var/lib/jiejie-masque-connect-udp/stateless-reset.key

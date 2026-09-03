@@ -1,0 +1,25 @@
+[Unit]
+Description=Minimal Mihomo CONNECT-IP MASQUE server
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=notify
+User=masque-lite
+Group=masque-lite
+EnvironmentFile=-/etc/masque-lite/host-network.env
+ExecStartPre=+/usr/local/libexec/masque-lite-network-prepare --config /etc/masque-lite/config.yaml
+ExecStart=/usr/local/bin/masque-lite -config /etc/masque-lite/config.yaml
+WatchdogSec=30s
+NotifyAccess=main
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=masque-lite
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

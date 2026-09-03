@@ -1,0 +1,37 @@
+mode: connect-ip
+listen: 127.0.0.1:4434
+tls:
+  # Generated with: masque-lite server-keygen -cert /etc/masque-lite/server.crt -key /etc/masque-lite/server.key
+  # Must be an independent P-256 ECDSA certificate, not an RSA wildcard certificate.
+  cert: /etc/masque-lite/server.crt
+  key: /etc/masque-lite/server.key
+quic:
+  stateless_reset_key_file: /var/lib/masque-lite/stateless-reset.key
+host_network:
+  # Optional; otherwise the default-route interface is detected.
+  external_interface: eth0
+  check_interval: 10s
+client:
+  public_keys: []
+  tunnel_ipv4: 10.200.0.2/32
+# For multiple devices, replace the legacy client block with:
+# clients:
+#   - name: iphone
+#     public_keys: [KEY_DEVICE_A]
+#     tunnel_ipv4: 10.200.0.2/32
+#   - name: mac
+#     public_keys: [KEY_DEVICE_B]
+#     tunnel_ipv4: 10.200.0.3/32
+server:
+  tunnel_ipv4: 10.200.0.1/16
+  mtu: 1280
+  session_idle_timeout: 1h
+  session_nat:
+    enabled: true
+    pool: 10.200.128.0/17
+    max_sessions: 120
+    reuse_delay: 30m
+# For legacy single-session compatibility only, disable session_nat and use:
+# server:
+#   tunnel_ipv4: 10.200.0.1/30
+#   mtu: 1280

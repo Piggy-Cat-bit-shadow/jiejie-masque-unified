@@ -1,0 +1,1 @@
+masque-lite is MIT licensed. Dependencies include MetaCubeX/connect-ip-go, MetaCubeX/quic-go, MetaCubeX/http, MetaCubeX/tls, uritemplate, and yaml.v3. Consult upstream repositories for complete notices.

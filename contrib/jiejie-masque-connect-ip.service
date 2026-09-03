@@ -1,0 +1,25 @@
+[Unit]
+Description=jiejie-masque CONNECT-IP MASQUE server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=masque-lite
+Group=masque-lite
+ExecStart=/usr/local/bin/jiejie-masque serve --config /etc/jiejie-masque/connect-ip.yaml
+WatchdogSec=30s
+NotifyAccess=main
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=jiejie-masque-connect-ip
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

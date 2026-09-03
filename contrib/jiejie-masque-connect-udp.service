@@ -1,0 +1,21 @@
+[Unit]
+Description=jiejie-masque CONNECT-UDP MASQUE server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=masque
+Group=masque
+ExecStart=/usr/local/bin/jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StateDirectory=jiejie-masque-connect-udp
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
