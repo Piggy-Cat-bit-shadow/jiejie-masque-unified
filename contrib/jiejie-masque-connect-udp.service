@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=masque
 Group=masque
+EnvironmentFile=-/etc/jiejie-masque/connect-udp.env
 ExecStart=/usr/local/bin/jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
 NoNewPrivileges=true
 PrivateTmp=true

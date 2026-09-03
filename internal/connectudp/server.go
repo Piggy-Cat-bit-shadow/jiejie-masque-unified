@@ -69,7 +69,11 @@ func ServeContext(ctx context.Context, c Config) error {
 	if e != nil {
 		return e
 	}
-	t, e := net.ListenUDP("udp", mustUDP(c.Listen))
+	listenAddr, e := net.ResolveUDPAddr("udp", c.Listen)
+	if e != nil {
+		return fmt.Errorf("invalid listen address: %w", e)
+	}
+	t, e := net.ListenUDP("udp", listenAddr)
 	if e != nil {
 		return e
 	}
@@ -147,11 +151,4 @@ func ServeContext(ctx context.Context, c Config) error {
 		}
 		return nil
 	}
-}
-func mustUDP(s string) *net.UDPAddr {
-	a, e := net.ResolveUDPAddr("udp", s)
-	if e != nil {
-		panic(e)
-	}
-	return a
 }

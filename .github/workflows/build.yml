@@ -26,6 +26,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+
+      - name: Module tidy check
+        run: go mod tidy -diff
+
       - name: Test
         run: go test ./...
 
@@ -38,21 +44,25 @@ jobs:
       - name: Dependency check
         run: scripts/verify-deps.sh
 
-      - name: Systemd unit check
+      - name: Shell check
         run: |
-          systemd-analyze verify contrib/jiejie-masque-connect-ip.service
-          systemd-analyze verify contrib/jiejie-masque-connect-udp.service
+          bash -n scripts/verify-deps.sh
+          sh -n contrib/jiejie-masque-connect-ip-network-prepare
 
       - name: Build Linux amd64
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build \
-            -trimpath \
-            -buildvcs=false \
-            -ldflags="-s -w -buildid=" \
-            -o dist/jiejie-masque-linux-amd64 \
-            ./cmd/jiejie-masque
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o dist/jiejie-masque-linux-amd64 ./cmd/jiejie-masque
+
+      - name: Stage systemd executables
+        run: |
+          sudo install -Dm755 dist/jiejie-masque-linux-amd64 /usr/local/bin/jiejie-masque
+          sudo install -Dm755 contrib/jiejie-masque-connect-ip-network-prepare /usr/local/libexec/jiejie-masque-connect-ip-network-prepare
+
+      - name: Systemd unit check
+        run: |
+          systemd-analyze verify contrib/jiejie-masque-connect-ip.service
+          systemd-analyze verify contrib/jiejie-masque-connect-udp.service
 
       - name: Generate SHA256
         run: |

@@ -181,7 +181,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 		str.Close()
 	}()
 	// discard all capsules sent on the request stream
-	if err := skipCapsules(quicvarint.NewReader(str)); err == io.EOF {
+	if err := skipCapsules(quicvarint.NewReader(str)); err != nil && !errors.Is(err, io.EOF) {
 		log.Printf("reading from request stream failed: %v", err)
 	}
 	str.Close()
