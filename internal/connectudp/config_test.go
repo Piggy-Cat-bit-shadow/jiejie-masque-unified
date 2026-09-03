@@ -1,0 +1,35 @@
+package connectudp
+
+import (
+	"os"
+	"testing"
+)
+
+func TestResolveAuth(t *testing.T) {
+	c := Config{}
+	c.Mode = "connect-udp"
+	c.Auth.UsernameEnv = "TEST_MASQUE_U"
+	c.Auth.PasswordEnv = "TEST_MASQUE_P"
+	os.Unsetenv("TEST_MASQUE_U")
+	os.Unsetenv("TEST_MASQUE_P")
+	u, p, err := c.ResolveAuth()
+	if err != nil || u != "" || p != "" {
+		t.Fatalf("disabled auth: %q %q %v", u, p, err)
+	}
+	os.Setenv("TEST_MASQUE_U", "u")
+	defer os.Unsetenv("TEST_MASQUE_U")
+	if _, _, err := c.ResolveAuth(); err == nil {
+		t.Fatal("expected one-sided env error")
+	}
+	os.Setenv("TEST_MASQUE_P", "p")
+	defer os.Unsetenv("TEST_MASQUE_P")
+	u, p, err = c.ResolveAuth()
+	if err != nil || u != "u" || p != "p" {
+		t.Fatalf("env auth: %q %q %v", u, p, err)
+	}
+	c.Auth.Username, c.Auth.Password = "explicit", "secret"
+	u, p, err = c.ResolveAuth()
+	if err != nil || u != "explicit" || p != "secret" {
+		t.Fatal("explicit credentials must win")
+	}
+}

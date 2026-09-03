@@ -81,12 +81,51 @@ func (c Config) Validate(checkFiles bool) error {
 		if _, e := metatls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key); e != nil {
 			return e
 		}
-		if st, e := os.Stat(c.QUIC.StatelessResetKeyFile); e == nil && st.Size() != 16 {
-			return fmt.Errorf("invalid stateless reset key length")
+		if st, e := os.Stat(c.QUIC.StatelessResetKeyFile); e == nil {
+			if st.Size() != 16 {
+				return fmt.Errorf("invalid stateless reset key length")
+			}
+		} else if !os.IsNotExist(e) {
+			return fmt.Errorf("stateless reset key: %w", e)
 		}
 		_ = filepath.Clean(c.QUIC.StatelessResetKeyFile)
 	}
 	return nil
+}
+
+func (c Config) KeepAlive() time.Duration {
+	d, _ := time.ParseDuration(c.QUIC.KeepAlivePeriod)
+	if d == 0 {
+		d = 15 * time.Second
+	}
+	return d
+}
+func (c Config) IdleTimeout() time.Duration {
+	d, _ := time.ParseDuration(c.QUIC.MaxIdleTimeout)
+	if d == 0 {
+		d = 2 * time.Minute
+	}
+	return d
+}
+func (c Config) ResolveAuth() (string, string, error) {
+	if (c.Auth.Username == "") != (c.Auth.Password == "") {
+		return "", "", fmt.Errorf("auth username and password must be paired")
+	}
+	if c.Auth.Username != "" {
+		return c.Auth.Username, c.Auth.Password, nil
+	}
+	if c.Auth.UsernameEnv == "" {
+		return "", "", nil
+	}
+	u, uok := os.LookupEnv(c.Auth.UsernameEnv)
+	p, pok := os.LookupEnv(c.Auth.PasswordEnv)
+	if !uok && !pok || u == "" && p == "" {
+		return "", "", nil
+	}
+	if !uok || !pok || u == "" || p == "" {
+		return "", "", fmt.Errorf("auth environment values must be paired")
+	}
+	return u, p, nil
 }
 func urlAuthority(s string) string {
 	u, e := url.Parse("https://" + s)

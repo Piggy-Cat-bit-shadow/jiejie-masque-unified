@@ -1,6 +1,7 @@
 package connectudp
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -38,7 +39,10 @@ func resetKey(path string) (*quic.StatelessResetKey, error) {
 	}
 	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
-		return resetKey(path)
+		if errors.Is(e, os.ErrExist) {
+			return resetKey(path)
+		}
+		return nil, e
 	}
 	defer f.Close()
 	if _, e = f.Write(k[:]); e != nil {
@@ -50,6 +54,13 @@ func resetKey(path string) (*quic.StatelessResetKey, error) {
 	return &k, nil
 }
 func Serve(c Config) error {
+	return ServeContext(context.Background(), c)
+}
+func ServeContext(ctx context.Context, c Config) error {
+	user, pass, err := c.ResolveAuth()
+	if err != nil {
+		return err
+	}
 	cert, e := metatls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key)
 	if e != nil {
 		return e
@@ -63,7 +74,7 @@ func Serve(c Config) error {
 		return e
 	}
 	qt := &quic.Transport{Conn: t, StatelessResetKey: rk}
-	qc := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 15 * time.Second, MaxIdleTimeout: 2 * time.Minute}
+	qc := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: c.KeepAlive(), MaxIdleTimeout: c.IdleTimeout()}
 	ql, e := qt.Listen(http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), qc)
 	if e != nil {
 		return e
@@ -111,9 +122,31 @@ func Serve(c Config) error {
 			w.WriteHeader(501)
 		}
 	})
-	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, Handler: WithAuth(h, c.Auth.Username, c.Auth.Password)}
-	e = srv.ServeListener(ql)
-	return e
+	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, Handler: WithAuth(h, user, pass)}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ServeListener(ql) }()
+	select {
+	case e = <-serveErr:
+		return e
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = p.Close()
+		_ = srv.Shutdown(shutdown)
+		_ = srv.Close()
+		_ = ql.Close()
+		_ = qt.Close()
+		_ = t.Close()
+		select {
+		case e = <-serveErr:
+		case <-shutdown.Done():
+			e = nil
+		}
+		if e != nil && !errors.Is(e, net.ErrClosed) {
+			return e
+		}
+		return nil
+	}
 }
 func mustUDP(s string) *net.UDPAddr {
 	a, e := net.ResolveUDPAddr("udp", s)

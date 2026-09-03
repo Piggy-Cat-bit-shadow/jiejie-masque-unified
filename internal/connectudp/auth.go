@@ -8,22 +8,21 @@ import (
 )
 
 func credentials(r *mh.Request) (string, string, bool) {
-	v := r.Header.Get("Authorization")
-	if v == "" {
-		v = r.Header.Get("Proxy-Authorization")
+	for _, v := range []string{r.Header.Get("Authorization"), r.Header.Get("Proxy-Authorization")} {
+		if v == "" || !strings.HasPrefix(strings.ToLower(v), "basic ") {
+			continue
+		}
+		b, e := base64.StdEncoding.DecodeString(strings.TrimSpace(v[6:]))
+		if e != nil {
+			continue
+		}
+		p := strings.IndexByte(string(b), ':')
+		if p < 0 {
+			continue
+		}
+		return string(b[:p]), string(b[p+1:]), true
 	}
-	if !strings.HasPrefix(strings.ToLower(v), "basic ") {
-		return "", "", false
-	}
-	b, e := base64.StdEncoding.DecodeString(strings.TrimSpace(v[6:]))
-	if e != nil {
-		return "", "", false
-	}
-	p := strings.IndexByte(string(b), ':')
-	if p < 0 {
-		return "", "", false
-	}
-	return string(b[:p]), string(b[p+1:]), true
+	return "", "", false
 }
 func WithAuth(next mh.Handler, u, p string) mh.Handler {
 	return mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
