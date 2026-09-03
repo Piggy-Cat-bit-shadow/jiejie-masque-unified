@@ -2,13 +2,24 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 )
 
 func BenchmarkOutboundPacketCopy1280(b *testing.B) {
-	source := bytes.Repeat([]byte{'x'}, 1280)
+	benchmarkOutboundPacketCopy(b, 1280)
+}
+
+func BenchmarkOutboundPacketCopy(b *testing.B) {
+	for _, size := range []int{64, 512, 1280, 1500} {
+		b.Run(fmt.Sprintf("%dB", size), func(b *testing.B) { benchmarkOutboundPacketCopy(b, size) })
+	}
+}
+
+func benchmarkOutboundPacketCopy(b *testing.B, size int) {
+	source := bytes.Repeat([]byte{'x'}, size)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(source)))
 	for b.Loop() {
@@ -20,8 +31,18 @@ func BenchmarkOutboundPacketCopy1280(b *testing.B) {
 }
 
 func BenchmarkOutboundPacketPool1280(b *testing.B) {
-	source := bytes.Repeat([]byte{'x'}, 1280)
-	pool := session.NewPacketPool(1280)
+	benchmarkOutboundPacketPool(b, 1280)
+}
+
+func BenchmarkOutboundPacketPool(b *testing.B) {
+	for _, size := range []int{64, 512, 1280, 1500} {
+		b.Run(fmt.Sprintf("%dB", size), func(b *testing.B) { benchmarkOutboundPacketPool(b, size) })
+	}
+}
+
+func benchmarkOutboundPacketPool(b *testing.B, size int) {
+	source := bytes.Repeat([]byte{'x'}, size)
+	pool := session.NewPacketPool(size)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(source)))
 	for b.Loop() {

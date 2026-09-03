@@ -53,6 +53,40 @@ func BenchmarkTCPRelayCopyWithPool32KiB(b *testing.B) {
 	}
 }
 
+func BenchmarkTCPRelayCopyWithPoolConcurrent32KiB(b *testing.B) {
+	for _, workers := range []int{1, 16, 64} {
+		b.Run(fmt.Sprintf("%d-connections", workers), func(b *testing.B) {
+			benchmarkConcurrentRelayCopy(b, workers)
+		})
+	}
+}
+
+func benchmarkConcurrentRelayCopy(b *testing.B, workers int) {
+	payload := bytes.Repeat([]byte{'x'}, 32<<10)
+	jobs := make(chan struct{})
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range jobs {
+				if _, err := copyWithPool(byteSink{}, readerOnly{Reader: bytes.NewReader(payload)}); err != nil {
+					b.Error(err)
+				}
+			}
+		}()
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for b.Loop() {
+		jobs <- struct{}{}
+	}
+	b.StopTimer()
+	close(jobs)
+	wg.Wait()
+}
+
 func TestTCPRelayCopyPoolConcurrent(t *testing.T) {
 	payload := bytes.Repeat([]byte{'x'}, 32<<10)
 	const workers = 64
