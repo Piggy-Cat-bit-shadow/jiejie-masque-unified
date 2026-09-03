@@ -61,7 +61,7 @@ func TestIPv4PacketValidation(t *testing.T) {
 	pkt := make([]byte, 20)
 	pkt[0] = 0x45
 	binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)))
-	copy(pkt[12:16], []byte{10, 89, 0, 2})
+	copy(pkt[12:16], []byte{10, 200, 0, 2})
 	copy(pkt[16:20], []byte{8, 8, 8, 8})
 	if src, ok := packet.Source(pkt); !ok || src.String() != "10.200.0.2" {
 		t.Fatalf("source = %s, ok = %t", src, ok)
