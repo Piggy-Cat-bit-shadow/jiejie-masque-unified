@@ -52,7 +52,7 @@ jobs:
       - name: Build Linux amd64
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o dist/jiejie-masque-linux-amd64 ./cmd/jiejie-masque
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=0.1.0 -X main.commit=${{ github.sha }}" -o dist/jiejie-masque-linux-amd64 ./cmd/jiejie-masque
 
       - name: Release binary gates
         run: |
@@ -63,7 +63,8 @@ jobs:
           readelf -S dist/jiejie-masque-linux-amd64 | grep -E '\.debug_|\.symtab[[:space:]]' && exit 1 || true
           go version -m dist/jiejie-masque-linux-amd64 | tee /tmp/modules.txt
           if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi
-          if [ "$bytes" -ge $((64 * 1024 * 1024)) ]; then exit 1; fi
+          if [ "$bytes" -gt $((12 * 1024 * 1024)) ]; then echo "release binary exceeds 12 MiB target" >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$bytes" -ge $((24 * 1024 * 1024)) ]; then exit 1; fi
 
       - name: Stage systemd executables
         run: |

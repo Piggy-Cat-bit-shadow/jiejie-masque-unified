@@ -123,6 +123,7 @@ func serveConnectIP() error {
 		}
 		reuseDelay, _ := time.ParseDuration(c.Server.SessionNat.ReuseDelay)
 		mgr = session.NewShadowManagerWithClock(pool, c.Server.SessionNat.MaxSessions, excluded, reuseDelay, time.Now, nil)
+		mgr.SetMaxSessionsPerClient(c.Server.SessionNat.MaxSessionsPerClient)
 		log.Printf("shared-session NAT enabled: server=%s shadow=%s max_sessions=%d", serverPrefix.Masked(), pool.Masked(), c.Server.SessionNat.MaxSessions)
 	} else {
 		mgr = session.NewManager()
@@ -257,7 +258,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 		mh.Error(w, "client certificate not authorized", mh.StatusUnauthorized)
 		return
 	}
-	release, err := mgr.TryReserve()
+	release, err := mgr.TryReserveFor(client.Name)
 	if err != nil {
 		log.Printf("CONNECT-IP rejected: session admission: %v", err)
 		mh.Error(w, "session capacity unavailable", mh.StatusServiceUnavailable)

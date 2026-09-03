@@ -71,22 +71,25 @@ func (s *Session) Close() {
 }
 
 type Manager struct {
-	mu               sync.RWMutex
-	sessions         map[netip.Addr]*Session
-	sessionsByShadow map[netip.Addr]*Session
-	sessionsByID     map[uint64]*Session
-	next             uint64
-	shadow           bool
-	shadowPool       netip.Prefix
-	shadowNext       netip.Addr
-	max              int
-	excluded         map[netip.Addr]bool
-	cooling          map[netip.Addr]time.Time
-	reserved         int
-	now              func() time.Time
-	random           func(uint32) uint32
-	reuseDelay       time.Duration
-	cleanup          func(netip.Addr) error
+	mu                 sync.RWMutex
+	sessions           map[netip.Addr]*Session
+	sessionsByShadow   map[netip.Addr]*Session
+	sessionsByID       map[uint64]*Session
+	next               uint64
+	shadow             bool
+	shadowPool         netip.Prefix
+	shadowNext         netip.Addr
+	max                int
+	excluded           map[netip.Addr]bool
+	cooling            map[netip.Addr]time.Time
+	reserved           int
+	maxPerIdentity     int
+	reservedByIdentity map[string]int
+	activeByIdentity   map[string]int
+	now                func() time.Time
+	random             func(uint32) uint32
+	reuseDelay         time.Duration
+	cleanup            func(netip.Addr) error
 }
 
 func NewManager() *Manager { return &Manager{sessions: map[netip.Addr]*Session{}} }
@@ -107,6 +110,8 @@ func NewShadowManagerWithClock(pool netip.Prefix, max int, excluded []netip.Addr
 	m.reuseDelay = reuseDelay
 	m.now = now
 	m.random = random
+	m.reservedByIdentity = map[string]int{}
+	m.activeByIdentity = map[string]int{}
 	if m.now == nil {
 		m.now = time.Now
 	}
@@ -126,6 +131,14 @@ func cryptoRandom(n uint32) uint32 {
 	return binary.BigEndian.Uint32(b[:]) % n
 }
 func (m *Manager) TryReserve() (func(), error) {
+	return m.TryReserveFor("")
+}
+func (m *Manager) SetMaxSessionsPerClient(max int) {
+	m.mu.Lock()
+	m.maxPerIdentity = max
+	m.mu.Unlock()
+}
+func (m *Manager) TryReserveFor(identity string) (func(), error) {
 	m.mu.Lock()
 	if !m.shadow {
 		m.mu.Unlock()
@@ -135,7 +148,12 @@ func (m *Manager) TryReserve() (func(), error) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("session capacity exhausted")
 	}
+	if m.maxPerIdentity > 0 && m.activeByIdentity[identity]+m.reservedByIdentity[identity] >= m.maxPerIdentity {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session capacity exhausted for client")
+	}
 	m.reserved++
+	m.reservedByIdentity[identity]++
 	released := false
 	m.mu.Unlock()
 	return func() {
@@ -144,6 +162,12 @@ func (m *Manager) TryReserve() (func(), error) {
 			released = true
 			if m.reserved > 0 {
 				m.reserved--
+			}
+			if m.reservedByIdentity[identity] > 0 {
+				m.reservedByIdentity[identity]--
+				if m.reservedByIdentity[identity] == 0 {
+					delete(m.reservedByIdentity, identity)
+				}
 			}
 		}
 		m.mu.Unlock()
@@ -167,6 +191,7 @@ func (m *Manager) Register(s *Session) error {
 	s.Generation = m.next
 	s.ShadowIP = ip
 	m.sessionsByID[s.ID] = s
+	m.activeByIdentity[s.Identity]++
 	m.sessionsByShadow[ip] = s
 	return nil
 }
@@ -224,6 +249,12 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		delete(m.sessionsByShadow, s.ShadowIP)
 		cleanup := m.cleanup
 		shadowIP := s.ShadowIP
+		if m.activeByIdentity[s.Identity] > 0 {
+			m.activeByIdentity[s.Identity]--
+			if m.activeByIdentity[s.Identity] == 0 {
+				delete(m.activeByIdentity, s.Identity)
+			}
+		}
 		if m.reuseDelay > 0 {
 			m.cooling[shadowIP] = m.now().Add(m.reuseDelay)
 		}

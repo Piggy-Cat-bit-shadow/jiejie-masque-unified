@@ -16,15 +16,16 @@ type modeEnvelope struct {
 	Mode string `yaml:"mode"`
 }
 
-const version = "0.1.0"
+var version = "0.1.0"
+var commit = "unknown"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Println(version)
+		fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println(version)
+		fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "keygen" {
