@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/metacubex/quic-go"
 	metatls "github.com/metacubex/tls"
 	"gopkg.in/yaml.v3"
 )
@@ -82,7 +83,7 @@ func (c Config) Validate(checkFiles bool) error {
 			return e
 		}
 		if st, e := os.Stat(c.QUIC.StatelessResetKeyFile); e == nil {
-			if st.Size() != 16 {
+			if st.Size() != int64(len(quic.StatelessResetKey{})) {
 				return fmt.Errorf("invalid stateless reset key length")
 			}
 		} else if !os.IsNotExist(e) {

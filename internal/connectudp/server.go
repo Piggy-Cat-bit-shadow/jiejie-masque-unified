@@ -10,7 +10,6 @@ import (
 	"github.com/metacubex/quic-go/http3"
 	metatls "github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,7 +19,7 @@ import (
 func resetKey(path string) (*quic.StatelessResetKey, error) {
 	b, e := os.ReadFile(path)
 	if e == nil {
-		if len(b) != 16 {
+		if len(b) != len(quic.StatelessResetKey{}) {
 			return nil, fmt.Errorf("invalid reset key length")
 		}
 		var k quic.StatelessResetKey
@@ -57,6 +56,10 @@ func Serve(c Config) error {
 	return ServeContext(context.Background(), c)
 }
 func ServeContext(ctx context.Context, c Config) error {
+	return serveContext(ctx, c, nil)
+}
+
+func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	user, pass, err := c.ResolveAuth()
 	if err != nil {
 		return err
@@ -77,17 +80,21 @@ func ServeContext(ctx context.Context, c Config) error {
 	if e != nil {
 		return e
 	}
+	defer t.Close()
 	qt := &quic.Transport{Conn: t, StatelessResetKey: rk}
+	defer qt.Close()
 	qc := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: c.KeepAlive(), MaxIdleTimeout: c.IdleTimeout()}
 	ql, e := qt.Listen(http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), qc)
 	if e != nil {
 		return e
 	}
+	defer ql.Close()
 	u, e := uritemplate.New("https://" + c.PublicAuthority + "/.well-known/masque/udp/{target_host}/{target_port}/")
 	if e != nil {
 		return e
 	}
 	p := &Proxy{}
+	tcpRelay := &TCPRelay{}
 	h := mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
 		if r.Proto == "connect-udp" {
 			q, e := ParseProxyRequest(r, u)
@@ -108,16 +115,7 @@ func ServeContext(ctx context.Context, c Config) error {
 			if target == "" {
 				target = r.Host
 			}
-			conn, e := net.DialTimeout("tcp", target, 10*time.Second)
-			if e != nil {
-				w.WriteHeader(502)
-				return
-			}
-			defer conn.Close()
-			s := w.(http3.HTTPStreamer).HTTPStream()
-			w.WriteHeader(200)
-			go func() { _, _ = io.Copy(conn, s); _ = conn.Close() }()
-			_, _ = io.Copy(s, conn)
+			tcpRelay.Relay(w, target)
 			return
 		}
 		if r.Proto == "HTTP/3.0" {
@@ -127,6 +125,9 @@ func ServeContext(ctx context.Context, c Config) error {
 		}
 	})
 	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, Handler: WithAuth(h, user, pass)}
+	if ready != nil {
+		ready <- t.LocalAddr().String()
+	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ServeListener(ql) }()
 	select {
@@ -136,6 +137,7 @@ func ServeContext(ctx context.Context, c Config) error {
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = p.Close()
+		tcpRelay.Close()
 		_ = srv.Shutdown(shutdown)
 		_ = srv.Close()
 		_ = ql.Close()
@@ -146,7 +148,7 @@ func ServeContext(ctx context.Context, c Config) error {
 		case <-shutdown.Done():
 			e = nil
 		}
-		if e != nil && !errors.Is(e, net.ErrClosed) {
+		if e != nil && !errors.Is(e, net.ErrClosed) && !errors.Is(e, mh.ErrServerClosed) {
 			return e
 		}
 		return nil
