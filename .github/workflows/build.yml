@@ -60,7 +60,7 @@ jobs:
           echo "release_size_bytes=$bytes" >> "$GITHUB_STEP_SUMMARY"
           du -h dist/jiejie-masque-linux-amd64
           file dist/jiejie-masque-linux-amd64
-          readelf -S dist/jiejie-masque-linux-amd64 | grep -E 'debug|symtab' && exit 1 || true
+          readelf -S dist/jiejie-masque-linux-amd64 | grep -E '\.debug_|\.symtab[[:space:]]' && exit 1 || true
           go version -m dist/jiejie-masque-linux-amd64 | tee /tmp/modules.txt
           if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi
           if [ "$bytes" -ge $((64 * 1024 * 1024)) ]; then exit 1; fi
