@@ -60,6 +60,12 @@ func ServeContext(ctx context.Context, c Config) error {
 }
 
 func serveContext(ctx context.Context, c Config, ready chan<- string) error {
+	return serveContextWithReaper(ctx, c, ready, time.Minute)
+}
+
+func serveContextWithReaper(ctx context.Context, c Config, ready chan<- string, reaperInterval time.Duration) error {
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
 	creds, err := c.ResolveCredentials()
 	if err != nil {
 		return err
@@ -96,6 +102,8 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	p := &Proxy{}
 	tcpRelay := &TCPRelay{}
 	admission := NewAdmission(maxOr(c.Limits.MaxActiveFlows, 256), maxOr(c.Limits.MaxActiveFlowsPerUser, 64))
+	flows := NewFlowTracker()
+	go flows.Run(runCtx.Done(), c.FlowIdleTimeout(), reaperInterval)
 	h := mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
 		if r.Proto == "connect-udp" {
 			q, e := ParseProxyRequest(r, u)
@@ -113,8 +121,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 				w.WriteHeader(503)
 				return
 			}
-			defer release()
-			_ = p.Proxy(w, q)
+			_ = p.Proxy(w, q, flows.New(release))
 			return
 		}
 		if r.Proto == "HTTP/3.0" && r.Method == "CONNECT" {
@@ -127,8 +134,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 				w.WriteHeader(503)
 				return
 			}
-			defer release()
-			tcpRelay.Relay(w, target)
+			tcpRelay.Relay(w, target, flows.New(release))
 			return
 		}
 		if r.Proto == "HTTP/3.0" {
@@ -149,6 +155,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+		flows.Close()
 		_ = p.Close()
 		tcpRelay.Close()
 		_ = srv.Shutdown(shutdown)

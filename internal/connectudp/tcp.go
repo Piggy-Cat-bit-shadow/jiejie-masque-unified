@@ -27,7 +27,8 @@ func statusForDialError(err error) int {
 	return 502
 }
 
-func (r *TCPRelay) Relay(w mh.ResponseWriter, target string) {
+func (r *TCPRelay) Relay(w mh.ResponseWriter, target string, flow *Flow) {
+	defer flow.Close()
 	if target == "" {
 		w.WriteHeader(400)
 		return
@@ -38,6 +39,11 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string) {
 		return
 	}
 	stream := w.(http3.HTTPStreamer).HTTPStream()
+	flow.SetCloseResource(func() {
+		_ = conn.Close()
+		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
+		_ = stream.Close()
+	})
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -64,13 +70,26 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string) {
 	}()
 	w.WriteHeader(200)
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(conn, stream); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(stream, conn); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(activityWriter{Writer: conn, flow: flow}, stream); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(activityWriter{Writer: stream, flow: flow}, conn); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
 	stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
 	_ = stream.Close()
 	<-done
+}
+
+type activityWriter struct {
+	io.Writer
+	flow *Flow
+}
+
+func (w activityWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if n > 0 {
+		w.flow.Touch()
+	}
+	return n, err
 }
 
 func (r *TCPRelay) Close() {

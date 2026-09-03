@@ -47,15 +47,17 @@ jobs:
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
 
+      - name: Systemd contract
+        run: bash scripts/verify-systemd-contract.sh
+
       - name: Shell check
         run: |
           bash -n scripts/verify-deps.sh
+          bash -n scripts/verify-public-repo.sh scripts/verify-systemd-contract.sh scripts/build-release.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
 
       - name: Build Linux amd64
-        run: |
-          mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=0.1.0 -X main.commit=${{ github.sha }}" -o dist/jiejie-masque-linux-amd64 ./cmd/jiejie-masque
+        run: VERSION=0.1.0 COMMIT=${{ github.sha }} scripts/build-release.sh
 
       - name: Release binary gates
         run: |
@@ -63,6 +65,7 @@ jobs:
           echo "release_size_bytes=$bytes" >> "$GITHUB_STEP_SUMMARY"
           du -h dist/jiejie-masque-linux-amd64
           file dist/jiejie-masque-linux-amd64
+          dist/jiejie-masque-linux-amd64 --version | grep -F "${{ github.sha }}"
           readelf -S dist/jiejie-masque-linux-amd64 | grep -E '\.debug_|\.symtab[[:space:]]' && exit 1 || true
           go version -m dist/jiejie-masque-linux-amd64 | tee /tmp/modules.txt
           if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi

@@ -162,6 +162,13 @@ func (c Config) IdleTimeout() time.Duration {
 	}
 	return d
 }
+func (c Config) FlowIdleTimeout() time.Duration {
+	d, _ := time.ParseDuration(c.Limits.FlowIdleTimeout)
+	if d == 0 {
+		d = time.Hour
+	}
+	return d
+}
 func (c Config) ResolveAuth() (string, string, error) {
 	if (c.Auth.Username == "") != (c.Auth.Password == "") {
 		return "", "", fmt.Errorf("auth username and password must be paired")

@@ -100,7 +100,8 @@ func dnsErrorToProxyStatus(proxyStatus *httpsfv.Item, dnsError *net.DNSError) {
 // For more control over the UDP socket, use ProxyConnectedSocket.
 // Applications may add custom header fields to the response header,
 // but MUST NOT call WriteHeader on the http.ResponseWriter.
-func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest) error {
+func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
+	defer flow.Close()
 	s.mx.Lock()
 	if s.closed {
 		s.mx.Unlock()
@@ -149,14 +150,14 @@ func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest) error {
 		w.WriteHeader(errToStatus(err))
 		return err
 	}
-	return s.ProxyConnectedSocket(w, r, conn)
+	return s.ProxyConnectedSocket(w, r, conn, flow)
 }
 
 // ProxyConnectedSocket proxies a request on a connected UDP socket.
 // Applications may add custom header fields such as Proxy-Status
 // to the response header, but MUST NOT call WriteHeader on the
 // http.ResponseWriter. It closes the connection before returning.
-func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn *net.UDPConn) error {
+func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn *net.UDPConn, flow *Flow) error {
 	s.mx.Lock()
 	if s.closed {
 		s.mx.Unlock()
@@ -167,6 +168,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 
 	str := w.(http3.HTTPStreamer).HTTPStream()
 	entry := proxyEntry{str: str, conn: conn}
+	flow.SetCloseResource(func() { _ = entry.Close() })
 
 	if s.closers == nil {
 		s.closers = make(map[io.Closer]struct{})
@@ -184,14 +186,14 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if err := s.proxyConnSend(conn, str); err != nil {
+		if err := s.proxyConnSend(conn, str, flow); err != nil {
 			log.Printf("proxying send side to %s failed: %v", conn.RemoteAddr(), err)
 		}
 		str.Close()
 	}()
 	go func() {
 		defer wg.Done()
-		if err := s.proxyConnReceive(conn, str); err != nil {
+		if err := s.proxyConnReceive(conn, str, flow); err != nil {
 			s.mx.Lock()
 			closed := s.closed
 			s.mx.Unlock()
@@ -214,7 +216,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	return nil
 }
 
-func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream) error {
+func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) error {
 	for {
 		data, err := str.ReceiveDatagram(context.Background())
 		if err != nil {
@@ -233,10 +235,11 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream) error {
 		if _, err := conn.Write(payload); err != nil {
 			return err
 		}
+		flow.Touch()
 	}
 }
 
-func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream) error {
+func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flow) error {
 	b := make([]byte, len(contextIDZero)+maxUDPPayloadSize+1)
 	copy(b, contextIDZero)
 	for {
@@ -258,6 +261,7 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream) error {
 		if err := str.SendDatagram(packet); err != nil {
 			return err
 		}
+		flow.Touch()
 	}
 }
 

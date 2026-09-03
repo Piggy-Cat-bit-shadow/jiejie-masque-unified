@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 )
@@ -34,6 +35,63 @@ func TestManagerConcurrentIPsAndTakeover(t *testing.T) {
 	}
 	a2.Close()
 	b.Close()
+}
+
+func TestPerClientReservationCapAndRelease(t *testing.T) {
+	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 4, nil)
+	m.SetMaxSessionsPerClient(2)
+	r1, err := m.TryReserveFor("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := m.TryReserveFor("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.TryReserveFor("a"); err == nil {
+		t.Fatal("same identity bypassed cap")
+	}
+	other, err := m.TryReserveFor("b")
+	if err != nil {
+		t.Fatal("other identity blocked: " + err.Error())
+	}
+	r1()
+	r1()
+	if _, err := m.TryReserveFor("a"); err != nil {
+		t.Fatal("capacity not restored")
+	}
+	r2()
+	other()
+}
+
+func TestPerClientConcurrentReservations(t *testing.T) {
+	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 16, nil)
+	m.SetMaxSessionsPerClient(2)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var accepted int
+	var mu sync.Mutex
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if release, err := m.TryReserveFor("shared"); err == nil {
+				mu.Lock()
+				accepted++
+				mu.Unlock()
+				release()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if accepted == 0 {
+		t.Fatal("no concurrent reservation succeeded")
+	}
+	if m.reserved != 0 || len(m.reservedByIdentity) != 0 {
+		t.Fatalf("reservation leak: %d %v", m.reserved, m.reservedByIdentity)
+	}
 }
 
 func TestManagerQueueIsBounded(t *testing.T) {
