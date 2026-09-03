@@ -1,7 +1,9 @@
 package connectudp
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -21,17 +23,32 @@ type Config struct {
 		Cert string `yaml:"cert"`
 		Key  string `yaml:"key"`
 	} `yaml:"tls"`
-	Auth struct {
-		Username    string `yaml:"username"`
-		Password    string `yaml:"password"`
-		UsernameEnv string `yaml:"username_env"`
-		PasswordEnv string `yaml:"password_env"`
-	} `yaml:"auth"`
+	Auth   AuthConfig `yaml:"auth"`
+	Limits struct {
+		MaxActiveFlows        int    `yaml:"max_active_flows"`
+		MaxActiveFlowsPerUser int    `yaml:"max_active_flows_per_user"`
+		FlowIdleTimeout       string `yaml:"flow_idle_timeout"`
+	} `yaml:"limits"`
 	QUIC struct {
 		KeepAlivePeriod       string `yaml:"keep_alive_period"`
 		MaxIdleTimeout        string `yaml:"max_idle_timeout"`
 		StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
 	} `yaml:"quic"`
+}
+
+type AuthUser struct {
+	Name        string `yaml:"name,omitempty"`
+	Username    string `yaml:"username"`
+	Password    string `yaml:"password,omitempty"`
+	PasswordEnv string `yaml:"password_env,omitempty"`
+}
+type AuthConfig struct {
+	Username             string     `yaml:"username"`
+	Password             string     `yaml:"password"`
+	UsernameEnv          string     `yaml:"username_env"`
+	PasswordEnv          string     `yaml:"password_env"`
+	AllowUnauthenticated bool       `yaml:"allow_unauthenticated"`
+	Users                []AuthUser `yaml:"users,omitempty"`
 }
 
 func Load(path string) (Config, error) {
@@ -40,7 +57,16 @@ func Load(path string) (Config, error) {
 		return Config{}, e
 	}
 	var c Config
-	if e = yaml.Unmarshal(b, &c); e != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if e = dec.Decode(&c); e != nil {
+		return c, e
+	}
+	var extra any
+	if e = dec.Decode(&extra); e != io.EOF {
+		if e == nil {
+			e = fmt.Errorf("multiple YAML documents are not allowed")
+		}
 		return c, e
 	}
 	return c, c.Validate(false)
@@ -60,6 +86,34 @@ func (c Config) Validate(checkFiles bool) error {
 	}
 	if (c.Auth.Username == "") != (c.Auth.Password == "") || (c.Auth.UsernameEnv == "") != (c.Auth.PasswordEnv == "") {
 		return fmt.Errorf("auth credentials and env names must be paired")
+	}
+	if len(c.Auth.Users) > 0 && (c.Auth.Username != "" || c.Auth.Password != "" || c.Auth.UsernameEnv != "" || c.Auth.PasswordEnv != "") {
+		return fmt.Errorf("auth users cannot be combined with legacy credentials")
+	}
+	seen := map[string]bool{}
+	for _, u := range c.Auth.Users {
+		if u.Username == "" || seen[u.Username] {
+			return fmt.Errorf("auth usernames must be unique and non-empty")
+		}
+		seen[u.Username] = true
+		if u.Password != "" && u.PasswordEnv != "" {
+			return fmt.Errorf("user %s sets both password and password_env", u.Username)
+		}
+	}
+	if c.Limits.MaxActiveFlows == 0 {
+		c.Limits.MaxActiveFlows = 256
+	}
+	if c.Limits.MaxActiveFlowsPerUser == 0 {
+		c.Limits.MaxActiveFlowsPerUser = 64
+	}
+	if c.Limits.FlowIdleTimeout == "" {
+		c.Limits.FlowIdleTimeout = "1h"
+	}
+	if c.Limits.MaxActiveFlows < 1 || c.Limits.MaxActiveFlows > 4096 || c.Limits.MaxActiveFlowsPerUser < 1 || c.Limits.MaxActiveFlowsPerUser > c.Limits.MaxActiveFlows {
+		return fmt.Errorf("invalid flow limits")
+	}
+	if d, e := time.ParseDuration(c.Limits.FlowIdleTimeout); e != nil || d < 0 {
+		return fmt.Errorf("invalid flow_idle_timeout")
 	}
 	kp := c.QUIC.KeepAlivePeriod
 	if kp == "" {
@@ -115,18 +169,59 @@ func (c Config) ResolveAuth() (string, string, error) {
 	if c.Auth.Username != "" {
 		return c.Auth.Username, c.Auth.Password, nil
 	}
-	if c.Auth.UsernameEnv == "" {
+	if len(c.Auth.Users) > 0 {
 		return "", "", nil
+	}
+	if c.Auth.UsernameEnv == "" {
+		if c.Auth.AllowUnauthenticated {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("CONNECT-UDP authentication is required; set credentials/users or explicitly allow unauthenticated mode")
 	}
 	u, uok := os.LookupEnv(c.Auth.UsernameEnv)
 	p, pok := os.LookupEnv(c.Auth.PasswordEnv)
-	if !uok && !pok || u == "" && p == "" {
-		return "", "", nil
-	}
 	if !uok || !pok || u == "" || p == "" {
-		return "", "", fmt.Errorf("auth environment values must be paired")
+		return "", "", fmt.Errorf("configured auth environment values must both exist and be non-empty")
 	}
 	return u, p, nil
+}
+
+type Credential struct {
+	Name     string
+	Password string
+}
+
+func (c Config) ResolveCredentials() (map[string]Credential, error) {
+	if len(c.Auth.Users) == 0 {
+		u, p, e := c.ResolveAuth()
+		if e != nil {
+			return nil, e
+		}
+		if u == "" {
+			return nil, nil
+		}
+		return map[string]Credential{u: {Name: u, Password: p}}, nil
+	}
+	result := make(map[string]Credential, len(c.Auth.Users))
+	for _, user := range c.Auth.Users {
+		name := user.Name
+		if name == "" {
+			name = user.Username
+		}
+		pass := user.Password
+		if user.PasswordEnv != "" {
+			var ok bool
+			pass, ok = os.LookupEnv(user.PasswordEnv)
+			if !ok || pass == "" {
+				return nil, fmt.Errorf("configured password_env for user %s is missing or empty", user.Username)
+			}
+		}
+		if pass == "" {
+			return nil, fmt.Errorf("password required for user %s", user.Username)
+		}
+		result[user.Username] = Credential{Name: name, Password: pass}
+	}
+	return result, nil
 }
 func urlAuthority(s string) string {
 	u, e := url.Parse("https://" + s)

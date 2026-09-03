@@ -60,7 +60,7 @@ func ServeContext(ctx context.Context, c Config) error {
 }
 
 func serveContext(ctx context.Context, c Config, ready chan<- string) error {
-	user, pass, err := c.ResolveAuth()
+	creds, err := c.ResolveCredentials()
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	defer t.Close()
 	qt := &quic.Transport{Conn: t, StatelessResetKey: rk}
 	defer qt.Close()
-	qc := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: c.KeepAlive(), MaxIdleTimeout: c.IdleTimeout()}
+	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, KeepAlivePeriod: c.KeepAlive(), MaxIdleTimeout: c.IdleTimeout(), MaxIncomingStreams: 64}
 	ql, e := qt.Listen(http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), qc)
 	if e != nil {
 		return e
@@ -95,6 +95,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	}
 	p := &Proxy{}
 	tcpRelay := &TCPRelay{}
+	admission := NewAdmission(maxOr(c.Limits.MaxActiveFlows, 256), maxOr(c.Limits.MaxActiveFlowsPerUser, 64))
 	h := mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
 		if r.Proto == "connect-udp" {
 			q, e := ParseProxyRequest(r, u)
@@ -107,6 +108,12 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 				}
 				return
 			}
+			release, err := admission.Acquire(Identity(r))
+			if err != nil {
+				w.WriteHeader(503)
+				return
+			}
+			defer release()
 			_ = p.Proxy(w, q)
 			return
 		}
@@ -115,6 +122,12 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 			if target == "" {
 				target = r.Host
 			}
+			release, err := admission.Acquire(Identity(r))
+			if err != nil {
+				w.WriteHeader(503)
+				return
+			}
+			defer release()
 			tcpRelay.Relay(w, target)
 			return
 		}
@@ -124,7 +137,7 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 			w.WriteHeader(501)
 		}
 	})
-	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, Handler: WithAuth(h, user, pass)}
+	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, MaxHeaderBytes: 64 * 1024, Handler: WithCredentials(h, creds)}
 	if ready != nil {
 		ready <- t.LocalAddr().String()
 	}
@@ -153,4 +166,11 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 		}
 		return nil
 	}
+}
+
+func maxOr(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
 }

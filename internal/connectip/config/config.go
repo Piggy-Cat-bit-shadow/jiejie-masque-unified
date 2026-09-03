@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"time"
@@ -11,6 +13,7 @@ import (
 )
 
 type Config struct {
+	Mode        string      `yaml:"mode"`
 	Listen      string      `yaml:"listen"`
 	TLS         TLS         `yaml:"tls"`
 	QUIC        QUIC        `yaml:"quic"`
@@ -48,10 +51,11 @@ type Server struct {
 	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
 }
 type SessionNat struct {
-	Enabled     bool   `yaml:"enabled"`
-	Pool        string `yaml:"pool"`
-	MaxSessions int    `yaml:"max_sessions"`
-	ReuseDelay  string `yaml:"reuse_delay"`
+	Enabled              bool   `yaml:"enabled"`
+	Pool                 string `yaml:"pool"`
+	MaxSessions          int    `yaml:"max_sessions"`
+	ReuseDelay           string `yaml:"reuse_delay"`
+	MaxSessionsPerClient int    `yaml:"max_sessions_per_client,omitempty"`
 }
 
 func Load(path string) (Config, error) {
@@ -60,7 +64,16 @@ func Load(path string) (Config, error) {
 		return Config{}, e
 	}
 	var c Config
-	if e = yaml.Unmarshal(b, &c); e != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if e = dec.Decode(&c); e != nil {
+		return c, e
+	}
+	var extra any
+	if e = dec.Decode(&extra); e != io.EOF {
+		if e == nil {
+			e = fmt.Errorf("multiple YAML documents are not allowed")
+		}
 		return c, e
 	}
 	if c.Server.MTU == 0 {
@@ -84,6 +97,9 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.Mode != "" && c.Mode != "connect-ip" {
+		return fmt.Errorf("mode must be connect-ip")
+	}
 	if c.Listen == "" || c.TLS.Cert == "" || c.TLS.Key == "" {
 		return fmt.Errorf("listen, tls.cert and tls.key are required")
 	}

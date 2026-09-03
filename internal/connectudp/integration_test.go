@@ -56,6 +56,7 @@ func integrationConfig(t *testing.T) Config {
 	_ = keyFile.Close()
 	var c Config
 	c.Mode = "connect-udp"
+	c.Auth.AllowUnauthenticated = true
 	c.Listen = "127.0.0.1:0"
 	c.PublicAuthority = "proxy.test"
 	c.TLS.Cert = certPath

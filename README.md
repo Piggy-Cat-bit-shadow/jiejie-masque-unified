@@ -22,4 +22,6 @@ jiejie-masque check-config --config /etc/jiejie-masque/connect-udp.yaml
 
 The modes use separate YAML files, listeners, reset-key paths and systemd services. CONNECT-IP requires `CAP_NET_ADMIN`, a TUN device, and network preparation. CONNECT-UDP requires none of those privileges and must not receive `CAP_NET_ADMIN`.
 
+For a small provider, keep CONNECT-UDP authenticated and bounded: use `auth.users` with `password_env`, `max_active_flows: 256`, `max_active_flows_per_user: 64`, and `flow_idle_timeout: 1h`. Never enable unauthenticated mode on a publicly reachable proxy. CONNECT-IP shared-profile mode still permits concurrent sessions using the same Mihomo key and visible tunnel IP; its optional per-client session cap only limits runaway reconnects.
+
 Loopback HTTP/3 integration tests cover both CONNECT-UDP datagram relay and plain CONNECT TCP relay. Production migration remains out of scope. Preserve the existing CONNECT-IP P-256 certificate/private key because clients pin its public key.

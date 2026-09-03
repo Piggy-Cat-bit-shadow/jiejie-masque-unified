@@ -30,6 +30,7 @@ server:
     enabled: true
     pool: 10.200.128.0/17
     max_sessions: 120
+    max_sessions_per_client: 32
     reuse_delay: 30m
 # For legacy single-session compatibility only, disable session_nat and use:
 # server:

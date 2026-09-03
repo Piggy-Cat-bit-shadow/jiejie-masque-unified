@@ -9,6 +9,13 @@ auth:
   password: ""
   username_env: JIEJIE_MASQUE_USERNAME
   password_env: JIEJIE_MASQUE_PASSWORD
+  allow_unauthenticated: false
+  # Prefer password_env for deployed users.
+  users: []
+limits:
+  max_active_flows: 256
+  max_active_flows_per_user: 64
+  flow_idle_timeout: 1h
 quic:
   keep_alive_period: 15s
   max_idle_timeout: 2m

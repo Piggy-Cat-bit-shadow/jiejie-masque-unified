@@ -1,11 +1,21 @@
 package connectudp
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	mh "github.com/metacubex/http"
 	"strings"
 )
+
+type identityKey struct{}
+
+func Identity(r *mh.Request) string {
+	if v := r.Context().Value(identityKey{}); v != nil {
+		return v.(string)
+	}
+	return "anonymous"
+}
 
 func credentials(r *mh.Request) (string, string, bool) {
 	for _, v := range []string{r.Header.Get("Authorization"), r.Header.Get("Proxy-Authorization")} {
@@ -34,6 +44,24 @@ func WithAuth(next mh.Handler, u, p string) mh.Handler {
 				return
 			}
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func WithCredentials(next mh.Handler, creds map[string]Credential) mh.Handler {
+	return mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
+		if len(creds) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := credentials(r)
+		c, found := creds[u]
+		if !ok || !found || subtle.ConstantTimeCompare([]byte(p), []byte(c.Password)) != 1 {
+			w.Header().Set("Proxy-Authenticate", `Basic realm="masque"`)
+			w.WriteHeader(407)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), identityKey{}, c.Name))
 		next.ServeHTTP(w, r)
 	})
 }
