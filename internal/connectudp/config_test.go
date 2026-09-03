@@ -36,3 +36,14 @@ func TestResolveAuth(t *testing.T) {
 		t.Fatal("explicit credentials must win")
 	}
 }
+
+func TestValidateRejectsDisabledFlowIdleTimeout(t *testing.T) {
+	c := Config{Mode: "connect-udp", Listen: "127.0.0.1:4433", PublicAuthority: "proxy.test"}
+	c.TLS.Cert, c.TLS.Key = "cert", "key"
+	c.QUIC.StatelessResetKeyFile = "/tmp/reset.key"
+	c.Auth.AllowUnauthenticated = true
+	c.Limits.FlowIdleTimeout = "0"
+	if err := c.Validate(false); err == nil {
+		t.Fatal("zero flow_idle_timeout must be rejected")
+	}
+}

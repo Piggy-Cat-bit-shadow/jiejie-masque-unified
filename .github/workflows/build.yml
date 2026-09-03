@@ -47,13 +47,16 @@ jobs:
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
 
+      - name: Public repository privacy self-test
+        run: bash scripts/verify-public-repo-selftest.sh
+
       - name: Systemd contract
         run: bash scripts/verify-systemd-contract.sh
 
       - name: Shell check
         run: |
           bash -n scripts/verify-deps.sh
-          bash -n scripts/verify-public-repo.sh scripts/verify-systemd-contract.sh scripts/build-release.sh
+          bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
 
       - name: Build Linux amd64

@@ -4,6 +4,11 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
+command -v rg >/dev/null 2>&1 || {
+  echo "public-repo: ripgrep (rg) is required" >&2
+  exit 1
+}
+
 files=()
 while IFS= read -r file; do files+=("$file"); done < <(git ls-files -- README.md MIGRATION.md ARCHITECTURE.md config.example.yaml 'configs/**' 'contrib/**')
 (( ${#files[@]} > 0 )) || { echo "public-repo: no public files found"; exit 0; }

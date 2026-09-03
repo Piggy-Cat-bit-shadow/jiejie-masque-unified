@@ -112,7 +112,7 @@ func (c Config) Validate(checkFiles bool) error {
 	if c.Limits.MaxActiveFlows < 1 || c.Limits.MaxActiveFlows > 4096 || c.Limits.MaxActiveFlowsPerUser < 1 || c.Limits.MaxActiveFlowsPerUser > c.Limits.MaxActiveFlows {
 		return fmt.Errorf("invalid flow limits")
 	}
-	if d, e := time.ParseDuration(c.Limits.FlowIdleTimeout); e != nil || d < 0 {
+	if d, e := time.ParseDuration(c.Limits.FlowIdleTimeout); e != nil || d <= 0 {
 		return fmt.Errorf("invalid flow_idle_timeout")
 	}
 	kp := c.QUIC.KeepAlivePeriod

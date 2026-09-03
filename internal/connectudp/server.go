@@ -1,6 +1,7 @@
 package connectudp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"github.com/metacubex/quic-go/http3"
 	metatls "github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -44,11 +46,27 @@ func resetKey(path string) (*quic.StatelessResetKey, error) {
 		return nil, e
 	}
 	defer f.Close()
-	if _, e = f.Write(k[:]); e != nil {
+	n, e := f.Write(k[:])
+	cleanup := func() { _ = f.Close(); _ = os.Remove(path) }
+	if e != nil || n != len(k) {
+		cleanup()
+		if e == nil {
+			e = io.ErrShortWrite
+		}
 		return nil, e
 	}
 	if e = f.Sync(); e != nil {
+		cleanup()
 		return nil, e
+	}
+	if e = f.Close(); e != nil {
+		_ = os.Remove(path)
+		return nil, e
+	}
+	confirmed, e := os.ReadFile(path)
+	if e != nil || len(confirmed) != len(k) || !bytes.Equal(confirmed, k[:]) {
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("confirm reset key: %w", e)
 	}
 	return &k, nil
 }
