@@ -44,6 +44,12 @@ jobs:
       - name: Dependency check
         run: scripts/verify-deps.sh
 
+      - name: Public repository privacy policy
+        run: bash scripts/verify-public-repo.sh
+
+      - name: Public repository privacy policy
+        run: bash scripts/verify-public-repo.sh
+
       - name: Shell check
         run: |
           bash -n scripts/verify-deps.sh

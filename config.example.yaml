@@ -1,11 +1,11 @@
 listen: 127.0.0.1:4434
 tls:
-  # Generated with: masque-lite server-keygen -cert /etc/masque-lite/server.crt -key /etc/masque-lite/server.key
-  # Must be an independent P-256 ECDSA certificate, not an RSA wildcard certificate.
-  cert: /etc/masque-lite/server.crt
-  key: /etc/masque-lite/server.key
+  # Generated with: jiejie-masque server-keygen --cert /etc/jiejie-masque/connect-ip/server.crt --key /etc/jiejie-masque/connect-ip/server.key
+  # Must be an independent P-256 ECDSA certificate, not a wildcard certificate.
+  cert: /etc/jiejie-masque/connect-ip/server.crt
+  key: /etc/jiejie-masque/connect-ip/server.key
 quic:
-  stateless_reset_key_file: /var/lib/masque-lite/stateless-reset.key
+  stateless_reset_key_file: /var/lib/jiejie-masque-connect-ip/stateless-reset.key
 host_network:
   # Optional; otherwise the default-route interface is detected.
   external_interface: eth0

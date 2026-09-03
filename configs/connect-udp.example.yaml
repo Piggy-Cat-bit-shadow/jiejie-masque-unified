@@ -2,16 +2,13 @@ mode: connect-udp
 listen: 127.0.0.1:4433
 public_authority: proxy.example.com:443
 tls:
-  cert: /etc/ssl/proxy.example.com/fullchain.pem
-  key: /etc/ssl/proxy.example.com/private.key
+  cert: /etc/jiejie-masque/connect-udp/fullchain.pem
+  key: /etc/jiejie-masque/connect-udp/private.key
 auth:
-  username: ""
-  password: ""
-  username_env: JIEJIE_MASQUE_USERNAME
-  password_env: JIEJIE_MASQUE_PASSWORD
   allow_unauthenticated: false
-  # Prefer password_env for deployed users.
-  users: []
+  users:
+    - username: example-client
+      password_env: JIEJIE_MASQUE_EXAMPLE_PASSWORD
 limits:
   max_active_flows: 256
   max_active_flows_per_user: 64

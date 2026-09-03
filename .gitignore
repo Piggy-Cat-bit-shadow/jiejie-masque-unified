@@ -1,0 +1,8 @@
+*.pem
+*.key
+*.crt
+.env
+.env.*
+config.local.yaml
+configs/local/
+dist/
