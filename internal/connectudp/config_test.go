@@ -47,3 +47,20 @@ func TestValidateRejectsDisabledFlowIdleTimeout(t *testing.T) {
 		t.Fatal("zero flow_idle_timeout must be rejected")
 	}
 }
+
+func TestLoadRejectsUnknownFieldAndSecondDocument(t *testing.T) {
+	base := "mode: connect-udp\nlisten: 127.0.0.1:4433\npublic_authority: proxy.test\ntls:\n  cert: cert\n  key: key\nauth:\n  allow_unauthenticated: true\nquic:\n  stateless_reset_key_file: /tmp/reset.key\n"
+	path := t.TempDir() + "/config.yaml"
+	if err := os.WriteFile(path, []byte(base+"unknown_field: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("unknown field accepted")
+	}
+	if err := os.WriteFile(path, []byte(base+"---\n"+base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("second YAML document accepted")
+	}
+}

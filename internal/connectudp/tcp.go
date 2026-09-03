@@ -19,6 +19,12 @@ type TCPRelay struct {
 	closers map[io.Closer]struct{}
 }
 
+func (r *TCPRelay) activeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.closers) / 2
+}
+
 func statusForDialError(err error) int {
 	var addrErr *net.AddrError
 	if errors.As(err, &addrErr) {

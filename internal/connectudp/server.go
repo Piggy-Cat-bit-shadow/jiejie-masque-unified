@@ -90,6 +90,16 @@ func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 }
 
 func serveContextWithReaper(ctx context.Context, c Config, ready chan<- string, reaperInterval time.Duration) error {
+	return serveContextWithState(ctx, c, ready, reaperInterval, nil)
+}
+
+type serverState struct {
+	flows     *FlowTracker
+	relay     *TCPRelay
+	admission *Admission
+}
+
+func serveContextWithState(ctx context.Context, c Config, ready chan<- string, reaperInterval time.Duration, state *serverState) error {
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 	creds, err := c.ResolveCredentials()
@@ -129,6 +139,9 @@ func serveContextWithReaper(ctx context.Context, c Config, ready chan<- string, 
 	tcpRelay := &TCPRelay{}
 	admission := NewAdmission(maxOr(c.Limits.MaxActiveFlows, 256), maxOr(c.Limits.MaxActiveFlowsPerUser, 64))
 	flows := NewFlowTracker()
+	if state != nil {
+		state.flows, state.relay, state.admission = flows, tcpRelay, admission
+	}
 	go flows.Run(runCtx.Done(), c.FlowIdleTimeout(), reaperInterval)
 	h := mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) {
 		if r.Proto == "connect-udp" {
