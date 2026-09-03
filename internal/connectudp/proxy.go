@@ -46,6 +46,10 @@ type proxyEntry struct {
 	conn *net.UDPConn
 }
 
+type datagramSender interface {
+	SendDatagram([]byte) error
+}
+
 func (e proxyEntry) Close() error {
 	e.str.CancelRead(quic.StreamErrorCode(http3.ErrCodeConnectError))
 	return errors.Join(e.str.Close(), e.conn.Close())
@@ -254,15 +258,23 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flo
 			log.Printf("dropping UDP packet larger than MTU")
 			continue
 		}
-		packet, ok := buildContextDatagram(b[len(contextIDZero) : len(contextIDZero)+n])
-		if !ok {
-			continue
-		}
-		if err := str.SendDatagram(packet); err != nil {
+		if err := sendDatagramOrDrop(str, b[:len(contextIDZero)+n]); err != nil {
 			return err
 		}
 		flow.Touch()
 	}
+}
+
+// sendDatagramOrDrop keeps a transient path-MTU reduction from terminating an
+// otherwise healthy UDP flow. quic-go synchronously copies a successful
+// datagram, so callers may reuse packet immediately after this returns.
+func sendDatagramOrDrop(str datagramSender, packet []byte) error {
+	err := str.SendDatagram(packet)
+	var tooLarge *quic.DatagramTooLargeError
+	if errors.As(err, &tooLarge) {
+		return nil
+	}
+	return err
 }
 
 // Close closes the proxy, immediately terminating all proxied flows.

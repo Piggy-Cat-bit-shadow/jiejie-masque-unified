@@ -137,8 +137,9 @@ func serveConnectIP() error {
 			return nil
 		})
 	}
+	packetPool := session.NewPacketPool(c.Server.MTU)
 	fatal := make(chan error, 2)
-	go tunDispatcher(tun, mgr, c.Server.MTU, fatal)
+	go tunDispatcher(tun, mgr, packetPool, fatal)
 	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, MaxIdleTimeout: 2 * time.Minute, KeepAlivePeriod: 15 * time.Second, MaxIncomingStreams: 32}
 	transport := &quic.Transport{Conn: packetConn, StatelessResetKey: &resetKey}
 	ql, err := transport.Listen(http3.ConfigureTLSConfig(tc), qc)
@@ -165,7 +166,7 @@ func serveConnectIP() error {
 	if err := probe.Check(); err != nil {
 		return fmt.Errorf("data-plane unhealthy: %w", err)
 	}
-	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, Handler: mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) { handleRequest(w, r, c, byKey, mgr, tun) })}
+	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, Handler: mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) { handleRequest(w, r, c, byKey, mgr, tun, packetPool) })}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopReaper := context.WithCancel(context.Background())
@@ -239,7 +240,7 @@ func reapIdle(mgr *session.Manager, now time.Time, timeout time.Duration) int {
 	return closed
 }
 
-func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device) {
+func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
 	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
 	parseProtocol, ok := protocolForParse(r.Proto)
 	if !ok {
@@ -294,7 +295,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 		conn.Close()
 		return
 	}
-	s := session.NewWithContext(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
+	s := session.NewWithContextAndPacketPool(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, packetPool, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
 	if mgr.IsShadow() {
 		if err := mgr.Register(s); err != nil {
 			log.Printf("session register failed for %s: %v", client.Name, err)
@@ -327,7 +328,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	log.Printf("session=%d client=%s visible=%s shadow=%s closed reason=%s", s.ID, client.Name, s.VisibleIP, shadowString(s.ShadowIP), reason)
 }
 
-func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, mtu int, fatal chan<- error) {
+func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
 	buf := make([]byte, 65535)
 	for {
 		n, err := tun.Read(buf)
@@ -343,20 +344,20 @@ func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, mtu int, fatal chan
 		if s == nil {
 			continue
 		}
-		pkt := append([]byte(nil), buf[:n]...)
+		pkt := packetPool.Get(n)
+		copy(pkt.Data, buf[:n])
 		if mgr.IsShadow() {
-			if pkt[9] == 1 {
-				if !packet.TranslateICMP(pkt, s.VisibleIP, s.ShadowIP, false) {
+			if pkt.Data[9] == 1 {
+				if !packet.TranslateICMP(pkt.Data, s.VisibleIP, s.ShadowIP, false) {
+					packetPool.Put(pkt)
 					continue
 				}
-			} else if !packet.RewriteDestinationIPv4(pkt, s.ShadowIP, s.VisibleIP) {
+			} else if !packet.RewriteDestinationIPv4(pkt.Data, s.ShadowIP, s.VisibleIP) {
+				packetPool.Put(pkt)
 				continue
 			}
 		}
-		select {
-		case s.Outbound <- pkt:
-		default:
-		}
+		s.TryEnqueue(pkt)
 	}
 }
 func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
@@ -365,7 +366,8 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 		case <-s.Ctx.Done():
 			return
 		case pkt := <-s.Outbound:
-			icmp, err := s.Conn.WritePacket(pkt)
+			icmp, err := s.Conn.WritePacket(pkt.Data)
+			s.ReleasePacket(pkt)
 			if len(icmp) > 0 {
 				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
 					continue

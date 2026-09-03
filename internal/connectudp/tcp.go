@@ -19,6 +19,16 @@ type TCPRelay struct {
 	closers map[io.Closer]struct{}
 }
 
+const tcpCopyBufferSize = 32 << 10
+
+var tcpCopyBufferPool = sync.Pool{New: func() any { return make([]byte, tcpCopyBufferSize) }}
+
+func copyWithPool(dst io.Writer, src io.Reader) (int64, error) {
+	buf := tcpCopyBufferPool.Get().([]byte)
+	defer tcpCopyBufferPool.Put(buf)
+	return io.CopyBuffer(dst, src, buf)
+}
+
 func (r *TCPRelay) activeCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -76,8 +86,8 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string, flow *Flow) {
 	}()
 	w.WriteHeader(200)
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(activityWriter{Writer: conn, flow: flow}, stream); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(activityWriter{Writer: stream, flow: flow}, conn); done <- struct{}{} }()
+	go func() { _, _ = copyWithPool(activityWriter{Writer: conn, flow: flow}, stream); done <- struct{}{} }()
+	go func() { _, _ = copyWithPool(activityWriter{Writer: stream, flow: flow}, conn); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
 	stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))

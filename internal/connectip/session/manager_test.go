@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"sync"
@@ -102,14 +103,29 @@ func TestManagerQueueIsBounded(t *testing.T) {
 		t.Fatalf("queue capacity = %d, want %d", cap(s.Outbound), DefaultOutboundQueueSize)
 	}
 	for i := 0; i < cap(s.Outbound); i++ {
-		s.Outbound <- []byte{1}
+		s.Outbound <- &PacketBuffer{Data: []byte{1}}
 	}
 	select {
-	case s.Outbound <- []byte{2}:
+	case s.Outbound <- &PacketBuffer{Data: []byte{2}}:
 		t.Fatal("queue accepted packet beyond capacity")
 	default:
 	}
 	s.Close()
+}
+
+func TestCloseDrainsOutboundAndRejectsNewPackets(t *testing.T) {
+	pool := NewPacketPool(1280)
+	s := NewWithContextAndPacketPool(context.Background(), netip.MustParseAddr("10.200.0.2"), "client", &fakeConn{}, pool, nil)
+	if !s.TryEnqueue(pool.Get(1280)) {
+		t.Fatal("enqueue failed")
+	}
+	s.Close()
+	if len(s.Outbound) != 0 {
+		t.Fatalf("queued packets after close = %d", len(s.Outbound))
+	}
+	if s.TryEnqueue(pool.Get(1280)) {
+		t.Fatal("closed session accepted packet")
+	}
 }
 
 func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {

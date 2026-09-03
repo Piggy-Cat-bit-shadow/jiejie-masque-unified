@@ -29,8 +29,10 @@ type Session struct {
 	Ctx          context.Context
 	Cancel       context.CancelFunc
 	Generation   uint64
-	Outbound     chan []byte
+	Outbound     chan *PacketBuffer
 	closeOnce    sync.Once
+	outboundMu   sync.Mutex
+	packetPool   *PacketPool
 	onClose      func(*Session)
 	closeReason  atomic.Value
 	lastActivity atomic.Int64
@@ -52,17 +54,52 @@ func New(ip netip.Addr, identity string, conn PacketConn, onClose func(*Session)
 	return NewWithContext(context.Background(), ip, identity, conn, onClose)
 }
 func NewWithContext(parent context.Context, ip netip.Addr, identity string, conn PacketConn, onClose func(*Session)) *Session {
+	return NewWithContextAndPacketPool(parent, ip, identity, conn, nil, onClose)
+}
+func NewWithContextAndPacketPool(parent context.Context, ip netip.Addr, identity string, conn PacketConn, packetPool *PacketPool, onClose func(*Session)) *Session {
 	ctx, cancel := context.WithCancel(parent)
-	s := &Session{ClientIP: ip, VisibleIP: ip, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan []byte, DefaultOutboundQueueSize), onClose: onClose}
+	s := &Session{ClientIP: ip, VisibleIP: ip, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, DefaultOutboundQueueSize), packetPool: packetPool, onClose: onClose}
 	s.Touch(time.Now())
 	return s
 }
 
 func (s *Session) Touch(now time.Time)     { s.lastActivity.Store(now.UnixNano()) }
 func (s *Session) LastActivity() time.Time { return time.Unix(0, s.lastActivity.Load()) }
+func (s *Session) TryEnqueue(packet *PacketBuffer) bool {
+	s.outboundMu.Lock()
+	defer s.outboundMu.Unlock()
+	if s.Ctx.Err() != nil {
+		s.releasePacket(packet)
+		return false
+	}
+	select {
+	case s.Outbound <- packet:
+		return true
+	default:
+		s.releasePacket(packet)
+		return false
+	}
+}
+func (s *Session) ReleasePacket(packet *PacketBuffer) { s.releasePacket(packet) }
+func (s *Session) releasePacket(packet *PacketBuffer) {
+	if s.packetPool != nil {
+		s.packetPool.Put(packet)
+	}
+}
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
+		s.outboundMu.Lock()
 		s.Cancel()
+		for {
+			select {
+			case packet := <-s.Outbound:
+				s.releasePacket(packet)
+			default:
+				s.outboundMu.Unlock()
+				goto drained
+			}
+		}
+	drained:
 		_ = s.Conn.Close()
 		if s.onClose != nil {
 			s.onClose(s)
