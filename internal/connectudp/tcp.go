@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
@@ -51,12 +50,7 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string, flow *Flow) {
 		w.WriteHeader(400)
 		return
 	}
-	resolved, err := r.Policy.ResolveTarget(context.Background(), "tcp", target)
-	if err != nil {
-		w.WriteHeader(statusForDialError(err))
-		return
-	}
-	conn, err := net.DialTimeout("tcp", resolved, 10*time.Second)
+	conn, err := r.Policy.DialTCP(context.Background(), target)
 	if err != nil {
 		w.WriteHeader(statusForDialError(err))
 		return
