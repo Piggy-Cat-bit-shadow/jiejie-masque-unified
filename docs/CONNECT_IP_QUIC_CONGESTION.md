@@ -29,7 +29,7 @@ HTTP/3 control stream and CONNECT-IP data plane
 ## Fork provenance
 
 `github.com/metacubex/quic-go` is replaced by
-`github.com/Piggy-Cat-bit-shadow/quic-go` commit `1c94200c0b42`.
+`github.com/Piggy-Cat-bit-shadow/quic-go` commit `cd08ef4d1380`.
 It is based on the pinned MetaCubeX upstream commit `2548683b76f4`; its only
 behavioral patch adds `Conn.SetCubicCongestionControl` and its narrow internal
 bridge. It does not change HTTP/3 wire behavior, ECN, GSO, PMTU, loss recovery,

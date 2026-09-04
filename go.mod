@@ -3,7 +3,7 @@ module github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified
 go 1.25.0
 
 require (
-	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904222922-603d9a5a375e
+	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904231547-d9fb020adc06
 	github.com/dunglas/httpsfv v1.0.2
 	github.com/metacubex/http v0.1.7
 	github.com/metacubex/quic-go v0.61.1-0.20260727080200-2548683b76f4
@@ -16,7 +16,7 @@ require (
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior. The replacement is
 // a minimal fork at the same upstream commit which exposes native CUBIC for
 // the CONNECT-IP server selector.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260904230354-1c94200c0b42
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260904231530-cd08ef4d1380
 
 require (
 	github.com/metacubex/cpu v0.1.0 // indirect

@@ -405,7 +405,7 @@ func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool
 			bufs[i] = packets[i].Buffer
 			sizes[i] = 0
 		}
-		n, err := tun.ReadBatch(bufs, sizes, 1)
+		n, err := tun.ReadBatch(bufs, sizes, session.PacketPoolHeadroom)
 		if err != nil {
 			for _, pkt := range packets {
 				packetPool.Put(pkt)
@@ -454,7 +454,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 			if fast, ok := s.Conn.(interface {
 				WritePacketBuffer([]byte, int, int) ([]byte, error)
 			}); ok {
-				icmp, err = fast.WritePacketBuffer(pkt.Buffer, 1, len(pkt.Data))
+				icmp, err = fast.WritePacketBuffer(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data))
 			} else {
 				icmp, err = s.Conn.WritePacket(pkt.Data)
 			}

@@ -68,7 +68,7 @@ func TestHandleVirtioReadGSOTCPv4AndV6(t *testing.T) {
 				iphLen, addrAt, addrLen = 40, 8, 16
 			}
 			for i := 0; i < n; i++ {
-				p := bufs[i][1 : 1+sizes[i]]
+				p := bufs[i][9 : 9+sizes[i]]
 				if len(p) != iphLen+20+100 {
 					t.Fatalf("segment %d length = %d", i, len(p))
 				}
@@ -118,7 +118,7 @@ func TestHandleVirtioReadNoneRepairsPartialChecksum(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("GSO_NONE partial checksum = %d, %v", n, err)
 	}
-	out := bufs[0][1 : 1+sizes[0]]
+	out := bufs[0][9 : 9+sizes[0]]
 	if ^checksum(out[20:], pseudo) != 0 {
 		t.Fatal("TCP partial checksum was not repaired")
 	}

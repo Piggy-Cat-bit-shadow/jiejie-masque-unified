@@ -5,8 +5,8 @@ import "testing"
 func TestPacketPoolAcquireForReadPreservesHeadroom(t *testing.T) {
 	pool := NewPacketPool(1280)
 	pkt := pool.AcquireForRead()
-	if len(pkt.Buffer) != 1282 {
-		t.Fatalf("backing length = %d, want 1282", len(pkt.Buffer))
+	if len(pkt.Buffer) != 1290 {
+		t.Fatalf("backing length = %d, want 1290", len(pkt.Buffer))
 	}
 	if len(pkt.Data) != 1281 {
 		t.Fatalf("read length = %d, want 1281", len(pkt.Data))

@@ -115,7 +115,7 @@ func TestTUNDispatcherReadsDirectlyIntoQueuedPacket(t *testing.T) {
 	if len(reader.reads) < 1 || &queued.Data[0] != &reader.reads[0][0] {
 		t.Fatal("queued packet was not read directly into its pooled payload")
 	}
-	if queued.Buffer[0] != 0 || len(queued.Data) != len(ip) {
+	if queued.Buffer[session.PacketPoolHeadroom-1] != 0 || len(queued.Data) != len(ip) {
 		t.Fatalf("packet layout changed: headroom=%#x length=%d", queued.Buffer[0], len(queued.Data))
 	}
 }
