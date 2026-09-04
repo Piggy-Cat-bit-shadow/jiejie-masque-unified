@@ -129,6 +129,7 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 		}
 		j := i + 1
 		total := len(packets[i])
+		gsoSize := m.payload
 		for j < len(packets) && j-i < MaxTXGROBatch {
 			n, good := tcpGROMetaFor(packets[j])
 			if !good || !tcpCanAppend(m, n, packets[i], packets[j]) {
@@ -168,7 +169,7 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			binary.BigEndian.PutUint16(super[10:], ^checksum(super[:m.ipLen], 0))
 		}
 		binary.LittleEndian.PutUint16(d.txGROBuf[2:], uint16(m.ipLen+m.tcpLen))
-		binary.LittleEndian.PutUint16(d.txGROBuf[4:], uint16(m.payload))
+		binary.LittleEndian.PutUint16(d.txGROBuf[4:], uint16(gsoSize))
 		binary.LittleEndian.PutUint16(d.txGROBuf[6:], uint16(m.ipLen))
 		binary.LittleEndian.PutUint16(d.txGROBuf[8:], 16)
 		d.txGROBuf[0] = unix.VIRTIO_NET_HDR_F_NEEDS_CSUM
