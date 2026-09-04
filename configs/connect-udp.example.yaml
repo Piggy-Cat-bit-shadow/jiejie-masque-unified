@@ -9,6 +9,9 @@ auth:
   users:
     - username: example-client
       password_env: JIEJIE_MASQUE_EXAMPLE_PASSWORD
+target_policy:
+  # Standard CONNECT/CONNECT-UDP may only reach public destinations by default.
+  allow_private: false
 limits:
   max_active_flows: 256
   max_active_flows_per_user: 64

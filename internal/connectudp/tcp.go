@@ -1,6 +1,7 @@
 package connectudp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 )
 
 type TCPRelay struct {
+	Policy  TargetPolicy
 	mu      sync.Mutex
 	closed  bool
 	wg      sync.WaitGroup
@@ -49,7 +51,12 @@ func (r *TCPRelay) Relay(w mh.ResponseWriter, target string, flow *Flow) {
 		w.WriteHeader(400)
 		return
 	}
-	conn, err := net.DialTimeout("tcp", target, 10*time.Second)
+	resolved, err := r.Policy.ResolveTarget(context.Background(), "tcp", target)
+	if err != nil {
+		w.WriteHeader(statusForDialError(err))
+		return
+	}
+	conn, err := net.DialTimeout("tcp", resolved, 10*time.Second)
 	if err != nil {
 		w.WriteHeader(statusForDialError(err))
 		return

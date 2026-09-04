@@ -23,8 +23,9 @@ type Config struct {
 		Cert string `yaml:"cert"`
 		Key  string `yaml:"key"`
 	} `yaml:"tls"`
-	Auth   AuthConfig `yaml:"auth"`
-	Limits struct {
+	Auth         AuthConfig   `yaml:"auth"`
+	TargetPolicy TargetPolicy `yaml:"target_policy"`
+	Limits       struct {
 		MaxActiveFlows        int    `yaml:"max_active_flows"`
 		MaxActiveFlowsPerUser int    `yaml:"max_active_flows_per_user"`
 		FlowIdleTimeout       string `yaml:"flow_idle_timeout"`

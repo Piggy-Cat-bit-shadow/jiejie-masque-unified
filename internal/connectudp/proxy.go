@@ -57,6 +57,7 @@ func (e proxyEntry) Close() error {
 
 // A Proxy is an RFC 9298 CONNECT-UDP proxy.
 type Proxy struct {
+	Policy   TargetPolicy
 	mx       sync.Mutex
 	closed   bool
 	refCount sync.WaitGroup // counter for the Go routines spawned in Upgrade
@@ -127,13 +128,18 @@ func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
 		return err
 	}
 
-	addr, err := net.ResolveUDPAddr("udp", r.Target)
+	resolved, err := s.Policy.ResolveTarget(context.Background(), "udp", r.Target)
 	if err != nil {
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
 			dnsErrorToProxyStatus(&proxyStatus, dnsError)
 		}
 		err = writeProxyStatus(err)
+		w.WriteHeader(errToStatus(err))
+		return err
+	}
+	addr, err := net.ResolveUDPAddr("udp", resolved)
+	if err != nil {
 		w.WriteHeader(errToStatus(err))
 		return err
 	}

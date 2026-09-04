@@ -135,8 +135,8 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 	if e != nil {
 		return e
 	}
-	p := &Proxy{}
-	tcpRelay := &TCPRelay{}
+	p := &Proxy{Policy: c.TargetPolicy}
+	tcpRelay := &TCPRelay{Policy: c.TargetPolicy}
 	admission := NewAdmission(maxOr(c.Limits.MaxActiveFlows, 256), maxOr(c.Limits.MaxActiveFlowsPerUser, 64))
 	flows := NewFlowTracker()
 	if state != nil {
