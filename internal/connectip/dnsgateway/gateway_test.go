@@ -91,6 +91,10 @@ func TestGatewayRelaysUDPAndTCP(t *testing.T) {
 	if _, err = io.ReadFull(tcp, got); err != nil || string(got) != string(frame) {
 		t.Fatalf("TCP response %x, %v", got, err)
 	}
+	deadline := time.Now().Add(time.Second)
+	for g.Queries() != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if g.Queries() != 2 {
 		t.Fatalf("queries = %d", g.Queries())
 	}
