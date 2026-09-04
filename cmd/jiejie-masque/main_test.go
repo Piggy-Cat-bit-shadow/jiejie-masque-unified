@@ -1,13 +1,31 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"net/netip"
 	"testing"
 	"time"
 )
+
+type scriptedTunReader struct {
+	packets [][]byte
+	reads   [][]byte
+}
+
+func (r *scriptedTunReader) Read(dst []byte) (int, error) {
+	r.reads = append(r.reads, dst)
+	if len(r.packets) == 0 {
+		return 0, errors.New("closed")
+	}
+	pkt := r.packets[0]
+	r.packets = r.packets[1:]
+	copy(dst, pkt)
+	return len(pkt), nil
+}
 
 func TestProtocolForParse(t *testing.T) {
 	for _, protocol := range []string{"connect-ip", "cf-connect-ip"} {
@@ -73,5 +91,31 @@ func TestIPv4PacketValidation(t *testing.T) {
 		if _, ok := packet.Destination(bad); ok {
 			t.Fatal("malformed/non-IPv4 packet accepted")
 		}
+	}
+}
+
+func TestTUNDispatcherReadsDirectlyIntoQueuedPacket(t *testing.T) {
+	pool := session.NewPacketPool(1280)
+	mgr := session.NewManager()
+	s := session.NewWithContextAndPacketPool(context.Background(), netip.MustParseAddr("10.200.0.2"), "client", testPacketConn{}, pool, nil)
+	defer s.Close()
+	mgr.Replace(s)
+	ip := make([]byte, 20)
+	ip[0] = 0x45
+	binary.BigEndian.PutUint16(ip[2:4], uint16(len(ip)))
+	copy(ip[16:20], []byte{10, 200, 0, 2})
+	reader := &scriptedTunReader{packets: [][]byte{ip}}
+	fatal := make(chan error, 1)
+	tunDispatcherReadLoop(reader, mgr, pool, fatal)
+	if err := <-fatal; err == nil {
+		t.Fatal("expected reader close")
+	}
+	queued := <-s.Outbound
+	defer s.ReleasePacket(queued)
+	if len(reader.reads) < 1 || &queued.Data[0] != &reader.reads[0][0] {
+		t.Fatal("queued packet was not read directly into its pooled payload")
+	}
+	if queued.Buffer[0] != 0 || len(queued.Data) != len(ip) {
+		t.Fatalf("packet layout changed: headroom=%#x length=%d", queued.Buffer[0], len(queued.Data))
 	}
 }

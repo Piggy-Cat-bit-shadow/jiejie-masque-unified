@@ -345,24 +345,37 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	log.Printf("session=%d closed reason=%s", s.ID, reason)
 }
 
+type tunPacketReader interface {
+	Read([]byte) (int, error)
+}
+
 func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
-	buf := make([]byte, 65535)
+	tunDispatcherReadLoop(tun, mgr, packetPool, fatal)
+}
+
+func tunDispatcherReadLoop(tun tunPacketReader, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
 	for {
-		n, err := tun.Read(buf)
+		pkt := packetPool.AcquireForRead()
+		n, err := tun.Read(pkt.Data)
 		if err != nil {
+			packetPool.Put(pkt)
 			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
 			return
 		}
-		dst, ok := packet.Destination(buf[:n])
+		if !packetPool.CommitRead(pkt, n) {
+			packetPool.Put(pkt)
+			continue
+		}
+		dst, ok := packet.Destination(pkt.Data)
 		if !ok {
+			packetPool.Put(pkt)
 			continue
 		}
 		s := mgr.Lookup(dst)
 		if s == nil {
+			packetPool.Put(pkt)
 			continue
 		}
-		pkt := packetPool.Get(n)
-		copy(pkt.Data, buf[:n])
 		if mgr.IsShadow() {
 			if pkt.Data[9] == 1 {
 				if !packet.TranslateICMP(pkt.Data, s.VisibleIP, s.ShadowIP, false) {
