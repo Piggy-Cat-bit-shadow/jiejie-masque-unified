@@ -57,9 +57,9 @@ func TestHandleVirtioReadGSOTCPv4AndV6(t *testing.T) {
 		{"v6", unix.VIRTIO_NET_HDR_GSO_TCPV6, testTCPv6Aggregate(), true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			bufs := [][]byte{make([]byte, 1282), make([]byte, 1282)}
+			bufs := [][]byte{make([]byte, 1290), make([]byte, 1290)}
 			sizes := make([]int, 2)
-			n, err := handleVirtioRead(testVirtio(virtioNetHdr{gsoType: tt.typ, gsoSize: 100, csumStart: map[bool]uint16{false: 20, true: 40}[tt.v6], csumOffset: 16}, tt.packet), bufs, sizes, 1)
+			n, err := handleVirtioRead(testVirtio(virtioNetHdr{gsoType: tt.typ, gsoSize: 100, csumStart: map[bool]uint16{false: 20, true: 40}[tt.v6], csumOffset: 16}, tt.packet), bufs, sizes, 9)
 			if err != nil || n != 2 {
 				t.Fatalf("split = %d, %v", n, err)
 			}
@@ -92,17 +92,17 @@ func TestHandleVirtioReadGSOTCPv4AndV6(t *testing.T) {
 }
 
 func TestHandleVirtioReadNoneAndMalformed(t *testing.T) {
-	bufs := [][]byte{make([]byte, 1282)}
+	bufs := [][]byte{make([]byte, 1290)}
 	sizes := make([]int, 1)
 	p := testTCPv4Aggregate()[:40]
-	n, err := handleVirtioRead(testVirtio(virtioNetHdr{}, p), bufs, sizes, 1)
+	n, err := handleVirtioRead(testVirtio(virtioNetHdr{}, p), bufs, sizes, 9)
 	if err != nil || n != 1 || sizes[0] != len(p) {
 		t.Fatalf("GSO_NONE = %d, %d, %v", n, sizes[0], err)
 	}
-	if _, err = handleVirtioRead([]byte{0}, bufs, sizes, 1); !errors.Is(err, ErrMalformedGSO) {
+	if _, err = handleVirtioRead([]byte{0}, bufs, sizes, 9); !errors.Is(err, ErrMalformedGSO) {
 		t.Fatalf("short header err = %v", err)
 	}
-	if _, err = handleVirtioRead(testVirtio(virtioNetHdr{gsoType: unix.VIRTIO_NET_HDR_GSO_TCPV4, gsoSize: 100, csumStart: 20, csumOffset: 16}, []byte{0x45}), bufs, sizes, 1); !errors.Is(err, ErrMalformedGSO) {
+	if _, err = handleVirtioRead(testVirtio(virtioNetHdr{gsoType: unix.VIRTIO_NET_HDR_GSO_TCPV4, gsoSize: 100, csumStart: 20, csumOffset: 16}, []byte{0x45}), bufs, sizes, 9); !errors.Is(err, ErrMalformedGSO) {
 		t.Fatalf("truncated aggregate err = %v", err)
 	}
 }
@@ -112,9 +112,9 @@ func TestHandleVirtioReadNoneRepairsPartialChecksum(t *testing.T) {
 	binary.BigEndian.PutUint16(p[2:], uint16(len(p)))
 	pseudo := pseudoChecksum(unix.IPPROTO_TCP, p[12:16], p[16:20], 20)
 	binary.BigEndian.PutUint16(p[36:], uint16(pseudo))
-	bufs := [][]byte{make([]byte, 1282)}
+	bufs := [][]byte{make([]byte, 1290)}
 	sizes := make([]int, 1)
-	n, err := handleVirtioRead(testVirtio(virtioNetHdr{flags: unix.VIRTIO_NET_HDR_F_NEEDS_CSUM, csumStart: 20, csumOffset: 16}, p), bufs, sizes, 1)
+	n, err := handleVirtioRead(testVirtio(virtioNetHdr{flags: unix.VIRTIO_NET_HDR_F_NEEDS_CSUM, csumStart: 20, csumOffset: 16}, p), bufs, sizes, 9)
 	if err != nil || n != 1 {
 		t.Fatalf("GSO_NONE partial checksum = %d, %v", n, err)
 	}
