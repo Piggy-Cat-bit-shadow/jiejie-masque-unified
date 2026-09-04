@@ -451,14 +451,22 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 			s.RecordDequeued()
 			var icmp []byte
 			var err error
+			owned := false
 			if fast, ok := s.Conn.(interface {
+				WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error)
+			}); ok {
+				icmp, err = fast.WritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
+				owned = true
+			} else if fast, ok := s.Conn.(interface {
 				WritePacketBuffer([]byte, int, int) ([]byte, error)
 			}); ok {
 				icmp, err = fast.WritePacketBuffer(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data))
 			} else {
 				icmp, err = s.Conn.WritePacket(pkt.Data)
 			}
-			s.ReleasePacket(pkt)
+			if !owned {
+				s.ReleasePacket(pkt)
+			}
 			if len(icmp) > 0 {
 				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
 					continue

@@ -30,3 +30,16 @@ func TestPacketPoolRejectsReadSentinel(t *testing.T) {
 	}
 	pool.Put(pkt)
 }
+
+func TestPacketBufferReleaseReturnsToPoolExactlyOnce(t *testing.T) {
+	pool := NewPacketPool(1280)
+	pkt := pool.Get(64)
+	backing := &pkt.Buffer[0]
+	pkt.Release()
+	pkt.Release()
+	reused := pool.Get(64)
+	if &reused.Buffer[0] != backing {
+		t.Fatal("released packet was not returned to the pool")
+	}
+	reused.Release()
+}

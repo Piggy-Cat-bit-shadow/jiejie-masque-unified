@@ -1,6 +1,9 @@
 package session
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 const (
 	// PacketPoolHeadroom reserves the maximum HTTP/3 quarter-stream-ID prefix
@@ -19,16 +22,18 @@ type PacketPool struct {
 }
 
 type PacketBuffer struct {
-	Buffer []byte
-	Data   []byte
-	pooled bool
+	Buffer   []byte
+	Data     []byte
+	pooled   bool
+	pool     *PacketPool
+	released atomic.Bool
 }
 
 func NewPacketPool(size int) *PacketPool {
 	p := &PacketPool{size: size}
 	p.pool.New = func() any {
 		b := make([]byte, size+PacketPoolHeadroom+packetReadSentinel)
-		return &PacketBuffer{Buffer: b, Data: b[PacketPoolHeadroom : PacketPoolHeadroom+size], pooled: true}
+		return &PacketBuffer{Buffer: b, Data: b[PacketPoolHeadroom : PacketPoolHeadroom+size], pooled: true, pool: p}
 	}
 	return p
 }
@@ -41,6 +46,7 @@ func (p *PacketPool) Get(n int) *PacketBuffer {
 		return &PacketBuffer{Buffer: b, Data: b[PacketPoolHeadroom:]}
 	}
 	packet := p.pool.Get().(*PacketBuffer)
+	packet.released.Store(false)
 	packet.Data = packet.Buffer[PacketPoolHeadroom : PacketPoolHeadroom+n]
 	return packet
 }
@@ -50,6 +56,7 @@ func (p *PacketPool) Get(n int) *PacketBuffer {
 // routing or enqueueing it; a false result means the TUN packet exceeded MTU.
 func (p *PacketPool) AcquireForRead() *PacketBuffer {
 	packet := p.pool.Get().(*PacketBuffer)
+	packet.released.Store(false)
 	packet.Data = packet.Buffer[PacketPoolHeadroom:]
 	return packet
 }
@@ -65,8 +72,16 @@ func (p *PacketPool) CommitRead(packet *PacketBuffer, n int) bool {
 }
 
 func (p *PacketPool) Put(packet *PacketBuffer) {
-	if packet != nil && packet.pooled && len(packet.Buffer) == p.size+PacketPoolHeadroom+packetReadSentinel {
+	if packet != nil && packet.pooled && packet.pool == p && len(packet.Buffer) == p.size+PacketPoolHeadroom+packetReadSentinel && packet.released.CompareAndSwap(false, true) {
 		packet.Data = packet.Buffer[PacketPoolHeadroom : PacketPoolHeadroom+p.size]
 		p.pool.Put(packet)
+	}
+}
+
+// Release returns a pooled packet exactly once. It is intentionally a method
+// on the buffer so asynchronous QUIC ownership needs no closure allocation.
+func (p *PacketBuffer) Release() {
+	if p != nil && p.pool != nil {
+		p.pool.Put(p)
 	}
 }

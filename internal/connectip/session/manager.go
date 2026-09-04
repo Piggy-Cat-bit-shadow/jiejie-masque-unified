@@ -126,7 +126,9 @@ func (s *Session) QueueStats() QueueStats {
 }
 func (s *Session) ReleasePacket(packet *PacketBuffer) { s.releasePacket(packet) }
 func (s *Session) releasePacket(packet *PacketBuffer) {
-	if s.packetPool != nil {
+	if packet != nil {
+		packet.Release()
+	} else if s.packetPool != nil {
 		s.packetPool.Put(packet)
 	}
 }
