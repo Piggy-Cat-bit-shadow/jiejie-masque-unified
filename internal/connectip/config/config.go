@@ -51,6 +51,7 @@ type Server struct {
 	MTU                int        `yaml:"mtu"`
 	OutboundQueueSize  int        `yaml:"outbound_queue_size,omitempty"`
 	TunOffload         bool       `yaml:"tun_offload,omitempty"`
+	TunTXGRO           bool       `yaml:"tun_tx_gro,omitempty"`
 	SessionIdleTimeout string     `yaml:"session_idle_timeout"`
 	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
 }
@@ -137,6 +138,9 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.Server.TunTXGRO && !c.Server.TunOffload {
+		return fmt.Errorf("server.tun_tx_gro requires server.tun_offload=true")
+	}
 	if c.Mode != "" && c.Mode != "connect-ip" {
 		return fmt.Errorf("mode must be connect-ip")
 	}

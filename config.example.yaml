@@ -29,6 +29,7 @@ server:
   mtu: 1280
   # Optional Linux IFF_VNET_HDR RX GSO split path. Keep disabled until tested.
   tun_offload: false
+  tun_tx_gro: false
   # 256 packets absorbs a scheduling burst while bounding per-session latency
   # and memory (about 320 KiB at MTU 1280).
   outbound_queue_size: 256

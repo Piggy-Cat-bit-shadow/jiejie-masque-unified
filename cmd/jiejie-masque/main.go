@@ -104,7 +104,7 @@ func serveConnectIP() error {
 		return nil
 	}
 	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
-	tun, err := tunnel.Open("masque0", c.Server.MTU, c.Server.TunOffload)
+	tun, err := tunnel.Open("masque0", c.Server.MTU, c.Server.TunOffload, c.Server.TunTXGRO)
 	if err != nil {
 		return err
 	}
@@ -484,6 +484,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 	}
 }
 func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) {
+	tryReader, canTry := s.Conn.(interface{ TryReadPacket() ([]byte, error) })
 	for {
 		pkt, err := s.Conn.ReadPacket()
 		if err != nil {
@@ -495,30 +496,33 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 			s.Close()
 			return
 		}
-		src, ok := packet.Source(pkt)
-		if !ok || src != s.VisibleIP {
+		if !prepareSessionPacket(pkt, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
 			continue
 		}
-		dst, ok := packet.Destination(pkt)
-		isDNS := dnsEnabled && dst == serverPrefix.Addr() && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
-		if !ok || (!isDNS && serverPrefix.Contains(dst)) || mgr.IsShadowAddress(dst) {
-			continue
-		}
-		select {
-		case <-s.Ctx.Done():
-			return
-		default:
-		}
-		if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP {
-			if pkt[9] == 1 {
-				if !packet.TranslateICMP(pkt, s.VisibleIP, s.ShadowIP, true) {
-					continue
+		batch := [][]byte{pkt}
+		if tun.TXGROEnabled() && canTry {
+			for len(batch) < tunnel.MaxTXGROBatch {
+				next, pollErr := tryReader.TryReadPacket()
+				if errors.Is(pollErr, context.Canceled) {
+					break
 				}
-			} else if !packet.RewriteSourceIPv4(pkt, s.VisibleIP, s.ShadowIP) {
-				continue
+				if pollErr != nil {
+					err = pollErr
+					break
+				}
+				if prepareSessionPacket(next, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
+					batch = append(batch, next)
+				}
 			}
 		}
-		if _, err = tun.Write(pkt); err != nil {
+		if err == nil {
+			if len(batch) == 1 {
+				_, err = tun.Write(batch[0])
+			} else {
+				_, err = tun.WriteBatch(batch)
+			}
+		}
+		if err != nil {
 			s.SetCloseReason("tun-write-error")
 			log.Printf("session=%d TUN write failed: %v", s.ID, err)
 			s.Close()
@@ -526,6 +530,36 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 		}
 		s.Touch(time.Now())
 	}
+}
+
+func prepareSessionPacket(pkt []byte, s *session.Session, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) bool {
+	src, ok := packet.Source(pkt)
+	if !ok || src != s.VisibleIP {
+		return false
+	}
+	dst, ok := packet.Destination(pkt)
+	isDNS := dnsEnabled && ok && dst == serverPrefix.Addr() && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
+	if !ok || (!isDNS && serverPrefix.Contains(dst)) || mgr.IsShadowAddress(dst) {
+		return false
+	}
+	select {
+	case <-s.Ctx.Done():
+		return false
+	default:
+	}
+	if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP {
+		if len(pkt) < 10 {
+			return false
+		}
+		if pkt[9] == 1 {
+			if !packet.TranslateICMP(pkt, s.VisibleIP, s.ShadowIP, true) {
+				return false
+			}
+		} else if !packet.RewriteSourceIPv4(pkt, s.VisibleIP, s.ShadowIP) {
+			return false
+		}
+	}
+	return true
 }
 func protocolForParse(protocol string) (string, bool) {
 	switch protocol {

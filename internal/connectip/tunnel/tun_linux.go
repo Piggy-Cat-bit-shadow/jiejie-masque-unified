@@ -17,6 +17,8 @@ type Device struct {
 	Name       string
 	MTU        int
 	offload    bool
+	txGRO      bool
+	txGROBuf   []byte
 	readBuffer [65545]byte
 }
 
@@ -40,11 +42,11 @@ var systemTunFDOps = tunFDOps{
 	close:   unix.Close,
 }
 
-func Open(name string, mtu int, offload bool) (*Device, error) {
-	return openTun(name, mtu, offload, systemTunFDOps)
+func Open(name string, mtu int, offload bool, txGRO bool) (*Device, error) {
+	return openTun(name, mtu, offload, txGRO, systemTunFDOps)
 }
 
-func openTun(name string, mtu int, offload bool, ops tunFDOps) (*Device, error) {
+func openTun(name string, mtu int, offload, txGRO bool, ops tunFDOps) (*Device, error) {
 	fd, err := ops.open("/dev/net/tun", unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -76,7 +78,7 @@ func openTun(name string, mtu int, offload bool, ops tunFDOps) (*Device, error) 
 			return nil, fmt.Errorf("TUNSETOFFLOAD: %w", err)
 		}
 	}
-	return &Device{f: f, Name: ifr.Name(), MTU: mtu, offload: offload}, nil
+	return &Device{f: f, Name: ifr.Name(), MTU: mtu, offload: offload, txGRO: txGRO}, nil
 }
 
 func newIfreq(name string, offload bool) (*unix.Ifreq, error) {
@@ -170,3 +172,4 @@ func (d *Device) Write(p []byte) (int, error) {
 }
 func (d *Device) Close() error         { return d.f.Close() }
 func (d *Device) OffloadEnabled() bool { return d.offload }
+func (d *Device) TXGROEnabled() bool   { return d.txGRO }

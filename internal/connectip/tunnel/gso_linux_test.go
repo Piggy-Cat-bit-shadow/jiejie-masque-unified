@@ -5,6 +5,7 @@ package tunnel
 import (
 	"encoding/binary"
 	"errors"
+	"os"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -120,5 +121,61 @@ func TestHandleVirtioReadNoneRepairsPartialChecksum(t *testing.T) {
 	out := bufs[0][1 : 1+sizes[0]]
 	if ^checksum(out[20:], pseudo) != 0 {
 		t.Fatal("TCP partial checksum was not repaired")
+	}
+}
+
+func makeTCPv4Segment(seq uint32, payloadLen int, psh bool) []byte {
+	p := make([]byte, 40+payloadLen)
+	p[0], p[8], p[9] = 0x45, 64, unix.IPPROTO_TCP
+	copy(p[12:20], []byte{10, 0, 0, 1, 10, 0, 0, 2})
+	binary.BigEndian.PutUint16(p[2:], uint16(len(p)))
+	binary.BigEndian.PutUint16(p[20:], 1234)
+	binary.BigEndian.PutUint16(p[22:], 443)
+	binary.BigEndian.PutUint32(p[24:], seq)
+	binary.BigEndian.PutUint32(p[28:], 7)
+	p[32], p[33] = 0x50, 0x10
+	if psh {
+		p[33] |= 8
+	}
+	for i := range p[40:] {
+		p[40+i] = byte(seq + uint32(i))
+	}
+	pseudo := pseudoChecksum(unix.IPPROTO_TCP, p[12:16], p[16:20], uint16(len(p)-20))
+	binary.BigEndian.PutUint16(p[36:], ^checksum(p[20:], pseudo))
+	binary.BigEndian.PutUint16(p[10:], ^checksum(p[:20], 0))
+	return p
+}
+
+func TestTCPGROBuildsOrderedSuperPacket(t *testing.T) {
+	packets := [][]byte{makeTCPv4Segment(1000, 100, false), makeTCPv4Segment(1100, 100, false), makeTCPv4Segment(1200, 50, true)}
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{f: os.NewFile(uintptr(fds[0]), "gro"), offload: true, txGRO: true}
+	defer d.Close()
+	defer unix.Close(fds[1])
+	if _, err = d.WriteBatch(packets); err != nil {
+		t.Fatal(err)
+	}
+	out := make([]byte, virtioNetHdrLen+40+250)
+	n, err := unix.Read(fds[1], out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = out[:n]
+	var h virtioNetHdr
+	if err := h.decode(out); err != nil {
+		t.Fatal(err)
+	}
+	if h.gsoType != unix.VIRTIO_NET_HDR_GSO_TCPV4 || h.gsoSize != 100 || h.hdrLen != 40 || h.csumStart != 20 || h.csumOffset != 16 {
+		t.Fatalf("header = %+v", h)
+	}
+	p := out[virtioNetHdrLen:]
+	if len(p) != 290 || binary.BigEndian.Uint16(p[2:]) != 290 || p[33]&8 == 0 {
+		t.Fatalf("aggregate length/PSH incorrect: len=%d flags=%x", len(p), p[33])
+	}
+	if got := binary.BigEndian.Uint32(p[24:]); got != 1000 {
+		t.Fatalf("first sequence = %d", got)
 	}
 }

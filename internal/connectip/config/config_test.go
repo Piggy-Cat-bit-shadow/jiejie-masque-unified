@@ -11,6 +11,14 @@ func TestValidate(t *testing.T) {
 	if e := c.Validate(); e != nil {
 		t.Fatal(e)
 	}
+	c.Server.TunTXGRO = true
+	if e := c.Validate(); e == nil || e.Error() != "server.tun_tx_gro requires server.tun_offload=true" {
+		t.Fatalf("invalid TX GRO config error = %v", e)
+	}
+	c.Server.TunOffload = true
+	if e := c.Validate(); e != nil {
+		t.Fatalf("valid TX GRO config: %v", e)
+	}
 	c.Server.TunnelIPv4 = "::1/128"
 	if e := c.Validate(); e == nil {
 		t.Fatal("expected IPv6 rejection")

@@ -50,7 +50,7 @@ func TestOpenTunFDSetupOrder(t *testing.T) {
 		},
 		close: func(gotFD int) error { events = append(events, "close"); return unix.Close(gotFD) },
 	}
-	d, err := openTun("masque0", 1280, false, ops)
+	d, err := openTun("masque0", 1280, false, false, ops)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestOpenTunClosesFDOnSetupErrors(t *testing.T) {
 				},
 				close: func(int) error { closed++; return nil },
 			}
-			if _, err := openTun(tt.deviceName, 1280, false, ops); err == nil {
+			if _, err := openTun(tt.deviceName, 1280, false, false, ops); err == nil {
 				t.Fatal("expected error")
 			}
 			if closed != 1 {
@@ -161,7 +161,7 @@ func TestOpenTunOffloadFailureIsFatal(t *testing.T) {
 		newFile:     func(gotFD uintptr, name string) *os.File { return os.NewFile(gotFD, name) },
 		close:       func(int) error { closed = true; return nil },
 	}
-	if _, err := openTun("masque0", 1280, true, ops); err == nil {
+	if _, err := openTun("masque0", 1280, true, false, ops); err == nil {
 		t.Fatal("expected TUNSETOFFLOAD failure")
 	}
 	if closed {
@@ -189,7 +189,7 @@ func TestOpenTunOffloadConfiguresTCPFlags(t *testing.T) {
 		newFile: func(gotFD uintptr, name string) *os.File { return os.NewFile(gotFD, name) },
 		close:   unix.Close,
 	}
-	d, err := openTun("masque0", 1280, true, ops)
+	d, err := openTun("masque0", 1280, true, false, ops)
 	if err != nil {
 		t.Fatal(err)
 	}

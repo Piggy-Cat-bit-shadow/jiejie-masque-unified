@@ -27,11 +27,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## WireGuard-go Linux TUN GSO splitter
 
-The optional Linux CONNECT-IP `tun_offload` receive path retains a minimal
-adaptation of `tun/offload_linux.go` and the virtio-header parsing behavior
+The optional Linux CONNECT-IP `tun_offload` receive path and `tun_tx_gro` TCP
+transmit path retain minimal adaptations of `tun/offload_linux.go` and the virtio-header parsing behavior
 from [WireGuard/wireguard-go](https://github.com/WireGuard/wireguard-go) commit
-`ecfc5a8d54462e18e13c72173e2623d16d8e25a0`: only TCP GSO splitting,
-checksum repair, and the `virtio_net_hdr` ABI handling are included. No
+`ecfc5a8d54462e18e13c72173e2623d16d8e25a0`: only TCP GSO splitting, ordered
+TCP GRO coalescing, checksum repair, and the `virtio_net_hdr` ABI handling are included. No
 WireGuard protocol or device code is included. The source is MIT licensed:
 
 Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
