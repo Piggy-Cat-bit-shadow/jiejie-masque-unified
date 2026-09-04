@@ -485,8 +485,26 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 }
 func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) {
 	tryReader, canTry := s.Conn.(interface{ TryReadPacket() ([]byte, error) })
+	ownedReader, canReadOwned := s.Conn.(interface {
+		ReadPacketBuffer() (*connectip.PacketBuffer, error)
+	})
+	ownedTryReader, canTryOwned := s.Conn.(interface {
+		TryReadPacketBuffer() (*connectip.PacketBuffer, error)
+	})
 	for {
-		pkt, err := s.Conn.ReadPacket()
+		var pkt []byte
+		var release func()
+		var err error
+		if canReadOwned {
+			var owned *connectip.PacketBuffer
+			owned, err = ownedReader.ReadPacketBuffer()
+			if err == nil {
+				pkt, release = owned.Data, owned.Release
+			}
+		} else {
+			pkt, err = s.Conn.ReadPacket()
+			release = func() {}
+		}
 		if err != nil {
 			if normalSessionError(err, s.Ctx) {
 				return
@@ -497,12 +515,26 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 			return
 		}
 		if !prepareSessionPacket(pkt, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
+			release()
 			continue
 		}
 		batch := [][]byte{pkt}
+		releases := []func(){release}
 		if tun.TXGROEnabled() && canTry {
 			for len(batch) < tunnel.MaxTXGROBatch {
-				next, pollErr := tryReader.TryReadPacket()
+				var next []byte
+				var nextRelease func()
+				var pollErr error
+				if canTryOwned {
+					var owned *connectip.PacketBuffer
+					owned, pollErr = ownedTryReader.TryReadPacketBuffer()
+					if pollErr == nil {
+						next, nextRelease = owned.Data, owned.Release
+					}
+				} else {
+					next, pollErr = tryReader.TryReadPacket()
+					nextRelease = func() {}
+				}
 				if errors.Is(pollErr, context.Canceled) {
 					break
 				}
@@ -512,6 +544,9 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 				}
 				if prepareSessionPacket(next, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
 					batch = append(batch, next)
+					releases = append(releases, nextRelease)
+				} else {
+					nextRelease()
 				}
 			}
 		}
@@ -523,10 +558,16 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 			}
 		}
 		if err != nil {
+			for _, done := range releases {
+				done()
+			}
 			s.SetCloseReason("tun-write-error")
 			log.Printf("session=%d TUN write failed: %v", s.ID, err)
 			s.Close()
 			return
+		}
+		for _, done := range releases {
+			done()
 		}
 		s.Touch(time.Now())
 	}
