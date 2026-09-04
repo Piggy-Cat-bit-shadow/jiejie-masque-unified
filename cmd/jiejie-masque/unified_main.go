@@ -36,8 +36,14 @@ func main() {
 		serverKeygen(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mihomo-config" {
+		if err := mihomoConfig(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) < 2 {
-		log.Fatal("usage: jiejie-masque serve|check-config --config PATH")
+		log.Fatal("usage: jiejie-masque serve|check-config|mihomo-config --config PATH")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	path := fs.String("config", "", "configuration file")

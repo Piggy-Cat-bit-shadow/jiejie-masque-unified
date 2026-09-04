@@ -66,6 +66,17 @@ func Destination(b []byte) (netip.Addr, bool) {
 	}
 	return netip.AddrFrom4([4]byte{b[16], b[17], b[18], b[19]}), true
 }
+
+// IsTCPOrUDPDestinationPort is intentionally strict. A non-initial fragment
+// has no trustworthy transport header and must not be used to bypass a local
+// service policy.
+func IsTCPOrUDPDestinationPort(b []byte, port uint16) bool {
+	ihl, total, ok := valid(b)
+	if !ok || (b[9] != 6 && b[9] != 17) || binary.BigEndian.Uint16(b[6:8])&0x1fff != 0 || total < ihl+4 {
+		return false
+	}
+	return binary.BigEndian.Uint16(b[ihl+2:ihl+4]) == port
+}
 func rewrite(b []byte, old, new netip.Addr, src bool) bool {
 	ihl, total, ok := valid(b)
 	if !ok || !old.Is4() || !new.Is4() {

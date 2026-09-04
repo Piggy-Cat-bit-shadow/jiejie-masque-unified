@@ -25,6 +25,8 @@ client:
 server:
   tunnel_ipv4: 10.200.0.1/16
   mtu: 1280
+  # 1024 packets is bounded burst absorption (about 1.25 MiB at MTU 1280).
+  outbound_queue_size: 1024
   session_idle_timeout: 1h
   session_nat:
     enabled: true
@@ -32,6 +34,12 @@ server:
     max_sessions: 120
     max_sessions_per_client: 32
     reuse_delay: 30m
+dns_gateway:
+  enabled: true
+  port: 5353
+  upstream: 127.0.0.1:53
+  timeout: 5s
+  concurrency: 32
 # For legacy single-session compatibility only, disable session_nat and use:
 # server:
 #   tunnel_ipv4: 10.200.0.1/30

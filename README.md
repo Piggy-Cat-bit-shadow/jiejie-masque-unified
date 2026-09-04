@@ -18,6 +18,10 @@ jiejie-masque serve --config /etc/jiejie-masque/connect-ip.yaml
 jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
 jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
 jiejie-masque check-config --config /etc/jiejie-masque/connect-udp.yaml
+
+# Prints a ready-to-paste modern Mihomo CONNECT-IP node. The private key is
+# intentionally only emitted when supplied explicitly to this command.
+jiejie-masque mihomo-config --config /etc/jiejie-masque/connect-ip.yaml --server vpn.example.com --port 443 --private-key BASE64_KEY
 ```
 
 The modes use separate YAML files, listeners, reset-key paths and systemd services. CONNECT-IP requires `CAP_NET_ADMIN`, a TUN device, and network preparation. CONNECT-UDP requires none of those privileges and must not receive `CAP_NET_ADMIN`.
@@ -29,3 +33,5 @@ Privacy: runtime logs deliberately omit client identities, tunnel addresses, rel
 For a release build, use the repository's reproducible wrapper: `VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) scripts/build-release.sh`. It produces the stripped static Linux amd64 binary, SHA256 metadata, and `dist/RELEASE.txt`; ordinary development builds may use `go build ./cmd/jiejie-masque`.
 
 Loopback HTTP/3 integration tests cover both CONNECT-UDP datagram relay and plain CONNECT TCP relay. Production migration remains out of scope. Preserve the existing CONNECT-IP P-256 certificate/private key because clients pin its public key.
+
+CONNECT-IP includes a DNS gateway by default. It listens only at the server tunnel address (for example `10.200.0.1:5353`) and relays UDP and TCP DNS to `127.0.0.1:53`; it never opens a public DNS listener or falls back to a public resolver. The generated Mihomo node enables `remote-dns-resolve` and uses `udp://10.200.0.1:5353`. Current Mihomo MASQUE documentation supports MIPS `bbr3` for the inner TCP stack and `bbr` with the `standard` profile for the outer client sender.

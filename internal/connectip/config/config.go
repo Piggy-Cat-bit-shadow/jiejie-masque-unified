@@ -21,6 +21,7 @@ type Config struct {
 	Client      Client      `yaml:"client"`
 	Clients     []Client    `yaml:"clients,omitempty"`
 	Server      Server      `yaml:"server"`
+	DNSGateway  DNSGateway  `yaml:"dns_gateway,omitempty"`
 }
 type QUIC struct {
 	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
@@ -47,6 +48,7 @@ type ResolvedClient struct {
 type Server struct {
 	TunnelIPv4         string     `yaml:"tunnel_ipv4"`
 	MTU                int        `yaml:"mtu"`
+	OutboundQueueSize  int        `yaml:"outbound_queue_size,omitempty"`
 	SessionIdleTimeout string     `yaml:"session_idle_timeout"`
 	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
 }
@@ -56,6 +58,16 @@ type SessionNat struct {
 	MaxSessions          int    `yaml:"max_sessions"`
 	ReuseDelay           string `yaml:"reuse_delay"`
 	MaxSessionsPerClient int    `yaml:"max_sessions_per_client,omitempty"`
+}
+
+// DNSGateway exposes the server's local resolver only on the CONNECT-IP
+// address. It deliberately has no public listen-address option.
+type DNSGateway struct {
+	Enabled     *bool  `yaml:"enabled"`
+	Port        int    `yaml:"port"`
+	Upstream    string `yaml:"upstream"`
+	Timeout     string `yaml:"timeout"`
+	Concurrency int    `yaml:"concurrency"`
 }
 
 func Load(path string) (Config, error) {
@@ -85,6 +97,9 @@ func Load(path string) (Config, error) {
 	if c.Server.SessionIdleTimeout == "" {
 		c.Server.SessionIdleTimeout = "1h"
 	}
+	if c.Server.OutboundQueueSize == 0 {
+		c.Server.OutboundQueueSize = 1024
+	}
 	if c.HostNetwork.CheckInterval == "" {
 		c.HostNetwork.CheckInterval = "10s"
 	}
@@ -93,6 +108,26 @@ func Load(path string) (Config, error) {
 	}
 	if c.Server.SessionNat.Enabled && c.Server.SessionNat.ReuseDelay == "" {
 		c.Server.SessionNat.ReuseDelay = "30m"
+	}
+	// DNS is part of the CONNECT-IP service, rather than a client-side
+	// prerequisite. Existing configurations get the production default.
+	if c.DNSGateway.Enabled == nil {
+		enabled := true
+		c.DNSGateway.Enabled = &enabled
+	}
+	if c.DNSGateway.Enabled != nil && *c.DNSGateway.Enabled {
+		if c.DNSGateway.Port == 0 {
+			c.DNSGateway.Port = 5353
+		}
+		if c.DNSGateway.Upstream == "" {
+			c.DNSGateway.Upstream = "127.0.0.1:53"
+		}
+		if c.DNSGateway.Timeout == "" {
+			c.DNSGateway.Timeout = "5s"
+		}
+		if c.DNSGateway.Concurrency == 0 {
+			c.DNSGateway.Concurrency = 32
+		}
 	}
 	return c, c.Validate()
 }
@@ -108,6 +143,9 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MTU != 0 && (c.Server.MTU < 576 || c.Server.MTU > 65535) {
 		return fmt.Errorf("server.mtu must be between 576 and 65535")
+	}
+	if c.Server.OutboundQueueSize != 0 && (c.Server.OutboundQueueSize < 64 || c.Server.OutboundQueueSize > 4096) {
+		return fmt.Errorf("server.outbound_queue_size must be between 64 and 4096")
 	}
 	idleTimeout := c.Server.SessionIdleTimeout
 	if idleTimeout == "" {
@@ -131,6 +169,20 @@ func (c Config) Validate() error {
 	}
 	if _, e := c.ResolvedClients(); e != nil {
 		return e
+	}
+	if c.DNSGateway.Enabled != nil && *c.DNSGateway.Enabled {
+		if c.DNSGateway.Port < 1024 || c.DNSGateway.Port > 65535 {
+			return fmt.Errorf("dns_gateway.port must be between 1024 and 65535")
+		}
+		if _, e := netip.ParseAddrPort(c.DNSGateway.Upstream); e != nil {
+			return fmt.Errorf("invalid dns_gateway.upstream")
+		}
+		if d, e := time.ParseDuration(c.DNSGateway.Timeout); e != nil || d <= 0 {
+			return fmt.Errorf("dns_gateway.timeout must be positive")
+		}
+		if c.DNSGateway.Concurrency < 1 || c.DNSGateway.Concurrency > 256 {
+			return fmt.Errorf("dns_gateway.concurrency must be between 1 and 256")
+		}
 	}
 	if c.Server.SessionNat.Enabled {
 		pool, e := netip.ParsePrefix(c.Server.SessionNat.Pool)
@@ -172,6 +224,8 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
+func (d DNSGateway) IsEnabled() bool         { return d.Enabled == nil || *d.Enabled }
 func mustResolved(c Config) []ResolvedClient { v, _ := c.ResolvedClients(); return v }
 
 func addIPv4(a [4]byte, n uint32) [4]byte {

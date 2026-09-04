@@ -17,7 +17,10 @@ type PacketConn interface {
 	Close() error
 }
 
-const DefaultOutboundQueueSize = 512
+// DefaultOutboundQueueSize holds roughly 1.25 MiB at the safe 1280 MTU. It is
+// deliberately bounded: it absorbs normal QUIC scheduling bursts without
+// turning a stalled client into a large, latency-inducing buffer.
+const DefaultOutboundQueueSize = 1024
 
 type Session struct {
 	ID           uint64
@@ -36,6 +39,8 @@ type Session struct {
 	onClose      func(*Session)
 	closeReason  atomic.Value
 	lastActivity atomic.Int64
+	queueHigh    atomic.Uint64
+	queueDropped atomic.Uint64
 }
 
 func (s *Session) SetCloseReason(reason string) {
@@ -57,8 +62,14 @@ func NewWithContext(parent context.Context, ip netip.Addr, identity string, conn
 	return NewWithContextAndPacketPool(parent, ip, identity, conn, nil, onClose)
 }
 func NewWithContextAndPacketPool(parent context.Context, ip netip.Addr, identity string, conn PacketConn, packetPool *PacketPool, onClose func(*Session)) *Session {
+	return NewWithContextAndPacketPoolAndQueue(parent, ip, identity, conn, packetPool, DefaultOutboundQueueSize, onClose)
+}
+func NewWithContextAndPacketPoolAndQueue(parent context.Context, ip netip.Addr, identity string, conn PacketConn, packetPool *PacketPool, queueSize int, onClose func(*Session)) *Session {
 	ctx, cancel := context.WithCancel(parent)
-	s := &Session{ClientIP: ip, VisibleIP: ip, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, DefaultOutboundQueueSize), packetPool: packetPool, onClose: onClose}
+	if queueSize <= 0 {
+		queueSize = DefaultOutboundQueueSize
+	}
+	s := &Session{ClientIP: ip, VisibleIP: ip, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, queueSize), packetPool: packetPool, onClose: onClose}
 	s.Touch(time.Now())
 	return s
 }
@@ -69,17 +80,27 @@ func (s *Session) TryEnqueue(packet *PacketBuffer) bool {
 	s.outboundMu.Lock()
 	defer s.outboundMu.Unlock()
 	if s.Ctx.Err() != nil {
+		s.queueDropped.Add(1)
 		s.releasePacket(packet)
 		return false
 	}
 	select {
 	case s.Outbound <- packet:
+		for depth := uint64(len(s.Outbound)); ; {
+			old := s.queueHigh.Load()
+			if depth <= old || s.queueHigh.CompareAndSwap(old, depth) {
+				break
+			}
+		}
 		return true
 	default:
+		s.queueDropped.Add(1)
 		s.releasePacket(packet)
 		return false
 	}
 }
+func (s *Session) QueueHighWater() uint64             { return s.queueHigh.Load() }
+func (s *Session) QueueDropped() uint64               { return s.queueDropped.Load() }
 func (s *Session) ReleasePacket(packet *PacketBuffer) { s.releasePacket(packet) }
 func (s *Session) releasePacket(packet *PacketBuffer) {
 	if s.packetPool != nil {
@@ -127,7 +148,11 @@ type Manager struct {
 	random             func(uint32) uint32
 	reuseDelay         time.Duration
 	cleanup            func(netip.Addr) error
+	queueOverflowTotal atomic.Uint64
 }
+
+func (m *Manager) RecordQueueOverflow()       { m.queueOverflowTotal.Add(1) }
+func (m *Manager) QueueOverflowTotal() uint64 { return m.queueOverflowTotal.Load() }
 
 func NewManager() *Manager { return &Manager{sessions: map[netip.Addr]*Session{}} }
 func NewShadowManager(pool netip.Prefix, max int, excluded []netip.Addr) *Manager {

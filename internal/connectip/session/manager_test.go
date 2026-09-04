@@ -128,6 +128,24 @@ func TestCloseDrainsOutboundAndRejectsNewPackets(t *testing.T) {
 	}
 }
 
+func TestQueueTracksHighWaterAndBoundedOverflow(t *testing.T) {
+	pool := NewPacketPool(1280)
+	s := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "client", &fakeConn{}, pool, 2, nil)
+	defer s.Close()
+	if !s.TryEnqueue(pool.Get(10)) || !s.TryEnqueue(pool.Get(10)) {
+		t.Fatal("queue did not accept its bounded burst")
+	}
+	if s.QueueHighWater() != 2 {
+		t.Fatalf("high water = %d, want 2", s.QueueHighWater())
+	}
+	if s.TryEnqueue(pool.Get(10)) {
+		t.Fatal("queue accepted packet beyond capacity")
+	}
+	if s.QueueDropped() != 1 {
+		t.Fatalf("dropped = %d, want 1", s.QueueDropped())
+	}
+}
+
 func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {
 	pool := netip.MustParsePrefix("10.200.0.128/30")
 	m := NewShadowManager(pool, 2, nil)

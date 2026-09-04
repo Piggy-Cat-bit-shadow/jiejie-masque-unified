@@ -13,11 +13,13 @@ import (
 	neturl "net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/hostnet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/notify"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
@@ -31,6 +33,8 @@ import (
 	"github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
 )
+
+var lastQueueOverflowLog atomic.Int64
 
 func runConnectIPLegacy() {
 	if err := serveConnectIP(); err != nil {
@@ -107,6 +111,18 @@ func serveConnectIP() error {
 	defer tun.Close()
 	if err = tun.Configure(serverPrefix); err != nil {
 		return fmt.Errorf("configure masque0: %w", err)
+	}
+	var dnsGateway *dnsgateway.Gateway
+	if c.DNSGateway.IsEnabled() {
+		dnsTimeout, _ := time.ParseDuration(c.DNSGateway.Timeout)
+		dnsGateway, err = dnsgateway.Start(dnsgateway.Config{
+			ListenAddr: serverPrefix.Addr(), Port: c.DNSGateway.Port, Upstream: c.DNSGateway.Upstream,
+			Timeout: dnsTimeout, Concurrency: c.DNSGateway.Concurrency,
+		})
+		if err != nil {
+			return fmt.Errorf("start tunnel DNS gateway: %w", err)
+		}
+		defer dnsGateway.Close()
 	}
 	packetConn, err := net.ListenPacket("udp", c.Listen)
 	if err != nil {
@@ -295,7 +311,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 		conn.Close()
 		return
 	}
-	s := session.NewWithContextAndPacketPool(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, packetPool, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
+	s := session.NewWithContextAndPacketPoolAndQueue(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, packetPool, c.Server.OutboundQueueSize, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
 	if mgr.IsShadow() {
 		if err := mgr.Register(s); err != nil {
 			log.Printf("session registration failed: %v", err)
@@ -312,7 +328,7 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 	release()
 	go sessionWriter(s, tun, c.Server.MTU)
 	log.Printf("session=%d established", s.ID)
-	go sessionReader(s, tun, mgr, serverPrefix)
+	go sessionReader(s, tun, mgr, serverPrefix, c.DNSGateway.IsEnabled(), uint16(c.DNSGateway.Port))
 	select {
 	case <-r.Context().Done():
 	case <-s.Ctx.Done():
@@ -357,7 +373,14 @@ func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session
 				continue
 			}
 		}
-		s.TryEnqueue(pkt)
+		if !s.TryEnqueue(pkt) {
+			mgr.RecordQueueOverflow()
+			now := time.Now().Unix()
+			previous := lastQueueOverflowLog.Load()
+			if now-previous >= 30 && lastQueueOverflowLog.CompareAndSwap(previous, now) {
+				log.Printf("CONNECT-IP outbound queue overflow: aggregate_drops=%d", mgr.QueueOverflowTotal())
+			}
+		}
 	}
 }
 func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
@@ -392,7 +415,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 		}
 	}
 }
-func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix) {
+func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) {
 	for {
 		pkt, err := s.Conn.ReadPacket()
 		if err != nil {
@@ -409,7 +432,8 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 			continue
 		}
 		dst, ok := packet.Destination(pkt)
-		if !ok || serverPrefix.Contains(dst) || mgr.IsShadowAddress(dst) {
+		isDNS := dnsEnabled && dst == serverPrefix.Addr() && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
+		if !ok || (!isDNS && serverPrefix.Contains(dst)) || mgr.IsShadowAddress(dst) {
 			continue
 		}
 		select {

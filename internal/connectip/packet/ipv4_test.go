@@ -162,3 +162,18 @@ func TestICMPMessageTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestIsTCPOrUDPDestinationPortRejectsFragmentsAndMalformed(t *testing.T) {
+	b := tcpPacket(netip.MustParseAddr("10.200.0.2"), netip.MustParseAddr("10.200.0.1"))
+	binary.BigEndian.PutUint16(b[26:28], 5353)
+	if !IsTCPOrUDPDestinationPort(b, 5353) {
+		t.Fatal("TCP destination port was not recognized")
+	}
+	b[6], b[7] = 0, 1 // non-initial fragment: no trusted L4 header
+	if IsTCPOrUDPDestinationPort(b, 5353) {
+		t.Fatal("fragment bypassed L4 policy")
+	}
+	if IsTCPOrUDPDestinationPort([]byte{0x45}, 5353) {
+		t.Fatal("malformed packet was accepted")
+	}
+}
