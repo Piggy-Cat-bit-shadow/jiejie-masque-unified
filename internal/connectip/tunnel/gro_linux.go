@@ -167,10 +167,10 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			binary.BigEndian.PutUint16(super[2:], uint16(total))
 			binary.BigEndian.PutUint16(super[10:], ^checksum(super[:m.ipLen], 0))
 		}
-		binary.BigEndian.PutUint16(d.txGROBuf[2:], uint16(m.ipLen+m.tcpLen))
-		binary.BigEndian.PutUint16(d.txGROBuf[4:], uint16(m.payload))
-		binary.BigEndian.PutUint16(d.txGROBuf[6:], uint16(m.ipLen))
-		binary.BigEndian.PutUint16(d.txGROBuf[8:], 16)
+		binary.LittleEndian.PutUint16(d.txGROBuf[2:], uint16(m.ipLen+m.tcpLen))
+		binary.LittleEndian.PutUint16(d.txGROBuf[4:], uint16(m.payload))
+		binary.LittleEndian.PutUint16(d.txGROBuf[6:], uint16(m.ipLen))
+		binary.LittleEndian.PutUint16(d.txGROBuf[8:], 16)
 		d.txGROBuf[0] = unix.VIRTIO_NET_HDR_F_NEEDS_CSUM
 		if m.v6 {
 			d.txGROBuf[1] = unix.VIRTIO_NET_HDR_GSO_TCPV6
