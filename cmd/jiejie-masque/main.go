@@ -182,7 +182,8 @@ func serveConnectIP() error {
 	if err := probe.Check(); err != nil {
 		return fmt.Errorf("data-plane unhealthy: %w", err)
 	}
-	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, Handler: mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) { handleRequest(w, r, c, byKey, mgr, tun, packetPool) })}
+	log.Printf("CONNECT-IP QUIC congestion controller: %s", c.QUIC.CongestionController)
+	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) { handleRequest(w, r, c, byKey, mgr, tun, packetPool) })}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopReaper := context.WithCancel(context.Background())

@@ -13,6 +13,11 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior. The replacement is
+// a minimal fork at the same upstream commit which exposes native CUBIC for
+// the CONNECT-IP server selector.
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260904203815-027d7ce7fa01
+
 require (
 	github.com/metacubex/cpu v0.1.0 // indirect
 	github.com/metacubex/hkdf v0.1.0 // indirect

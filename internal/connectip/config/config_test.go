@@ -34,6 +34,9 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.Server.OutboundQueueSize != 256 {
 		t.Fatalf("default outbound queue size = %d", c.Server.OutboundQueueSize)
 	}
+	if c.QUIC.CongestionController != "default" {
+		t.Fatalf("default congestion controller = %q", c.QUIC.CongestionController)
+	}
 	if err := os.WriteFile(path, []byte(base+"  session_idle_timeout: 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +49,22 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	}
 	if c.HostNetwork.CheckInterval != "10s" {
 		t.Fatalf("default check interval = %q", c.HostNetwork.CheckInterval)
+	}
+}
+
+func TestCongestionControllerValidation(t *testing.T) {
+	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/30"}}
+	c.QUIC.CongestionController = "cubic"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("cubic rejected: %v", err)
+	}
+	c.QUIC.CongestionController = "bbr"
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected unsupported BBR to be rejected")
+	}
+	c.QUIC.CongestionController = "reno"
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected unknown controller to be rejected")
 	}
 }
 

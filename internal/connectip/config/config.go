@@ -25,6 +25,7 @@ type Config struct {
 }
 type QUIC struct {
 	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
+	CongestionController  string `yaml:"congestion_controller"`
 }
 type HostNetwork struct {
 	ExternalInterface string `yaml:"external_interface"`
@@ -94,6 +95,9 @@ func Load(path string) (Config, error) {
 	if c.QUIC.StatelessResetKeyFile == "" {
 		c.QUIC.StatelessResetKeyFile = "/var/lib/masque-lite/stateless-reset.key"
 	}
+	if c.QUIC.CongestionController == "" {
+		c.QUIC.CongestionController = "default"
+	}
 	if c.Server.SessionIdleTimeout == "" {
 		c.Server.SessionIdleTimeout = "1h"
 	}
@@ -137,6 +141,13 @@ func (c Config) Validate() error {
 	}
 	if c.Listen == "" || c.TLS.Cert == "" || c.TLS.Key == "" {
 		return fmt.Errorf("listen, tls.cert and tls.key are required")
+	}
+	switch c.QUIC.CongestionController {
+	case "", "default", "cubic":
+	case "bbr":
+		return fmt.Errorf("quic.congestion_controller=bbr is unavailable in this build; choose default or cubic")
+	default:
+		return fmt.Errorf("quic.congestion_controller must be default or cubic")
 	}
 	if len(c.Clients) > 0 && (len(c.Client.PublicKeys) > 0 || c.Client.PublicKey != "" || c.Client.TunnelIPv4 != "") {
 		return fmt.Errorf("client and clients cannot both be configured")

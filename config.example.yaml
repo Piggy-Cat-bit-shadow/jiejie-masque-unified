@@ -6,6 +6,9 @@ tls:
   key: /etc/jiejie-masque/connect-ip/server.key
 quic:
   stateless_reset_key_file: /var/lib/jiejie-masque-connect-ip/stateless-reset.key
+  # default preserves the pinned MetaCubeX/quic-go behavior; cubic selects its
+  # native CUBIC sender before CONNECT-IP data-plane streams begin.
+  congestion_controller: default
 host_network:
   # Optional; otherwise the default-route interface is detected.
   external_interface: eth0
