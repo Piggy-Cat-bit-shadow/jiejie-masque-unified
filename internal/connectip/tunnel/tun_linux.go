@@ -4,22 +4,27 @@ package tunnel
 
 import (
 	"fmt"
-	"golang.org/x/sys/unix"
+	"io"
 	"net"
 	"net/netip"
 	"os"
+
+	"golang.org/x/sys/unix"
 )
 
 type Device struct {
-	f    *os.File
-	Name string
-	MTU  int
+	f          *os.File
+	Name       string
+	MTU        int
+	offload    bool
+	readBuffer [65545]byte
 }
 
 type tunFDOps struct {
 	open        func(string, int, uint32) (int, error)
 	ioctl       func(int, uint, *unix.Ifreq) error
 	setNonblock func(int, bool) error
+	setOffload  func(int, int) error
 	newFile     func(uintptr, string) *os.File
 	close       func(int) error
 }
@@ -28,15 +33,18 @@ var systemTunFDOps = tunFDOps{
 	open:        unix.Open,
 	ioctl:       unix.IoctlIfreq,
 	setNonblock: unix.SetNonblock,
-	newFile:     os.NewFile,
-	close:       unix.Close,
+	setOffload: func(fd, flags int) error {
+		return unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, flags)
+	},
+	newFile: os.NewFile,
+	close:   unix.Close,
 }
 
-func Open(name string, mtu int) (*Device, error) {
-	return openTun(name, mtu, systemTunFDOps)
+func Open(name string, mtu int, offload bool) (*Device, error) {
+	return openTun(name, mtu, offload, systemTunFDOps)
 }
 
-func openTun(name string, mtu int, ops tunFDOps) (*Device, error) {
+func openTun(name string, mtu int, offload bool, ops tunFDOps) (*Device, error) {
 	fd, err := ops.open("/dev/net/tun", unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -47,7 +55,7 @@ func openTun(name string, mtu int, ops tunFDOps) (*Device, error) {
 			_ = ops.close(fd)
 		}
 	}()
-	ifr, err := newIfreq(name)
+	ifr, err := newIfreq(name, offload)
 	if err != nil {
 		return nil, err
 	}
@@ -62,15 +70,25 @@ func openTun(name string, mtu int, ops tunFDOps) (*Device, error) {
 		return nil, fmt.Errorf("create TUN file")
 	}
 	closeFD = false
-	return &Device{f: f, Name: ifr.Name(), MTU: mtu}, nil
+	if offload {
+		if err = ops.setOffload(fd, unix.TUN_F_CSUM|unix.TUN_F_TSO4|unix.TUN_F_TSO6); err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("TUNSETOFFLOAD: %w", err)
+		}
+	}
+	return &Device{f: f, Name: ifr.Name(), MTU: mtu, offload: offload}, nil
 }
 
-func newIfreq(name string) (*unix.Ifreq, error) {
+func newIfreq(name string, offload bool) (*unix.Ifreq, error) {
 	ifr, err := unix.NewIfreq(name)
 	if err != nil {
 		return nil, err
 	}
-	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
+	flags := uint16(unix.IFF_TUN | unix.IFF_NO_PI)
+	if offload {
+		flags |= unix.IFF_VNET_HDR
+	}
+	ifr.SetUint16(flags)
 	return ifr, nil
 }
 
@@ -127,6 +145,28 @@ func configureInterface(name string, prefix netip.Prefix, mtu int, ioctl func(ui
 	return nil
 }
 
-func (d *Device) Read(p []byte) (int, error)  { return d.f.Read(p) }
-func (d *Device) Write(p []byte) (int, error) { return d.f.Write(p) }
-func (d *Device) Close() error                { return d.f.Close() }
+func (d *Device) Read(p []byte) (int, error) { return d.f.Read(p) }
+func (d *Device) Write(p []byte) (int, error) {
+	if !d.offload {
+		return d.f.Write(p)
+	}
+	var header [10]byte
+	raw, err := d.f.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	err = raw.Write(func(fd uintptr) bool {
+		n, err = unix.Writev(int(fd), [][]byte{header[:], p})
+		return err != unix.EAGAIN && err != unix.EWOULDBLOCK
+	})
+	if err != nil {
+		return 0, err
+	}
+	if n != len(header)+len(p) {
+		return 0, io.ErrShortWrite
+	}
+	return len(p), nil
+}
+func (d *Device) Close() error         { return d.f.Close() }
+func (d *Device) OffloadEnabled() bool { return d.offload }

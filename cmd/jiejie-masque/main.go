@@ -104,11 +104,16 @@ func serveConnectIP() error {
 		return nil
 	}
 	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
-	tun, err := tunnel.Open("masque0", c.Server.MTU)
+	tun, err := tunnel.Open("masque0", c.Server.MTU, c.Server.TunOffload)
 	if err != nil {
 		return err
 	}
 	defer tun.Close()
+	if tun.OffloadEnabled() {
+		log.Printf("CONNECT-IP TUN mode: vnet-hdr-gso")
+	} else {
+		log.Printf("CONNECT-IP TUN mode: plain")
+	}
 	if err = tun.Configure(serverPrefix); err != nil {
 		return fmt.Errorf("configure masque0: %w", err)
 	}
@@ -350,7 +355,75 @@ type tunPacketReader interface {
 }
 
 func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
+	if tun.OffloadEnabled() {
+		tunDispatcherBatchLoop(tun, mgr, packetPool, fatal)
+		return
+	}
 	tunDispatcherReadLoop(tun, mgr, packetPool, fatal)
+}
+
+func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, packetPool *session.PacketPool) bool {
+	dst, ok := packet.Destination(pkt.Data)
+	if !ok {
+		packetPool.Put(pkt)
+		return false
+	}
+	s := mgr.Lookup(dst)
+	if s == nil {
+		packetPool.Put(pkt)
+		return false
+	}
+	if mgr.IsShadow() {
+		if pkt.Data[9] == 1 {
+			if !packet.TranslateICMP(pkt.Data, s.VisibleIP, s.ShadowIP, false) {
+				packetPool.Put(pkt)
+				return false
+			}
+		} else if !packet.RewriteDestinationIPv4(pkt.Data, s.ShadowIP, s.VisibleIP) {
+			packetPool.Put(pkt)
+			return false
+		}
+	}
+	if !s.TryEnqueue(pkt) {
+		mgr.RecordQueueOverflow()
+		now := time.Now().Unix()
+		previous := lastQueueOverflowLog.Load()
+		if now-previous >= 30 && lastQueueOverflowLog.CompareAndSwap(previous, now) {
+			log.Printf("CONNECT-IP outbound queue overflow: aggregate_drops=%d", mgr.QueueOverflowTotal())
+		}
+	}
+	return true
+}
+
+func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
+	packets := make([]*session.PacketBuffer, tunnel.MaxGSOBatch)
+	bufs := make([][]byte, tunnel.MaxGSOBatch)
+	sizes := make([]int, tunnel.MaxGSOBatch)
+	for {
+		for i := range packets {
+			packets[i] = packetPool.Get(packetPool.PayloadSize())
+			bufs[i] = packets[i].Buffer
+			sizes[i] = 0
+		}
+		n, err := tun.ReadBatch(bufs, sizes, 1)
+		if err != nil {
+			for _, pkt := range packets {
+				packetPool.Put(pkt)
+			}
+			if errors.Is(err, tunnel.ErrMalformedGSO) {
+				continue
+			}
+			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
+			return
+		}
+		for i, pkt := range packets {
+			if i >= n || !packetPool.CommitRead(pkt, sizes[i]) {
+				packetPool.Put(pkt)
+				continue
+			}
+			dispatchTUNPacket(pkt, mgr, packetPool)
+		}
+	}
 }
 
 func tunDispatcherReadLoop(tun tunPacketReader, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
@@ -366,35 +439,7 @@ func tunDispatcherReadLoop(tun tunPacketReader, mgr *session.Manager, packetPool
 			packetPool.Put(pkt)
 			continue
 		}
-		dst, ok := packet.Destination(pkt.Data)
-		if !ok {
-			packetPool.Put(pkt)
-			continue
-		}
-		s := mgr.Lookup(dst)
-		if s == nil {
-			packetPool.Put(pkt)
-			continue
-		}
-		if mgr.IsShadow() {
-			if pkt.Data[9] == 1 {
-				if !packet.TranslateICMP(pkt.Data, s.VisibleIP, s.ShadowIP, false) {
-					packetPool.Put(pkt)
-					continue
-				}
-			} else if !packet.RewriteDestinationIPv4(pkt.Data, s.ShadowIP, s.VisibleIP) {
-				packetPool.Put(pkt)
-				continue
-			}
-		}
-		if !s.TryEnqueue(pkt) {
-			mgr.RecordQueueOverflow()
-			now := time.Now().Unix()
-			previous := lastQueueOverflowLog.Load()
-			if now-previous >= 30 && lastQueueOverflowLog.CompareAndSwap(previous, now) {
-				log.Printf("CONNECT-IP outbound queue overflow: aggregate_drops=%d", mgr.QueueOverflowTotal())
-			}
-		}
+		dispatchTUNPacket(pkt, mgr, packetPool)
 	}
 }
 func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {

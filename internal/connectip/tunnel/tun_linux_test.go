@@ -43,13 +43,14 @@ func TestOpenTunFDSetupOrder(t *testing.T) {
 			}
 			return unix.SetNonblock(gotFD, nonblocking)
 		},
+		setOffload: func(int, int) error { t.Fatal("setOffload called in plain mode"); return nil },
 		newFile: func(gotFD uintptr, name string) *os.File {
 			events = append(events, "newfile")
 			return os.NewFile(gotFD, name)
 		},
 		close: func(gotFD int) error { events = append(events, "close"); return unix.Close(gotFD) },
 	}
-	d, err := openTun("masque0", 1280, ops)
+	d, err := openTun("masque0", 1280, false, ops)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +105,7 @@ func TestOpenTunClosesFDOnSetupErrors(t *testing.T) {
 				open:        func(string, int, uint32) (int, error) { return 123, nil },
 				ioctl:       func(int, uint, *unix.Ifreq) error { return tt.ioctlErr },
 				setNonblock: func(int, bool) error { return tt.nonblockErr },
+				setOffload:  func(int, int) error { return nil },
 				newFile: func(uintptr, string) *os.File {
 					if tt.newFileNil {
 						return nil
@@ -112,7 +114,7 @@ func TestOpenTunClosesFDOnSetupErrors(t *testing.T) {
 				},
 				close: func(int) error { closed++; return nil },
 			}
-			if _, err := openTun(tt.deviceName, 1280, ops); err == nil {
+			if _, err := openTun(tt.deviceName, 1280, false, ops); err == nil {
 				t.Fatal("expected error")
 			}
 			if closed != 1 {
@@ -123,7 +125,7 @@ func TestOpenTunClosesFDOnSetupErrors(t *testing.T) {
 }
 
 func TestNewIfreq(t *testing.T) {
-	ifr, err := newIfreq("masque0")
+	ifr, err := newIfreq("masque0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +134,99 @@ func TestNewIfreq(t *testing.T) {
 	}
 	if ifr.Uint16() != unix.IFF_TUN|unix.IFF_NO_PI {
 		t.Fatalf("flags = %#x", ifr.Uint16())
+	}
+}
+
+func TestNewIfreqOffload(t *testing.T) {
+	ifr, err := newIfreq("masque0", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ifr.Uint16() != unix.IFF_TUN|unix.IFF_NO_PI|unix.IFF_VNET_HDR {
+		t.Fatalf("flags = %#x", ifr.Uint16())
+	}
+}
+
+func TestOpenTunOffloadFailureIsFatal(t *testing.T) {
+	fd, err := unix.Dup(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	ops := tunFDOps{
+		open:        func(string, int, uint32) (int, error) { return fd, nil },
+		ioctl:       func(int, uint, *unix.Ifreq) error { return nil },
+		setNonblock: func(int, bool) error { return nil },
+		setOffload:  func(int, int) error { return errors.New("unsupported") },
+		newFile:     func(gotFD uintptr, name string) *os.File { return os.NewFile(gotFD, name) },
+		close:       func(int) error { closed = true; return nil },
+	}
+	if _, err := openTun("masque0", 1280, true, ops); err == nil {
+		t.Fatal("expected TUNSETOFFLOAD failure")
+	}
+	if closed {
+		t.Fatal("fd was closed through ops after ownership transferred to os.File")
+	}
+}
+
+func TestOpenTunOffloadConfiguresTCPFlags(t *testing.T) {
+	fd, err := unix.Dup(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := 0
+	ops := tunFDOps{
+		open:        func(string, int, uint32) (int, error) { return fd, nil },
+		ioctl:       func(int, uint, *unix.Ifreq) error { return nil },
+		setNonblock: func(int, bool) error { return nil },
+		setOffload: func(gotFD, flags int) error {
+			if gotFD != fd {
+				t.Fatalf("offload fd = %d", gotFD)
+			}
+			configured = flags
+			return nil
+		},
+		newFile: func(gotFD uintptr, name string) *os.File { return os.NewFile(gotFD, name) },
+		close:   unix.Close,
+	}
+	d, err := openTun("masque0", 1280, true, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if !d.OffloadEnabled() {
+		t.Fatal("offload device not marked enabled")
+	}
+	want := unix.TUN_F_CSUM | unix.TUN_F_TSO4 | unix.TUN_F_TSO6
+	if configured != want {
+		t.Fatalf("TUNSETOFFLOAD flags = %#x, want %#x", configured, want)
+	}
+}
+
+func TestDeviceWriteOffloadPrependsGSONoneHeader(t *testing.T) {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd, peer := fds[0], fds[1]
+	defer unix.Close(peer)
+	d := &Device{f: os.NewFile(uintptr(fd), "test-tun"), offload: true}
+	defer d.Close()
+	payload := []byte{0x45, 0, 0, 20}
+	if n, err := d.Write(payload); err != nil || n != len(payload) {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	written := make([]byte, virtioNetHdrLen+len(payload))
+	if n, err := unix.Read(peer, written); err != nil || n != len(written) {
+		t.Fatalf("peer read = %d, %v", n, err)
+	}
+	for i, b := range written[:virtioNetHdrLen] {
+		if b != 0 {
+			t.Fatalf("virtio header[%d] = %d, want GSO_NONE zero header", i, b)
+		}
+	}
+	if !reflect.DeepEqual(written[virtioNetHdrLen:], payload) {
+		t.Fatalf("payload = %x", written[virtioNetHdrLen:])
 	}
 }
 

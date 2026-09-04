@@ -26,6 +26,8 @@ func NewPacketPool(size int) *PacketPool {
 	return p
 }
 
+func (p *PacketPool) PayloadSize() int { return p.size }
+
 func (p *PacketPool) Get(n int) *PacketBuffer {
 	if n > p.size {
 		b := make([]byte, n+1)

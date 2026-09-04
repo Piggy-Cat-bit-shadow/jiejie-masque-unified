@@ -50,6 +50,7 @@ type Server struct {
 	TunnelIPv4         string     `yaml:"tunnel_ipv4"`
 	MTU                int        `yaml:"mtu"`
 	OutboundQueueSize  int        `yaml:"outbound_queue_size,omitempty"`
+	TunOffload         bool       `yaml:"tun_offload,omitempty"`
 	SessionIdleTimeout string     `yaml:"session_idle_timeout"`
 	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
 }

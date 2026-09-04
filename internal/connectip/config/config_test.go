@@ -34,6 +34,9 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.Server.OutboundQueueSize != 256 {
 		t.Fatalf("default outbound queue size = %d", c.Server.OutboundQueueSize)
 	}
+	if c.Server.TunOffload {
+		t.Fatal("TUN offload must default to disabled")
+	}
 	if c.QUIC.CongestionController != "default" {
 		t.Fatalf("default congestion controller = %q", c.QUIC.CongestionController)
 	}
@@ -49,6 +52,22 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	}
 	if c.HostNetwork.CheckInterval != "10s" {
 		t.Fatalf("default check interval = %q", c.HostNetwork.CheckInterval)
+	}
+}
+
+func TestLoadTunOffload(t *testing.T) {
+	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/30\n  tun_offload: true\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Server.TunOffload {
+		t.Fatal("tun_offload: true was not loaded")
 	}
 }
 
