@@ -1,9 +1,9 @@
+github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904201247-0c0b2b8ad785 h1:1kjQ19AyvJhP2Qbf7kCx5JvwWgp1Y3mvuRhHey6SPkY=
+github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904201247-0c0b2b8ad785/go.mod h1:yctOyB9z1ZnNiMSCkNkDFUC7sMrgPk736rmjORgWldY=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dunglas/httpsfv v1.0.2 h1:iERDp/YAfnojSDJ7PW3dj1AReJz4MrwbECSSE59JWL0=
 github.com/dunglas/httpsfv v1.0.2/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
-github.com/metacubex/connect-ip-go v0.0.0-20260727083417-67ccdb0cf771 h1:nLGBvwQ2vmsD+gU/XWBQH3xaYCM3vQCJIqPfw3mc/L0=
-github.com/metacubex/connect-ip-go v0.0.0-20260727083417-67ccdb0cf771/go.mod h1:9FjDcopUc+tgUva3dauAVzrYPHd0rant+zkvyECzkMg=
 github.com/metacubex/cpu v0.1.0 h1:8PeTdV9j6UKbN1K5Jvtbi/Jock7dknvzyYuLb8Conmk=
 github.com/metacubex/cpu v0.1.0/go.mod h1:09VEt4dSRLR+bOA8l4w4NDuzGZ8n5dkMv7e8axgEeTU=
 github.com/metacubex/hkdf v0.1.0 h1:fPA6VzXK8cU1foc/TOmGCDmSa7pZbxlnqhl3RNsthaA=

@@ -10,28 +10,30 @@ type PacketPool struct {
 }
 
 type PacketBuffer struct {
+	Buffer []byte
 	Data   []byte
 	pooled bool
 }
 
 func NewPacketPool(size int) *PacketPool {
 	p := &PacketPool{size: size}
-	p.pool.New = func() any { return &PacketBuffer{Data: make([]byte, size), pooled: true} }
+	p.pool.New = func() any { b := make([]byte, size+1); return &PacketBuffer{Buffer: b, Data: b[1:], pooled: true} }
 	return p
 }
 
 func (p *PacketPool) Get(n int) *PacketBuffer {
 	if n > p.size {
-		return &PacketBuffer{Data: make([]byte, n)}
+		b := make([]byte, n+1)
+		return &PacketBuffer{Buffer: b, Data: b[1:]}
 	}
 	packet := p.pool.Get().(*PacketBuffer)
-	packet.Data = packet.Data[:n]
+	packet.Data = packet.Buffer[1 : 1+n]
 	return packet
 }
 
 func (p *PacketPool) Put(packet *PacketBuffer) {
-	if packet != nil && packet.pooled && cap(packet.Data) == p.size {
-		packet.Data = packet.Data[:p.size]
+	if packet != nil && packet.pooled && len(packet.Buffer) == p.size+1 {
+		packet.Data = packet.Buffer[1:]
 		p.pool.Put(packet)
 	}
 }

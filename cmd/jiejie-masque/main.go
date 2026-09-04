@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
@@ -26,7 +27,6 @@ import (
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/quicstate"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
-	connectip "github.com/metacubex/connect-ip-go"
 	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
@@ -389,7 +389,15 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 		case <-s.Ctx.Done():
 			return
 		case pkt := <-s.Outbound:
-			icmp, err := s.Conn.WritePacket(pkt.Data)
+			var icmp []byte
+			var err error
+			if fast, ok := s.Conn.(interface {
+				WritePacketBuffer([]byte, int, int) ([]byte, error)
+			}); ok {
+				icmp, err = fast.WritePacketBuffer(pkt.Buffer, 1, len(pkt.Data))
+			} else {
+				icmp, err = s.Conn.WritePacket(pkt.Data)
+			}
 			s.ReleasePacket(pkt)
 			if len(icmp) > 0 {
 				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
