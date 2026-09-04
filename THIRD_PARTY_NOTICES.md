@@ -6,7 +6,7 @@ See `go.mod` and `NOTICE` for dependency and license notices. Runtime dependenci
 
 The CONNECT-IP congestion-control selector uses the MIT-licensed
 `github.com/Piggy-Cat-bit-shadow/quic-go` fork at commit
-`027d7ce7fa0182faf4628350e27b7bb0d8377ba1`, based on MIT-licensed
+`cf6a79d78c14`, based on MIT-licensed
 `github.com/metacubex/quic-go` commit `2548683b76f4`. The fork exposes only
 the upstream native CUBIC selector; it contains no BBR code. See
 `docs/CONNECT_IP_QUIC_CONGESTION.md` for the upstream and license provenance.
