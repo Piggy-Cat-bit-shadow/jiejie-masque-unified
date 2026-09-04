@@ -31,6 +31,9 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.Server.SessionIdleTimeout != "1h" {
 		t.Fatalf("default idle timeout = %q", c.Server.SessionIdleTimeout)
 	}
+	if c.Server.OutboundQueueSize != 256 {
+		t.Fatalf("default outbound queue size = %d", c.Server.OutboundQueueSize)
+	}
 	if err := os.WriteFile(path, []byte(base+"  session_idle_timeout: 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

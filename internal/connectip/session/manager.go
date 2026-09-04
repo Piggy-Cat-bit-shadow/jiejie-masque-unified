@@ -17,30 +17,44 @@ type PacketConn interface {
 	Close() error
 }
 
-// DefaultOutboundQueueSize holds roughly 1.25 MiB at the safe 1280 MTU. It is
+// DefaultOutboundQueueSize holds roughly 320 KiB at the safe 1280 MTU. It is
 // deliberately bounded: it absorbs normal QUIC scheduling bursts without
 // turning a stalled client into a large, latency-inducing buffer.
-const DefaultOutboundQueueSize = 1024
+const DefaultOutboundQueueSize = 256
 
 type Session struct {
-	ID           uint64
-	ClientIP     netip.Addr
-	VisibleIP    netip.Addr
-	ShadowIP     netip.Addr
-	Identity     string
-	Conn         PacketConn
-	Ctx          context.Context
-	Cancel       context.CancelFunc
-	Generation   uint64
-	Outbound     chan *PacketBuffer
-	closeOnce    sync.Once
-	outboundMu   sync.Mutex
-	packetPool   *PacketPool
-	onClose      func(*Session)
-	closeReason  atomic.Value
-	lastActivity atomic.Int64
-	queueHigh    atomic.Uint64
-	queueDropped atomic.Uint64
+	ID            uint64
+	ClientIP      netip.Addr
+	VisibleIP     netip.Addr
+	ShadowIP      netip.Addr
+	Identity      string
+	Conn          PacketConn
+	Ctx           context.Context
+	Cancel        context.CancelFunc
+	Generation    uint64
+	Outbound      chan *PacketBuffer
+	closeOnce     sync.Once
+	outboundMu    sync.Mutex
+	packetPool    *PacketPool
+	onClose       func(*Session)
+	closeReason   atomic.Value
+	lastActivity  atomic.Int64
+	queueHigh     atomic.Uint64
+	queueDropped  atomic.Uint64
+	queueEnqueued atomic.Uint64
+	queueDequeued atomic.Uint64
+}
+
+// QueueStats is a lock-free snapshot of a session's outbound handoff queue.
+// Depth is instantaneous and therefore advisory; the monotonic counters and
+// high-water mark are suitable for comparing sustained overload periods.
+type QueueStats struct {
+	Capacity  uint64
+	Depth     uint64
+	HighWater uint64
+	Enqueued  uint64
+	Dequeued  uint64
+	Dropped   uint64
 }
 
 func (s *Session) SetCloseReason(reason string) {
@@ -86,6 +100,7 @@ func (s *Session) TryEnqueue(packet *PacketBuffer) bool {
 	}
 	select {
 	case s.Outbound <- packet:
+		s.queueEnqueued.Add(1)
 		for depth := uint64(len(s.Outbound)); ; {
 			old := s.queueHigh.Load()
 			if depth <= old || s.queueHigh.CompareAndSwap(old, depth) {
@@ -99,8 +114,16 @@ func (s *Session) TryEnqueue(packet *PacketBuffer) bool {
 		return false
 	}
 }
-func (s *Session) QueueHighWater() uint64             { return s.queueHigh.Load() }
-func (s *Session) QueueDropped() uint64               { return s.queueDropped.Load() }
+func (s *Session) QueueHighWater() uint64 { return s.queueHigh.Load() }
+func (s *Session) QueueDropped() uint64   { return s.queueDropped.Load() }
+func (s *Session) RecordDequeued()        { s.queueDequeued.Add(1) }
+func (s *Session) QueueStats() QueueStats {
+	return QueueStats{
+		Capacity: uint64(cap(s.Outbound)), Depth: uint64(len(s.Outbound)),
+		HighWater: s.queueHigh.Load(), Enqueued: s.queueEnqueued.Load(),
+		Dequeued: s.queueDequeued.Load(), Dropped: s.queueDropped.Load(),
+	}
+}
 func (s *Session) ReleasePacket(packet *PacketBuffer) { s.releasePacket(packet) }
 func (s *Session) releasePacket(packet *PacketBuffer) {
 	if s.packetPool != nil {

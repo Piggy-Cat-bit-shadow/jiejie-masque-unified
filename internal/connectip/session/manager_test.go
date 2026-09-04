@@ -144,6 +144,37 @@ func TestQueueTracksHighWaterAndBoundedOverflow(t *testing.T) {
 	if s.QueueDropped() != 1 {
 		t.Fatalf("dropped = %d, want 1", s.QueueDropped())
 	}
+	stats := s.QueueStats()
+	if stats.Capacity != 2 || stats.Depth != 2 || stats.HighWater != 2 || stats.Enqueued != 2 || stats.Dequeued != 0 || stats.Dropped != 1 {
+		t.Fatalf("queue stats = %+v", stats)
+	}
+}
+
+func TestSlowSessionQueueDoesNotBlockFastSession(t *testing.T) {
+	pool := NewPacketPool(1280)
+	slow := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "slow", &fakeConn{}, pool, 2, nil)
+	fast := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.3"), "fast", &fakeConn{}, pool, 2, nil)
+	defer slow.Close()
+	defer fast.Close()
+
+	// Deliberately leave slow's writer stalled and fill its small bounded queue.
+	if !slow.TryEnqueue(pool.Get(10)) || !slow.TryEnqueue(pool.Get(10)) || slow.TryEnqueue(pool.Get(10)) {
+		t.Fatal("slow queue did not apply bounded backpressure")
+	}
+	for i := 0; i < 128; i++ {
+		if !fast.TryEnqueue(pool.Get(10)) {
+			t.Fatalf("fast session dropped packet %d while another session was stalled", i)
+		}
+		packet := <-fast.Outbound
+		fast.RecordDequeued()
+		fast.ReleasePacket(packet)
+	}
+	if got := slow.QueueStats(); got.Dropped != 1 || got.Depth != 2 {
+		t.Fatalf("slow queue stats = %+v", got)
+	}
+	if got := fast.QueueStats(); got.Dropped != 0 || got.Enqueued != 128 || got.Dequeued != 128 || got.Depth != 0 {
+		t.Fatalf("fast queue stats = %+v", got)
+	}
 }
 
 func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {

@@ -98,7 +98,7 @@ func Load(path string) (Config, error) {
 		c.Server.SessionIdleTimeout = "1h"
 	}
 	if c.Server.OutboundQueueSize == 0 {
-		c.Server.OutboundQueueSize = 1024
+		c.Server.OutboundQueueSize = 256
 	}
 	if c.HostNetwork.CheckInterval == "" {
 		c.HostNetwork.CheckInterval = "10s"

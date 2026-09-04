@@ -389,6 +389,7 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 		case <-s.Ctx.Done():
 			return
 		case pkt := <-s.Outbound:
+			s.RecordDequeued()
 			var icmp []byte
 			var err error
 			if fast, ok := s.Conn.(interface {
