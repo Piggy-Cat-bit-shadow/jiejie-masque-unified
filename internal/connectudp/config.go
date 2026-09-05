@@ -85,6 +85,11 @@ func (c Config) Validate(checkFiles bool) error {
 	if c.TLS.Cert == "" || c.TLS.Key == "" {
 		return fmt.Errorf("tls cert and key are required")
 	}
+	if c.TargetPolicy.ConnectTimeout != "" {
+		if d, e := time.ParseDuration(c.TargetPolicy.ConnectTimeout); e != nil || d <= 0 {
+			return fmt.Errorf("target_policy.connect_timeout must be positive")
+		}
+	}
 	if (c.Auth.Username == "") != (c.Auth.Password == "") || (c.Auth.UsernameEnv == "") != (c.Auth.PasswordEnv == "") {
 		return fmt.Errorf("auth credentials and env names must be paired")
 	}

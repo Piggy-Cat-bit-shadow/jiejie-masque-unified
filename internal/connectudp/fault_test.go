@@ -1,6 +1,7 @@
 package connectudp
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -15,8 +16,14 @@ func TestFaultStatusMappings(t *testing.T) {
 	if got := statusForDialError(&net.OpError{Err: errors.New("connection refused")}); got != 502 {
 		t.Fatalf("refused target status=%d", got)
 	}
+	if got := statusForDialError(context.DeadlineExceeded); got != 504 {
+		t.Fatalf("TCP timeout target status=%d", got)
+	}
 	if got := errToStatus(&net.DNSError{IsNotFound: true}); got != 502 {
 		t.Fatalf("dns target status=%d", got)
+	}
+	if got := errToStatus(context.DeadlineExceeded); got != 504 {
+		t.Fatalf("timeout target status=%d", got)
 	}
 }
 

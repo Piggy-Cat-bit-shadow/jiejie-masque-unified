@@ -37,6 +37,13 @@ func (r *TCPRelay) activeCount() int {
 }
 
 func statusForDialError(err error) int {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return 504
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return 504
+	}
 	var addrErr *net.AddrError
 	if errors.As(err, &addrErr) {
 		return 400

@@ -3,6 +3,7 @@ package connectudp
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestResolveAuth(t *testing.T) {
@@ -62,5 +63,30 @@ func TestLoadRejectsUnknownFieldAndSecondDocument(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("second YAML document accepted")
+	}
+}
+
+func TestTargetPolicyConnectTimeoutDefaultsAndValidation(t *testing.T) {
+	c := Config{Mode: "connect-udp", Listen: "127.0.0.1:4433", PublicAuthority: "proxy.test"}
+	c.TLS.Cert, c.TLS.Key = "cert", "key"
+	c.QUIC.StatelessResetKeyFile = "/tmp/reset.key"
+	c.Auth.AllowUnauthenticated = true
+	if err := c.Validate(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.TargetPolicy.ConnectTimeoutDuration(); got != 10*time.Second {
+		t.Fatalf("default connect timeout = %s", got)
+	}
+	for _, value := range []string{"0s", "-1s", "not-a-duration"} {
+		c.TargetPolicy.ConnectTimeout = value
+		if err := c.Validate(false); err == nil {
+			t.Fatalf("connect_timeout %q was accepted", value)
+		}
+	}
+	for _, value := range []string{"1s", "10s", "30s"} {
+		c.TargetPolicy.ConnectTimeout = value
+		if err := c.Validate(false); err != nil {
+			t.Fatalf("connect_timeout %q rejected: %v", value, err)
+		}
 	}
 }

@@ -147,6 +147,8 @@ func (s *Proxy) ProxyContext(ctx context.Context, w mh.ResponseWriter, r *ProxyR
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
 			dnsErrorToProxyStatus(&proxyStatus, dnsError)
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			proxyStatus.Params.Add("error", "connection_timeout")
 		} else {
 			proxyStatus.Params.Add("error", "destination_ip_unroutable")
 		}

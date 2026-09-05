@@ -10,8 +10,10 @@ auth:
     - username: example-client
       password_env: JIEJIE_MASQUE_EXAMPLE_PASSWORD
 target_policy:
-  # Standard CONNECT/CONNECT-UDP may only reach public destinations by default.
+  # Only public, globally reachable unicast destinations are allowed by default.
   allow_private: false
+  # Overall DNS resolution + validated target dialing establishment deadline.
+  connect_timeout: 10s
 limits:
   max_active_flows: 256
   max_active_flows_per_user: 64

@@ -16,6 +16,12 @@ parse YAML itself. Public-repository checks scan all tracked files for
 high-confidence private-key material and scan public documentation/configuration
 for non-example addresses and domains.
 
+CONNECT-UDP/CONNECT-TCP `allow_private: false` follows the IANA
+Special-Purpose Address Registries' `Globally Reachable` semantics, including
+more-specific globally reachable exceptions. IPv4-mapped IPv6 addresses are
+unmapped before classification. The static address snapshot is maintained
+manually; runtime and CI do not fetch IANA.
+
 ## Exact dependency provenance
 
 ```text
