@@ -178,6 +178,7 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			binary.BigEndian.PutUint16(super[4:], uint16(total-m.ipLen))
 		} else {
 			binary.BigEndian.PutUint16(super[2:], uint16(total))
+			binary.BigEndian.PutUint16(super[10:], 0)
 			binary.BigEndian.PutUint16(super[10:], ^checksum(super[:m.ipLen], 0))
 		}
 		binary.LittleEndian.PutUint16(d.txGROBuf[2:], uint16(m.ipLen+m.tcpLen))
