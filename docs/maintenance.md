@@ -140,3 +140,37 @@ client TLS ServerName; and race instrumentation can make
 formatting exceptions. Confirm targeted packages, main CI, and release gates
 before classifying such a failure as a product defect. This is a validation
 caveat, not a reason to alter runtime behavior during a release audit.
+
+## v1.0.3 third-audit closure
+
+The v1.0.3 runtime baseline is `5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`.
+The third-audit release closure changes documentation and release metadata only;
+the runtime baseline remains frozen.
+
+| Finding | Final status |
+| --- | --- |
+| F-301 | FIXED |
+| F-302 | DEFERRED / REPRODUCTION REQUIRED |
+| F-303 | FIXED |
+| F-304 | FIXED |
+| H-305 | MEASURE FIRST |
+| H-306 | PRODUCTION A/B REQUIRED |
+
+F-301's effective CONNECT-UDP admission identity is explicit `Credential.Name`
+when non-empty, otherwise `Username`; both usernames and effective identities
+must be unique. F-303 consumes wrapped `connectip.CloseError` values with
+`errors.Is` for `context.Canceled`, `net.ErrClosed`, and `io.ErrClosedPipe`.
+F-304 supports sequential and pipelined length-prefixed DNS-over-TCP messages
+on one downstream connection, processes them in order, and opens one upstream
+TCP connection per query. Clean EOF and idle timeout do not increment DNS
+gateway Errors; malformed or failed message operations do.
+
+F-302 remains a plausible cross-process Session-NAT stale-conntrack lifecycle
+risk, but has not been reproduced as a user-visible production failure and does
+not justify a speculative startup conntrack flush. H-305 remains a product
+profile measurement decision, and H-306 requires production A/B measurement;
+neither changes runtime code in v1.0.3.
+
+The IANA IPv4 and IPv6 special-purpose policy snapshots are verified current
+through 2025-10-09. The frozen dataplane ownership, queue, buffer, cleanup,
+PacketPool, and final serialization-copy invariants remain unchanged.
