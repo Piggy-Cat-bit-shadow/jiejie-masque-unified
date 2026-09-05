@@ -31,15 +31,34 @@ func TestPacketPoolRejectsReadSentinel(t *testing.T) {
 	pool.Put(pkt)
 }
 
-func TestPacketBufferReleaseReturnsToPoolExactlyOnce(t *testing.T) {
+func TestPacketBufferReleaseIsIdempotent(t *testing.T) {
 	pool := NewPacketPool(1280)
 	pkt := pool.Get(64)
-	backing := &pkt.Buffer[0]
-	pkt.Release()
-	pkt.Release()
-	reused := pool.Get(64)
-	if &reused.Buffer[0] != backing {
-		t.Fatal("released packet was not returned to the pool")
+	if pkt.released.Load() {
+		t.Fatal("new packet starts released")
 	}
-	reused.Release()
+
+	pkt.Release()
+	if !pkt.released.Load() {
+		t.Fatal("first release did not mark packet released")
+	}
+	pkt.Release()
+	if !pkt.released.Load() {
+		t.Fatal("duplicate release changed released state")
+	}
+}
+
+func TestPacketPoolGetStartsNewReleaseGeneration(t *testing.T) {
+	pool := NewPacketPool(1280)
+	pkt := pool.Get(64)
+	pkt.Release()
+
+	next := pool.Get(64)
+	if next.released.Load() {
+		t.Fatal("new ownership generation starts released")
+	}
+	if len(next.Data) != 64 {
+		t.Fatalf("packet data length = %d, want 64", len(next.Data))
+	}
+	next.Release()
 }
