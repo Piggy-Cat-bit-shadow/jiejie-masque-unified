@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
+	"io"
+	"net"
 	"net/netip"
 	"testing"
 	"time"
@@ -118,4 +122,103 @@ func TestTUNDispatcherReadsDirectlyIntoQueuedPacket(t *testing.T) {
 	if queued.Buffer[session.PacketPoolHeadroom-1] != 0 || len(queued.Data) != len(ip) {
 		t.Fatalf("packet layout changed: headroom=%#x length=%d", queued.Buffer[0], len(queued.Data))
 	}
+}
+
+func TestNormalSessionErrorConsumesWrappedTerminalErrors(t *testing.T) {
+	active := context.Background()
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name string
+		err  error
+		ctx  context.Context
+		want bool
+	}{
+		{name: "local close", err: &connectip.CloseError{Remote: false}, ctx: active, want: true},
+		{name: "remote close", err: &connectip.CloseError{Remote: true}, ctx: active, want: true},
+		{name: "wrapped net closed", err: fmt.Errorf("wrapped close: %w", net.ErrClosed), ctx: active, want: true},
+		{name: "wrapped pipe", err: fmt.Errorf("wrapped pipe: %w", io.ErrClosedPipe), ctx: active, want: true},
+		{name: "wrapped canceled", err: fmt.Errorf("wrapped cancel: %w", context.Canceled), ctx: active, want: true},
+		{name: "arbitrary error", err: errors.New("sentinel"), ctx: active, want: false},
+		{name: "active deadline", err: context.DeadlineExceeded, ctx: active, want: false},
+		{name: "canceled context", err: errors.New("session stopped"), ctx: canceled, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalSessionError(tt.err, tt.ctx); got != tt.want {
+				t.Fatalf("normalSessionError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+type terminalErrorPacketConn struct {
+	readErr  error
+	writeErr error
+}
+
+func (c terminalErrorPacketConn) ReadPacket() ([]byte, error) { return nil, c.readErr }
+func (c terminalErrorPacketConn) WritePacket([]byte) ([]byte, error) {
+	return nil, c.writeErr
+}
+func (terminalErrorPacketConn) Close() error { return nil }
+
+func TestSessionReaderSemanticCloseDoesNotSetReadError(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		s := session.New(netip.MustParseAddr("10.200.0.2"), "reader", terminalErrorPacketConn{readErr: &connectip.CloseError{Remote: remote}}, nil)
+		sessionReader(s, nil, session.NewManager(), netip.MustParsePrefix("10.200.0.1/32"), false, 0)
+		if got := s.CloseReason(); got != "" {
+			t.Fatalf("remote=%t close reason = %q, want empty", remote, got)
+		}
+		s.Close()
+	}
+}
+
+func TestSessionWriterSemanticCloseDoesNotSetWriteError(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		pool := session.NewPacketPool(1280)
+		s := session.New(netip.MustParseAddr("10.200.0.2"), "writer", terminalErrorPacketConn{writeErr: &connectip.CloseError{Remote: remote}}, nil)
+		s.Outbound <- pool.Get(1)
+		done := make(chan struct{})
+		go func() {
+			sessionWriter(s, nil, 1280)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("sessionWriter did not return on semantic close")
+		}
+		if got := s.CloseReason(); got != "" {
+			t.Fatalf("remote=%t close reason = %q, want empty", remote, got)
+		}
+		s.Close()
+	}
+}
+
+func TestSessionReaderWriterArbitraryErrorsKeepReasons(t *testing.T) {
+	sr := session.New(netip.MustParseAddr("10.200.0.2"), "reader", terminalErrorPacketConn{readErr: errors.New("boom")}, nil)
+	sessionReader(sr, nil, session.NewManager(), netip.MustParsePrefix("10.200.0.1/32"), false, 0)
+	if got := sr.CloseReason(); got != "read-error" {
+		t.Fatalf("reader close reason = %q, want read-error", got)
+	}
+	sr.Close()
+
+	pool := session.NewPacketPool(1280)
+	sw := session.New(netip.MustParseAddr("10.200.0.2"), "writer", terminalErrorPacketConn{writeErr: errors.New("boom")}, nil)
+	sw.Outbound <- pool.Get(1)
+	done := make(chan struct{})
+	go func() {
+		sessionWriter(sw, nil, 1280)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sessionWriter did not return on arbitrary error")
+	}
+	if got := sw.CloseReason(); got != "write-error" {
+		t.Fatalf("writer close reason = %q, want write-error", got)
+	}
+	sw.Close()
 }

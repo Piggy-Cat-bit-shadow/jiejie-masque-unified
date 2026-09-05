@@ -90,3 +90,72 @@ func TestTargetPolicyConnectTimeoutDefaultsAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func validMultiUserConfig(users ...AuthUser) Config {
+	c := Config{Mode: "connect-udp", Listen: "127.0.0.1:4433", PublicAuthority: "proxy.test"}
+	c.TLS.Cert, c.TLS.Key = "cert", "key"
+	c.QUIC.StatelessResetKeyFile = "/tmp/reset.key"
+	c.Auth.Users = users
+	return c
+}
+
+func TestValidateRequiresUniqueEffectiveAuthIdentities(t *testing.T) {
+	tests := []struct {
+		name  string
+		users []AuthUser
+		valid bool
+	}{
+		{
+			name:  "duplicate explicit names",
+			users: []AuthUser{{Name: "iphone", Username: "user-a"}, {Name: "iphone", Username: "user-b"}},
+		},
+		{
+			name:  "fallback and explicit collision",
+			users: []AuthUser{{Username: "user-a"}, {Name: "user-a", Username: "user-b"}},
+		},
+		{
+			name:  "two unnamed users",
+			users: []AuthUser{{Username: "user-a"}, {Username: "user-b"}},
+			valid: true,
+		},
+		{
+			name:  "explicit name equal to own username",
+			users: []AuthUser{{Name: "iphone", Username: "iphone"}},
+			valid: true,
+		},
+		{
+			name:  "duplicate usernames",
+			users: []AuthUser{{Username: "same"}, {Username: "same"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validMultiUserConfig(tt.users...).Validate(false)
+			if tt.valid && err != nil {
+				t.Fatalf("valid users rejected: %v", err)
+			}
+			if !tt.valid && err == nil {
+				t.Fatal("identity collision was accepted")
+			}
+		})
+	}
+}
+
+func TestResolveCredentialsUsesEffectiveAuthIdentity(t *testing.T) {
+	t.Setenv("MASQUE_TEST_PASSWORD", "env-secret")
+	c := validMultiUserConfig(
+		AuthUser{Username: "user-a", Password: "a"},
+		AuthUser{Name: "tablet", Username: "user-b", Password: "b"},
+		AuthUser{Username: "user-c", PasswordEnv: "MASQUE_TEST_PASSWORD"},
+	)
+	creds, err := c.ResolveCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds["user-a"].Name != "user-a" || creds["user-b"].Name != "tablet" || creds["user-c"].Password != "env-secret" {
+		t.Fatalf("credential identities = %#v", creds)
+	}
+	if got := effectiveAuthUserName(c.Auth.Users[0]); got != creds["user-a"].Name {
+		t.Fatalf("fallback identity = %q, credential name = %q", got, creds["user-a"].Name)
+	}
+}

@@ -97,11 +97,17 @@ func (c Config) Validate(checkFiles bool) error {
 		return fmt.Errorf("auth users cannot be combined with legacy credentials")
 	}
 	seen := map[string]bool{}
+	seenIdentity := map[string]bool{}
 	for _, u := range c.Auth.Users {
 		if u.Username == "" || seen[u.Username] {
 			return fmt.Errorf("auth usernames must be unique and non-empty")
 		}
 		seen[u.Username] = true
+		if identity := effectiveAuthUserName(u); seenIdentity[identity] {
+			return fmt.Errorf("auth effective identities must be unique")
+		} else {
+			seenIdentity[identity] = true
+		}
 		if u.Password != "" && u.PasswordEnv != "" {
 			return fmt.Errorf("user %s sets both password and password_env", u.Username)
 		}
@@ -204,6 +210,13 @@ type Credential struct {
 	Password string
 }
 
+func effectiveAuthUserName(user AuthUser) string {
+	if user.Name != "" {
+		return user.Name
+	}
+	return user.Username
+}
+
 func (c Config) ResolveCredentials() (map[string]Credential, error) {
 	if len(c.Auth.Users) == 0 {
 		u, p, e := c.ResolveAuth()
@@ -217,10 +230,7 @@ func (c Config) ResolveCredentials() (map[string]Credential, error) {
 	}
 	result := make(map[string]Credential, len(c.Auth.Users))
 	for _, user := range c.Auth.Users {
-		name := user.Name
-		if name == "" {
-			name = user.Username
-		}
+		name := effectiveAuthUserName(user)
 		pass := user.Password
 		if user.PasswordEnv != "" {
 			var ok bool

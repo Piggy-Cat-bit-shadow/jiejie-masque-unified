@@ -659,5 +659,5 @@ func requestTemplate(host string) (*uritemplate.Template, error) {
 }
 
 func normalSessionError(err error, ctx context.Context) bool {
-	return ctx.Err() != nil || err == context.Canceled || err == net.ErrClosed || err == io.ErrClosedPipe
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
