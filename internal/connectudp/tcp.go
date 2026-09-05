@@ -3,6 +3,7 @@ package connectudp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -22,12 +23,32 @@ type TCPRelay struct {
 
 const tcpCopyBufferSize = 32 << 10
 
+type tcpCopyDirection uint8
+
+const (
+	tcpClientToTarget tcpCopyDirection = iota
+	tcpTargetToClient
+)
+
+type tcpCopyResult struct {
+	direction tcpCopyDirection
+	err       error
+}
+
 var tcpCopyBufferPool = sync.Pool{New: func() any { return make([]byte, tcpCopyBufferSize) }}
 
 func copyWithPool(dst io.Writer, src io.Reader) (int64, error) {
 	buf := tcpCopyBufferPool.Get().([]byte)
 	defer tcpCopyBufferPool.Put(buf)
 	return io.CopyBuffer(dst, src, buf)
+}
+
+func closeWrite(conn io.Writer) error {
+	cw, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		return fmt.Errorf("TCP target does not support half-close")
+	}
+	return cw.CloseWrite()
 }
 
 func (r *TCPRelay) activeCount() int {
@@ -87,9 +108,7 @@ func (r *TCPRelay) RelayContext(ctx context.Context, w mh.ResponseWriter, target
 	r.wg.Add(1)
 	r.mu.Unlock()
 	defer func() {
-		_ = conn.Close()
-		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
-		_ = stream.Close()
+		r.hardClose(conn, stream)
 		r.mu.Lock()
 		delete(r.closers, conn)
 		delete(r.closers, stream)
@@ -97,14 +116,42 @@ func (r *TCPRelay) RelayContext(ctx context.Context, w mh.ResponseWriter, target
 		r.wg.Done()
 	}()
 	w.WriteHeader(200)
-	done := make(chan struct{}, 2)
-	go func() { _, _ = copyWithPool(activityWriter{Writer: conn, flow: flow}, stream); done <- struct{}{} }()
-	go func() { _, _ = copyWithPool(activityWriter{Writer: stream, flow: flow}, conn); done <- struct{}{} }()
-	<-done
+	results := make(chan tcpCopyResult, 2)
+	go func() {
+		_, err := copyWithPool(activityWriter{Writer: conn, flow: flow}, stream)
+		results <- tcpCopyResult{direction: tcpClientToTarget, err: err}
+	}()
+	go func() {
+		_, err := copyWithPool(activityWriter{Writer: stream, flow: flow}, conn)
+		results <- tcpCopyResult{direction: tcpTargetToClient, err: err}
+	}()
+
+	first := <-results
+	if first.err != nil {
+		r.hardClose(conn, stream)
+		<-results
+		return
+	}
+	switch first.direction {
+	case tcpClientToTarget:
+		if err := closeWrite(conn); err != nil {
+			r.hardClose(conn, stream)
+			<-results
+			return
+		}
+	case tcpTargetToClient:
+		_ = stream.Close()
+	}
+	second := <-results
+	if second.err != nil {
+		r.hardClose(conn, stream)
+	}
+}
+
+func (r *TCPRelay) hardClose(conn net.Conn, stream *http3.Stream) {
 	_ = conn.Close()
 	stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
 	_ = stream.Close()
-	<-done
 }
 
 type activityWriter struct {

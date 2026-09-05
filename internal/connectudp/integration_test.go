@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -217,4 +218,253 @@ func TestHTTP3TCPConnectLoopback(t *testing.T) {
 		}
 	}
 	shutdown()
+}
+
+func TestHTTP3TCPClientHalfCloseReceivesTrailingResponse(t *testing.T) {
+	_, addr, shutdown := startIntegrationServer(t)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	targetDone := make(chan error, 1)
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		defer conn.Close()
+		request, err := io.ReadAll(conn)
+		if err == nil && string(request) != "request-body" {
+			err = fmt.Errorf("target request = %q", request)
+		}
+		if err == nil {
+			_, err = conn.Write([]byte("trailing-response"))
+		}
+		if tcp, ok := conn.(*net.TCPConn); ok && err == nil {
+			err = tcp.CloseWrite()
+		}
+		targetDone <- err
+	}()
+
+	cc := dialH3(t, addr)
+	stream, err := cc.OpenRequestStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.ReadResponse()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response: %v %v", response, err)
+	}
+	if _, err := stream.Write([]byte("request-body")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(stream)
+	if err != nil || string(got) != "trailing-response" {
+		t.Fatalf("trailing response = %q, err=%v", got, err)
+	}
+	if err := <-targetDone; err != nil {
+		t.Fatal(err)
+	}
+	shutdown()
+}
+
+func TestHTTP3TCPTargetHalfCloseKeepsClientDirection(t *testing.T) {
+	_, addr, shutdown := startIntegrationServer(t)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	clientData := make(chan string, 1)
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			clientData <- "accept error: " + err.Error()
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("target-response"))
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+		data, readErr := io.ReadAll(conn)
+		if readErr != nil {
+			clientData <- "read error: " + readErr.Error()
+			return
+		}
+		clientData <- string(data)
+	}()
+
+	cc := dialH3(t, addr)
+	stream, err := cc.OpenRequestStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.ReadResponse()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response: %v %v", response, err)
+	}
+	got := make([]byte, len("target-response"))
+	if _, err := io.ReadFull(stream, got); err != nil || string(got) != "target-response" {
+		t.Fatalf("target response = %q, err=%v", got, err)
+	}
+	if _, err := stream.Write([]byte("late-client-data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-clientData; got != "late-client-data" {
+		t.Fatalf("target received = %q", got)
+	}
+	shutdown()
+}
+
+func TestHTTP3TCPTargetResetTearsDownRelay(t *testing.T) {
+	_, addr, shutdown := startIntegrationServer(t)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			return
+		}
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.SetLinger(0)
+		}
+		_ = conn.Close()
+	}()
+
+	cc := dialH3(t, addr)
+	stream, err := cc.OpenRequestStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.ReadResponse()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response: %v %v", response, err)
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, readErr := io.Copy(io.Discard, stream)
+		readDone <- readErr
+	}()
+	select {
+	case <-readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("target reset did not tear down relay")
+	}
+	shutdown()
+}
+
+func TestHTTP3TCPClientResetTearsDownRelay(t *testing.T) {
+	_, addr, shutdown := startIntegrationServer(t)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	targetDone := make(chan struct{})
+	go func() {
+		conn, err := target.Accept()
+		if err == nil {
+			_, _ = io.Copy(io.Discard, conn)
+			_ = conn.Close()
+		}
+		close(targetDone)
+	}()
+
+	cc := dialH3(t, addr)
+	stream, err := cc.OpenRequestStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.ReadResponse()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response: %v %v", response, err)
+	}
+	stream.CancelWrite(quic.StreamErrorCode(http3.ErrCodeConnectError))
+	select {
+	case <-targetDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client reset did not tear down target")
+	}
+	shutdown()
+}
+
+func TestHTTP3TCPHalfClosedShutdown(t *testing.T) {
+	_, addr, shutdown := startIntegrationServer(t)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	targetReady := make(chan struct{})
+	targetDone := make(chan error, 1)
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		defer conn.Close()
+		_, err = io.ReadAll(conn)
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		close(targetReady)
+		_, err = conn.Read(make([]byte, 1))
+		targetDone <- err
+	}()
+
+	cc := dialH3(t, addr)
+	stream, err := cc.OpenRequestStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := stream.ReadResponse()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response: %v %v", response, err)
+	}
+	if _, err := stream.Write([]byte("half-closed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-targetReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("target did not observe client FIN")
+	}
+	shutdown()
+	select {
+	case <-targetDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not unblock half-closed target")
+	}
 }
