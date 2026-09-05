@@ -56,7 +56,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.8
+current released version:           v1.0.9
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
@@ -69,6 +69,20 @@ The main module and connect-ip-go both replace the MetaCubeX quic-go module
 with the same Piggy-Cat-bit-shadow fork checkpoint. Do not use `go get -u`.
 Any dependency change requires upstream diff review, targeted tests, race,
 vet, benchmark comparison, module verification, and a new main pin.
+
+## v1.0.9 final release provenance
+
+The v1.0.9 annotated tag object is `7d495d4590e08503c2b6311ce8c9cdc4dfddf395`
+and targets `a5fd3daa773d2a8a69f9738a8dbbf4ef34b2d506`. Tag workflow
+`33969687921` passed all build and release gates. The CI artifact and the
+published GitHub Release asset are both 8,954,004 bytes with SHA256
+`c0037990939410a7c1c7738ee8e88aea5d5fde5a5534d8455a68c156378580fa`;
+the checksum, remote asset digest, and byte-for-byte `cmp` all agree.
+
+F-501 is FIXED and RELEASED in v1.0.9. F-502's historical v1.0.8
+self-description residual remains immutable; its future recurrence prevention
+is FIXED by the tag-only README, maintenance, and release-notes consistency
+gate. F-404 remains `REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING`.
 
 ## Ownership and lifecycle checks
 
