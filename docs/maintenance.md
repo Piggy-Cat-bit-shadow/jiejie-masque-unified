@@ -251,6 +251,12 @@ metadata step did not receive `GH_TOKEN` for the GitHub API call. No GitHub
 Release or substituted artifact was created, and v1.0.5 remains immutable.
 The token wiring fix is being carried into the v1.0.6 release attempt.
 
+The v1.0.6 tag reached the release job and completed the full build gates, but
+release verification stopped because `actions/download-artifact` restored the
+Linux binary without its executable bit. No GitHub Release or substituted
+artifact was created, and v1.0.6 remains immutable. The release-job permission
+fix is being carried into the v1.0.7 release attempt.
+
 ## v1.0.4 candidate — maintenance batch 1
 
 This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config
