@@ -25,6 +25,16 @@ provides the version and exact commit; the build job produces and validates one
 artifact, and the release job uploads that same artifact without rebuilding.
 Branch and pull-request artifacts are candidate artifacts, not release assets.
 
+## v1.0.10 candidate — F-601 only
+
+F-601 preserves the TCP TX GRO boundary after a segment carrying PSH is
+absorbed: that segment may remain the final segment of the current aggregate,
+but subsequent segments start a later group. The fix is covered by Linux
+`WriteBatch` regressions for IPv4 and IPv6, including intermediate, final,
+initial, and multiple PSH boundaries. `tun_tx_gro` remains disabled by default;
+the core dataplane and all unrelated ownership, queue, QUIC, DNS, Session-NAT,
+and release-provenance behavior remain frozen.
+
 The v1.0.2 runtime baseline is frozen at
 `3a07c4be6ad027620cfdaddad13a53609b7c0a06`. Accept correctness, security,
 compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
