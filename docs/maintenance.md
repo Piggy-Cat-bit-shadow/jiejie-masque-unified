@@ -193,6 +193,18 @@ the runtime baseline remains frozen.
 | H-305 | MEASURE FIRST |
 | H-306 | PRODUCTION A/B REQUIRED |
 
+## v1.0.9 candidate — F-501 only
+
+F-501 is a confirmed conntrack cleanup result-classification bug. A command
+that exits non-zero with explicit `0 flow entry`/`0 flow entries` output is a
+benign no-op, so cleanup continues from `-s` to `-d`; other command failures
+remain errors. Timeout classification now uses the saved context error before
+the per-command cancel and only treats `context.DeadlineExceeded` as timeout.
+This removes one confirmed source of incomplete cleanup. F-404 remains
+`REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING` and still concerns genuine
+cleanup failure/restart/reuse behavior, not this fixed result-classification
+bug.
+
 F-301's effective CONNECT-UDP admission identity is explicit `Credential.Name`
 when non-empty, otherwise `Username`; both usernames and effective identities
 must be unique. F-303 consumes wrapped `connectip.CloseError` values with
