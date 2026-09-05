@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "codex/**"
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
@@ -16,9 +18,39 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      commit: ${{ steps.metadata.outputs.commit }}
+      artifact-name: jiejie-masque-build-artifacts
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_commit=$(git rev-parse HEAD)
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "invalid release tag: $GITHUB_REF_NAME" >&2
+              exit 1
+            }
+            test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+            test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$build_commit"
+            build_version=${GITHUB_REF_NAME#v}
+            notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+            test -f "$notes"
+            grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
+          else
+            build_version=dev
+          fi
+          printf 'version=%s\n' "$build_version" >> "$GITHUB_OUTPUT"
+          printf 'commit=%s\n' "$build_commit" >> "$GITHUB_OUTPUT"
+          printf 'version=%s commit=%s\n' "$build_version" "$build_commit" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -63,7 +95,10 @@ jobs:
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
 
       - name: Build Linux amd64
-        run: VERSION=0.1.0 COMMIT=${{ github.sha }} scripts/build-release.sh
+        env:
+          BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+          BUILD_COMMIT: ${{ steps.metadata.outputs.commit }}
+        run: VERSION="$BUILD_VERSION" COMMIT="$BUILD_COMMIT" scripts/build-release.sh
 
       - name: Release binary gates
         run: |
@@ -71,9 +106,15 @@ jobs:
           echo "release_size_bytes=$bytes" >> "$GITHUB_STEP_SUMMARY"
           du -h dist/jiejie-masque-linux-amd64
           file dist/jiejie-masque-linux-amd64
-          dist/jiejie-masque-linux-amd64 --version | grep -F "${{ github.sha }}"
+          expected="jiejie-masque ${{ steps.metadata.outputs.version }} commit=${{ steps.metadata.outputs.commit }}"
+          test "$(dist/jiejie-masque-linux-amd64 --version)" = "$expected"
           readelf -S dist/jiejie-masque-linux-amd64 | grep -E '\.debug_|\.symtab[[:space:]]' && exit 1 || true
           go version -m dist/jiejie-masque-linux-amd64 | tee /tmp/modules.txt
+          grep -Fx "version=${{ steps.metadata.outputs.version }}" dist/RELEASE.txt
+          grep -Fx "commit=${{ steps.metadata.outputs.commit }}" dist/RELEASE.txt
+          actual_sha=$(sha256sum dist/jiejie-masque-linux-amd64 | awk '{print $1}')
+          release_sha=$(awk -F= '/^sha256=/{print $2}' dist/RELEASE.txt)
+          test "$actual_sha" = "$release_sha"
           if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi
           if [ "$bytes" -gt $((12 * 1024 * 1024)) ]; then echo "release binary exceeds 12 MiB target" >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$bytes" -ge $((24 * 1024 * 1024)) ]; then exit 1; fi
@@ -92,6 +133,7 @@ jobs:
         run: |
           cd dist
           sha256sum jiejie-masque-linux-amd64 > jiejie-masque-linux-amd64.sha256
+          test "$(awk '{print $1}' jiejie-masque-linux-amd64.sha256)" = "$(awk -F= '/^sha256=/{print $2}' RELEASE.txt)"
 
       - name: Report artifact
         run: |
@@ -99,16 +141,102 @@ jobs:
           file dist/jiejie-masque-linux-amd64
           cat dist/jiejie-masque-linux-amd64.sha256
 
-      - name: Upload binary
+      - name: Upload validated build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: jiejie-masque-linux-amd64
-          path: dist/jiejie-masque-linux-amd64
+          name: jiejie-masque-build-artifacts
+          path: |
+            dist/jiejie-masque-linux-amd64
+            dist/jiejie-masque-linux-amd64.sha256
+            dist/RELEASE.txt
           if-no-files-found: error
 
-      - name: Upload SHA256
-        uses: actions/upload-artifact@v4
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
         with:
-          name: jiejie-masque-linux-amd64.sha256
-          path: dist/jiejie-masque-linux-amd64.sha256
-          if-no-files-found: error
+          fetch-depth: 0
+
+      - name: Validate tag and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          test -f "$notes"
+          grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
+
+      - name: Download validated build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: dist
+
+      - name: Verify exact artifact metadata
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ needs.build.outputs.version }}
+          BUILD_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$BUILD_VERSION" = "${GITHUB_REF_NAME#v}"
+          test "$BUILD_COMMIT" = "$(git rev-parse HEAD)"
+          (cd dist && sha256sum -c jiejie-masque-linux-amd64.sha256)
+          test "$(dist/jiejie-masque-linux-amd64 --version)" = "jiejie-masque $BUILD_VERSION commit=$BUILD_COMMIT"
+          grep -Fx "version=$BUILD_VERSION" dist/RELEASE.txt
+          grep -Fx "commit=$BUILD_COMMIT" dist/RELEASE.txt
+          test "$(stat -c '%s' dist/jiejie-masque-linux-amd64)" = "$(awk -F= '/^raw_elf_bytes=/{print $2}' dist/RELEASE.txt)"
+          test "$(sha256sum dist/jiejie-masque-linux-amd64 | awk '{print $1}')" = "$(awk -F= '/^sha256=/{print $2}' dist/RELEASE.txt)"
+
+      - name: Refuse existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release already exists: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Create draft release from exact artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/jiejie-masque-linux-amd64 \
+            dist/jiejie-masque-linux-amd64.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "jiejie-masque $GITHUB_REF_NAME" \
+            --notes-file "docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+
+      - name: Verify draft release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+          local_size=$(stat -c '%s' dist/jiejie-masque-linux-amd64)
+          local_sha=$(sha256sum dist/jiejie-masque-linux-amd64 | awk '{print $1}')
+          remote_size=$(jq -r '.assets[] | select(.name == "jiejie-masque-linux-amd64") | .size' <<<"$release_json")
+          remote_digest=$(jq -r '.assets[] | select(.name == "jiejie-masque-linux-amd64") | .digest // empty' <<<"$release_json")
+          test "$remote_size" = "$local_size"
+          if [[ -n "$remote_digest" ]]; then
+            test "$remote_digest" = "sha256:$local_sha"
+          else
+            remote_dir=$(mktemp -d)
+            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern 'jiejie-masque-linux-amd64' --dir "$remote_dir"
+            test "$(sha256sum "$remote_dir/jiejie-masque-linux-amd64" | awk '{print $1}')" = "$local_sha"
+          fi
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false

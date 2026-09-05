@@ -19,7 +19,7 @@ type modeEnvelope struct {
 	Mode string `yaml:"mode"`
 }
 
-var version = "0.1.0"
+var version = "dev"
 var commit = "unknown"
 
 func main() {
