@@ -141,6 +141,9 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			total += len(packets[j]) - m.ipLen - m.tcpLen
 			m.payload += n.payload
 			j++
+			if n.psh {
+				break
+			}
 		}
 		if j-i < 2 {
 			n, err := d.Write(packets[i])
