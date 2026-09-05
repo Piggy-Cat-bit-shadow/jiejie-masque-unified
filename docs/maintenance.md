@@ -1,5 +1,21 @@
 # Maintenance and release guide
 
+Current released version: `v1.0.3`
+
+v1.0.3 runtime baseline:
+`5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`
+
+v1.0.3 release commit:
+`1203497d5b21b85cacea63c5312465a6fe7085c2`
+
+Current v1.0.4 candidate:
+`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
+
+Formal releases are tag-triggered GitHub Actions builds. The annotated tag
+provides the version and exact commit; the build job produces and validates one
+artifact, and the release job uploads that same artifact without rebuilding.
+Branch and pull-request artifacts are candidate artifacts, not release assets.
+
 The v1.0.2 runtime baseline is frozen at
 `3a07c4be6ad027620cfdaddad13a53609b7c0a06`. Accept correctness, security,
 compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
@@ -31,7 +47,9 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-main runtime baseline:             3a07c4be6ad027620cfdaddad13a53609b7c0a06
+current released version:           v1.0.3
+current candidate:                  dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
+v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
   pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
 quic-go:                           ac11e929d6decc0eb5f8235259ef82671dad3bca
@@ -96,18 +114,31 @@ nanosecond values into CI gates.
 
 ## Release artifact
 
-Build the static stripped Linux amd64 artifact with:
+The release path is:
 
-```sh
-VERSION=1.0.2 OUTPUT=dist/jiejie-masque-linux-amd64 scripts/build-release.sh
-sha256sum dist/jiejie-masque-linux-amd64 > dist/jiejie-masque-linux-amd64.sha256
-sha256sum -c dist/jiejie-masque-linux-amd64.sha256
+```text
+annotated tag
+→ tag-derived version and exact commit
+→ GitHub Actions validation gates
+→ one static Linux amd64 build
+→ workflow artifact with binary, checksum, and RELEASE.txt
+→ release job downloads that same artifact
+→ checksum, metadata, size, and remote asset verification
+→ draft release publication
 ```
 
-Verify x86-64 ELF, static linkage, stripped symbols, exact byte size, and the
-embedded version/commit. Upload only the binary and checksum to the GitHub
-Release. Do not include private paths, credentials, hostnames, or deployment
-identifiers.
+The release job never rebuilds. Local builds are for reproduction/audit only:
+
+```sh
+TAG="${TAG:?set an annotated tag such as v1.0.3}"
+VERSION="${TAG#v}" COMMIT="$(git rev-list -n1 "$TAG")" \
+  scripts/build-release.sh
+```
+
+The wrapper requires explicit `VERSION` and full 40-character `COMMIT` values.
+It verifies embedded metadata on native Linux, writes `dist/RELEASE.txt`, and
+the workflow checks that its SHA256 equals the generated checksum and binary.
+Do not include private paths, credentials, hostnames, or deployment identifiers.
 
 ## Frozen optimization boundary
 
@@ -174,6 +205,17 @@ neither changes runtime code in v1.0.3.
 The IANA IPv4 and IPv6 special-purpose policy snapshots are verified current
 through 2025-10-09. The frozen dataplane ownership, queue, buffer, cleanup,
 PacketPool, and final serialization-copy invariants remain unchanged.
+
+### v1.0.3 provenance addendum
+
+The v1.0.3 source commit passed repository CI gates, but its CI candidate binary
+used embedded version `0.1.0` and was not byte-identical to the separately
+built GitHub Release asset. The historical release asset was 8,945,812 bytes
+with SHA256
+`99a4a495b222640d559e5403b40e089ce5a94afd950729cef07a338b6381cb6d`.
+This is a release provenance gap, not a claim that the historical binary was
+corrupt. The v1.0.4 candidate workflow closes this gap through tag-derived
+metadata and same-artifact release upload; v1.0.3 tags and assets are unchanged.
 
 ## v1.0.4 candidate — maintenance batch 1
 

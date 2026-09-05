@@ -5,7 +5,7 @@ Unified single-binary MASQUE server with two independent modes:
 - `connect-ip`: MetaCubeX CONNECT-IP, P-256 mTLS authentication, Linux TUN, session NAT, watchdog and host-network supervision.
 - `connect-udp`: RFC 9298 CONNECT-UDP, HTTP Datagrams (Context ID 0), UDP relay, HTTP Basic authentication, plain HTTP/3 CONNECT, and graceful shutdown.
 
-The current maintenance release is `v1.0.2`. See
+The current maintenance release is `v1.0.3`. See
 [`docs/architecture.md`](docs/architecture.md) for the canonical data paths,
 ownership rules, limits, and frozen performance boundary; see
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for deployment validation and
@@ -36,7 +36,21 @@ For a small provider, keep CONNECT-UDP authenticated and bounded: use `auth.user
 
 Privacy: runtime logs deliberately omit client identities, tunnel addresses, relay destinations, and resolved next-hop addresses. CONNECT-UDP responses similarly avoid exposing raw network errors or resolved destination IPs. Keep service configuration and environment files owner-readable only (for example, `chmod 600 /etc/jiejie-masque/*.yaml /etc/jiejie-masque/*.env`).
 
-For a release build, use the repository's reproducible wrapper: `VERSION=1.0.2 COMMIT=$(git rev-parse HEAD) scripts/build-release.sh`. It produces the stripped static Linux amd64 binary, SHA256 metadata, and `dist/RELEASE.txt`; ordinary development builds may use `go build ./cmd/jiejie-masque`.
+Formal releases are produced by the tag-triggered GitHub Actions workflow,
+which validates the annotated tag, builds once, and uploads that exact
+artifact. For local reproduction or audit only, check out an annotated tag
+and run:
+
+```sh
+TAG="${TAG:?set a release tag such as v1.0.3}"
+VERSION="${TAG#v}" \
+COMMIT="$(git rev-list -n1 "$TAG")" \
+scripts/build-release.sh
+```
+
+The wrapper requires explicit metadata and produces the stripped static Linux
+amd64 binary, SHA256 metadata, and `dist/RELEASE.txt`. Ordinary development
+builds may use `go build ./cmd/jiejie-masque`.
 
 Loopback HTTP/3 integration tests cover both CONNECT-UDP datagram relay and plain CONNECT TCP relay. Production migration remains out of scope. Preserve the existing CONNECT-IP P-256 certificate/private key because clients pin its public key.
 
