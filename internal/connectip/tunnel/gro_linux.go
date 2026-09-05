@@ -40,6 +40,12 @@ func tcpGROMetaFor(p []byte) (tcpGROMeta, bool) {
 		if m.ipLen < 20 || m.ipLen > len(p) || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || p[9] != unix.IPPROTO_TCP || p[6]&0x3f != 0 {
 			return m, false
 		}
+		// IPv4 options are not TX-GRO candidates. Their semantics are not
+		// represented by the aggregate header, so accepting them would retain
+		// only the first packet's options.
+		if m.ipLen != 20 {
+			return m, false
+		}
 		copy(m.src[:4], p[12:16])
 		copy(m.dst[:4], p[16:20])
 	} else {

@@ -30,6 +30,29 @@ func makeTCPv6Segment(seq uint32, payloadLen int, psh bool) []byte {
 	return p
 }
 
+func makeTCPv4OptionsSegment(seq uint32, payloadLen int, psh bool, options [4]byte) []byte {
+	p := make([]byte, 44+payloadLen)
+	p[0], p[8], p[9] = 0x46, 64, unix.IPPROTO_TCP
+	copy(p[12:20], []byte{10, 0, 0, 1, 10, 0, 0, 2})
+	copy(p[20:24], options[:])
+	binary.BigEndian.PutUint16(p[2:], uint16(len(p)))
+	binary.BigEndian.PutUint16(p[24:], 1234)
+	binary.BigEndian.PutUint16(p[26:], 443)
+	binary.BigEndian.PutUint32(p[28:], seq)
+	binary.BigEndian.PutUint32(p[32:], 7)
+	p[36], p[37] = 0x50, 0x10
+	if psh {
+		p[37] |= tcpFlagPSH
+	}
+	for i := range p[44:] {
+		p[44+i] = byte(seq + uint32(i))
+	}
+	pseudo := pseudoChecksum(unix.IPPROTO_TCP, p[12:16], p[16:20], uint16(len(p)-24))
+	binary.BigEndian.PutUint16(p[40:], ^checksum(p[24:], pseudo))
+	binary.BigEndian.PutUint16(p[10:], ^checksum(p[:24], 0))
+	return p
+}
+
 func readTXGROPackets(t *testing.T, packets [][]byte, want int) [][]byte {
 	t.Helper()
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
@@ -141,6 +164,36 @@ func TestTXGROPSHBoundaries(t *testing.T) {
 				assertTXGROAggregate(t, outputs[0], tc.ipLen, 200, true)
 				assertTXGROAggregate(t, outputs[1], tc.ipLen, 200, true)
 			})
+		})
+	}
+}
+
+func TestTXGRORejectsIPv4Options(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options [4]byte
+	}{
+		{name: "different-options", options: [4]byte{1, 1, 1, 1}},
+		{name: "same-options", options: [4]byte{2, 2, 2, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := makeTCPv4OptionsSegment(1000, 100, false, tc.options)
+			second := makeTCPv4OptionsSegment(1100, 100, false, tc.options)
+			if _, ok := tcpGROMetaFor(first); ok {
+				t.Fatal("IPv4 options packet was accepted as a TX-GRO candidate")
+			}
+			if _, ok := tcpGROMetaFor(second); ok {
+				t.Fatal("IPv4 options packet was accepted as a TX-GRO candidate")
+			}
+			outputs := readTXGROPackets(t, [][]byte{first, second}, 2)
+			if len(outputs) != 2 {
+				t.Fatalf("output groups = %d, want 2", len(outputs))
+			}
+			for i, output := range outputs {
+				if output[0] != 0x46 {
+					t.Fatalf("output %d was not an independent IPv4-options packet", i)
+				}
+			}
 		})
 	}
 }
