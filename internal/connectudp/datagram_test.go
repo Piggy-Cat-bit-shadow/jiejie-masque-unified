@@ -2,10 +2,13 @@ package connectudp
 
 import (
 	"bytes"
-	"github.com/metacubex/quic-go/quicvarint"
+	"errors"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/metacubex/quic-go"
+	"github.com/metacubex/quic-go/quicvarint"
 )
 
 func TestContextDatagram(t *testing.T) {
@@ -43,5 +46,84 @@ func TestOversizedDatagramDoesNotEndFlow(t *testing.T) {
 	}
 	if err := sendDatagramOrDrop(sender, []byte("valid")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type testOwnedDatagramSender struct{ err error }
+
+func (s testOwnedDatagramSender) SendDatagramBufferOwned([]byte, int, int, quic.DatagramPayloadOwner) error {
+	return s.err
+}
+
+type testPayloadOwner struct{ releases int }
+
+func (o *testPayloadOwner) Release() { o.releases++ }
+
+func TestOwnedDatagramReleaseContract(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantRelease int
+	}{
+		{name: "transferred", wantRelease: 0},
+		{name: "send error", err: errors.New("send failed"), wantRelease: 1},
+		{name: "too large", err: &quic.DatagramTooLargeError{MaxDatagramPayloadSize: 1200}, wantRelease: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := &testPayloadOwner{}
+			err := sendDatagramBufferOwnedOrDrop(testOwnedDatagramSender{err: tc.err}, make([]byte, 16), 0, 1, owner)
+			if tc.wantRelease == 0 && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantRelease > 0 && tc.name == "send error" && err == nil {
+				t.Fatal("send error was swallowed")
+			}
+			if owner.releases != tc.wantRelease {
+				t.Fatalf("released %d times, want %d", owner.releases, tc.wantRelease)
+			}
+		})
+	}
+}
+
+func TestUDPOwnedDatagramPoolUsesAcquireGenerations(t *testing.T) {
+	p := newUDPOwnedDatagramPool()
+	b := p.Acquire()
+	b.Release()
+	b.Release()
+	// A new Acquire starts the next valid generation; tests never revive a
+	// previously released object by mutating its state directly.
+	b = p.Acquire()
+	b.Release()
+}
+
+func TestUDPSentinelPreservesOversizedPacketSignal(t *testing.T) {
+	receiver, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.DialUDP("udp", nil, receiver.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	receiver.SetReadDeadline(time.Now().Add(time.Second))
+
+	for _, size := range []int{maxUDPPayloadSize, maxUDPPayloadSize + 1, 4096} {
+		if _, err := sender.Write(make([]byte, size)); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, maxUDPPayloadSize+1)
+		n, _, err := receiver.ReadFromUDP(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := size
+		if want > maxUDPPayloadSize+1 {
+			want = maxUDPPayloadSize + 1
+		}
+		if n != want {
+			t.Fatalf("size %d: read %d bytes, want %d", size, n, want)
+		}
 	}
 }

@@ -189,6 +189,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	w.WriteHeader(http.StatusOK)
 
 	var wg sync.WaitGroup
+	ownedPool := newUDPOwnedDatagramPool()
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -199,7 +200,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	}()
 	go func() {
 		defer wg.Done()
-		if err := s.proxyConnReceive(conn, str, flow); err != nil {
+		if err := s.proxyConnReceive(conn, str, flow, ownedPool); err != nil {
 			s.mx.Lock()
 			closed := s.closed
 			s.mx.Unlock()
@@ -224,43 +225,52 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 
 func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) error {
 	for {
-		data, err := str.ReceiveDatagram(context.Background())
+		buffer, err := str.ReceiveDatagramBuffer(context.Background())
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
-		payload, ok, err := parseContextDatagram(data)
+		payload, ok, err := parseContextDatagram(buffer.Data)
 		if err != nil {
+			buffer.Release()
 			return err
 		}
 		if !ok {
+			buffer.Release()
 			continue
 		}
 		if _, err := conn.Write(payload); err != nil {
+			buffer.Release()
 			return err
 		}
+		buffer.Release()
 		flow.Touch()
 	}
 }
 
-func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flow) error {
-	b := make([]byte, len(contextIDZero)+maxUDPPayloadSize+1)
-	copy(b, contextIDZero)
+func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flow, ownedPool *udpOwnedDatagramPool) error {
 	for {
-		n, err := conn.Read(b[len(contextIDZero):])
+		buffer := ownedPool.Acquire()
+		// Read maxUDPPayloadSize+1 bytes: UDP Read reports the truncated
+		// length, so the extra byte is the sentinel that distinguishes an
+		// oversized packet without requiring ReadMsgUDP.
+		n, err := conn.Read(buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1])
 		if err != nil {
+			buffer.Release()
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
 		if n > maxUDPPayloadSize {
+			buffer.Release()
 			log.Printf("dropping UDP packet larger than MTU")
 			continue
 		}
-		if err := sendDatagramOrDrop(str, b[:len(contextIDZero)+n]); err != nil {
+		buffer.data[udpContextIDOffset] = 0
+		if err := sendDatagramBufferOwnedOrDrop(str, buffer.data, udpContextIDOffset, len(contextIDZero)+n, buffer); err != nil {
 			return err
 		}
 		flow.Touch()
@@ -268,13 +278,31 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flo
 }
 
 // sendDatagramOrDrop keeps a transient path-MTU reduction from terminating an
-// otherwise healthy UDP flow. quic-go synchronously copies a successful
-// datagram, so callers may reuse packet immediately after this returns.
+// otherwise healthy UDP flow.
 func sendDatagramOrDrop(str datagramSender, packet []byte) error {
 	err := str.SendDatagram(packet)
 	var tooLarge *quic.DatagramTooLargeError
 	if errors.As(err, &tooLarge) {
 		return nil
+	}
+	return err
+}
+
+type ownedDatagramSender interface {
+	SendDatagramBufferOwned([]byte, int, int, quic.DatagramPayloadOwner) error
+}
+
+// sendDatagramBufferOwnedOrDrop releases the buffer when the send is rejected.
+// A nil error transfers ownership to the QUIC connection.
+func sendDatagramBufferOwnedOrDrop(str ownedDatagramSender, buf []byte, offset, length int, owner quic.DatagramPayloadOwner) error {
+	err := str.SendDatagramBufferOwned(buf, offset, length, owner)
+	var tooLarge *quic.DatagramTooLargeError
+	if errors.As(err, &tooLarge) {
+		owner.Release()
+		return nil
+	}
+	if err != nil {
+		owner.Release()
 	}
 	return err
 }
