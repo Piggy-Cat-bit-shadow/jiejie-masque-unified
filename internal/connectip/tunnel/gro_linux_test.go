@@ -190,7 +190,7 @@ func TestTXGRORejectsIPv4Options(t *testing.T) {
 				t.Fatalf("output groups = %d, want 2", len(outputs))
 			}
 			for i, output := range outputs {
-				if output[0] != 0x46 {
+				if output[virtioNetHdrLen] != 0x46 {
 					t.Fatalf("output %d was not an independent IPv4-options packet", i)
 				}
 			}
