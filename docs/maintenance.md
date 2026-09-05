@@ -1,6 +1,12 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.3`
+Current released version: `v1.0.8`
+
+v1.0.8 networking/runtime behavior baseline:
+`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
+
+v1.0.8 final release tag target:
+`14ed18241268a07bb462792b348dd27e5c24ce8b`
 
 v1.0.3 runtime baseline:
 `5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`
@@ -47,7 +53,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.3
+current released version:           v1.0.8
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
@@ -262,6 +268,36 @@ release, but draft verification used the published-release tag endpoint, which
 returns 404 before publication. The draft has not been published and v1.0.7
 remains an immutable failed release attempt. The verification query is being
 fixed for the v1.0.8 release attempt.
+
+## v1.0.8 final release provenance
+
+The v1.0.8 annotated tag target is
+`14ed18241268a07bb462792b348dd27e5c24ce8b`. Tag workflow
+`33967069080` passed the full build and release jobs. The workflow artifact and
+the published GitHub Release binary are byte-identical:
+
+```text
+bytes: 8949908
+sha256: f3a50f592b30c69ca14a06be1690a550dcd138a77d966e474bf9ee4ca0cc2d1f
+```
+
+The release is [jiejie-masque v1.0.8](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.8),
+with `draft=false` and `prerelease=false`. Its two formal assets are the Linux
+amd64 binary and its checksum file. F-405 is FIXED: CI artifact and GitHub
+Release artifact passed `cmp`, size, checksum, embedded metadata, and remote
+digest verification. The post-release provenance record is documentation-only
+and is not part of the v1.0.8 tag.
+
+| Finding | Final status |
+| --- | --- |
+| F-401 | FIXED |
+| F-402 | FIXED |
+| F-403 | FIXED |
+| F-404 | REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING |
+| F-405 | FIXED |
+| F-406 | FIXED |
+| H-305 | MEASURE FIRST |
+| H-306 | PRODUCTION A/B REQUIRED |
 
 ## v1.0.4 candidate — maintenance batch 1
 
