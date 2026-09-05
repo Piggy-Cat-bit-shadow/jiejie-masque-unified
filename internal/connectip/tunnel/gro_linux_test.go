@@ -277,7 +277,7 @@ func TestTXGROConcurrentWriteBatch(t *testing.T) {
 			t.Fatalf("concurrent aggregate header = %+v", h)
 		}
 		p := output[virtioNetHdrLen:]
-		if len(p) != 20+20+200 || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || checksum(p[:20], 0) != 0 {
+		if len(p) != 20+20+200 || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || ^checksum(p[:20], 0) != 0 {
 			t.Fatalf("corrupt concurrent IPv4 aggregate: len=%d", len(p))
 		}
 		seq := binary.BigEndian.Uint32(p[24:])
