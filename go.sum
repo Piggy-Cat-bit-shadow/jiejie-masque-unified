@@ -1,5 +1,5 @@
-github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904234956-c517c0885d2f h1:CW3pGb7WrfUrBfpP4+IJ+X+0wLxdNJkskii71GoFVEE=
-github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904234956-c517c0885d2f/go.mod h1:/634yxMPqMOzy/mYkYhI7i22sYLvTXEvnjwMrM6yKyI=
+github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260905000748-c2e7cf9711ec h1:Q+KktLNESXLZCCxMiFFelt+TY7by9ntRmHSt5PrMY4g=
+github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260905000748-c2e7cf9711ec/go.mod h1:/634yxMPqMOzy/mYkYhI7i22sYLvTXEvnjwMrM6yKyI=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260904234804-0f7faaa7c726 h1:LuEB+i4F3l0Rfo+rnrymiOyj4NlVTYnytS4x0LEwDBg=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260904234804-0f7faaa7c726/go.mod h1:KTmibo7vZo0gCxdFWrPEQ/u/RGt92mJkrXDE2Qg2/AU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
