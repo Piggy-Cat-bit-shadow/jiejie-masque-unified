@@ -34,6 +34,14 @@ timeouts, CONNECT-UDP limits of 256 global and 64 per user, and a 256-packet
 CONNECT-IP outbound queue. The example configs are the compatibility source
 for these defaults.
 
+When session NAT is enabled, a removed shadow address enters a pending-cleanup
+state before it can be allocated again. Conntrack cleanup runs on two fixed
+workers with a queue bounded by `max_sessions`; a full queue applies
+backpressure without holding the session manager lock. `reuse_delay` starts
+after the cleanup attempt completes, including failed attempts. Cleanup
+shutdown stops new work, waits only for callbacks already running, and may
+drop queued work as part of service shutdown.
+
 ## CONNECT-IP receive and send paths
 
 The normal receive path is:

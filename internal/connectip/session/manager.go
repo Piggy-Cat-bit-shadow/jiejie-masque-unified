@@ -173,7 +173,154 @@ type Manager struct {
 	random             func(uint32) uint32
 	reuseDelay         time.Duration
 	cleanup            func(netip.Addr) error
+	cleanupExecutor    *cleanupExecutor
+	cleanupPending     map[netip.Addr]struct{}
 	queueOverflowTotal atomic.Uint64
+}
+
+const shadowCleanupWorkers = 2
+
+type cleanupJob struct {
+	manager *Manager
+	ip      netip.Addr
+	cleanup func(netip.Addr) error
+}
+
+type CleanupStats struct {
+	Queued         uint64
+	Started        uint64
+	Completed      uint64
+	Failed         uint64
+	Dropped        uint64
+	Active         uint64
+	MaxActive      uint64
+	QueueHighWater uint64
+}
+
+type cleanupExecutor struct {
+	jobs           chan cleanupJob
+	stop           chan struct{}
+	space          chan struct{}
+	closeOnce      sync.Once
+	mu             sync.Mutex
+	closed         bool
+	workers        sync.WaitGroup
+	queued         atomic.Uint64
+	started        atomic.Uint64
+	completed      atomic.Uint64
+	failed         atomic.Uint64
+	dropped        atomic.Uint64
+	active         atomic.Uint64
+	maxActive      atomic.Uint64
+	queueHighWater atomic.Uint64
+}
+
+func newCleanupExecutor(queueSize int) *cleanupExecutor {
+	if queueSize < 1 {
+		queueSize = 1
+	}
+	e := &cleanupExecutor{jobs: make(chan cleanupJob, queueSize), stop: make(chan struct{}), space: make(chan struct{}, 1)}
+	e.workers.Add(shadowCleanupWorkers)
+	for i := 0; i < shadowCleanupWorkers; i++ {
+		go e.worker()
+	}
+	return e
+}
+
+func (e *cleanupExecutor) worker() {
+	defer e.workers.Done()
+	for {
+		select {
+		case <-e.stop:
+			return
+		default:
+		}
+		select {
+		case <-e.stop:
+			return
+		case job := <-e.jobs:
+			e.signalSpace()
+			select {
+			case <-e.stop:
+				e.dropped.Add(1)
+				job.manager.finishCleanup(job.ip)
+				return
+			default:
+			}
+			e.started.Add(1)
+			active := e.active.Add(1)
+			for {
+				old := e.maxActive.Load()
+				if active <= old || e.maxActive.CompareAndSwap(old, active) {
+					break
+				}
+			}
+			err := job.cleanup(job.ip)
+			e.active.Add(^uint64(0))
+			if err != nil {
+				e.failed.Add(1)
+			} else {
+				e.completed.Add(1)
+			}
+			job.manager.finishCleanup(job.ip)
+		}
+	}
+}
+
+func (e *cleanupExecutor) signalSpace() {
+	select {
+	case e.space <- struct{}{}:
+	default:
+	}
+}
+
+func (e *cleanupExecutor) enqueue(job cleanupJob) bool {
+	for {
+		e.mu.Lock()
+		if e.closed {
+			e.mu.Unlock()
+			return false
+		}
+		select {
+		case e.jobs <- job:
+			e.queued.Add(1)
+			depth := uint64(len(e.jobs))
+			for {
+				old := e.queueHighWater.Load()
+				if depth <= old || e.queueHighWater.CompareAndSwap(old, depth) {
+					break
+				}
+			}
+			e.mu.Unlock()
+			return true
+		default:
+			e.mu.Unlock()
+		}
+		select {
+		case <-e.stop:
+			return false
+		case <-e.space:
+		}
+	}
+}
+
+func (e *cleanupExecutor) close() {
+	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
+		close(e.stop)
+		e.mu.Unlock()
+		e.workers.Wait()
+		e.dropped.Add(uint64(len(e.jobs)))
+	})
+}
+
+func (e *cleanupExecutor) stats() CleanupStats {
+	return CleanupStats{
+		Queued: e.queued.Load(), Started: e.started.Load(), Completed: e.completed.Load(),
+		Failed: e.failed.Load(), Dropped: e.dropped.Load(), Active: e.active.Load(),
+		MaxActive: e.maxActive.Load(), QueueHighWater: e.queueHighWater.Load(),
+	}
 }
 
 func (m *Manager) RecordQueueOverflow()       { m.queueOverflowTotal.Add(1) }
@@ -194,6 +341,7 @@ func NewShadowManagerWithClock(pool netip.Prefix, max int, excluded []netip.Addr
 	m.sessionsByID = map[uint64]*Session{}
 	m.excluded = map[netip.Addr]bool{}
 	m.cooling = map[netip.Addr]time.Time{}
+	m.cleanupPending = map[netip.Addr]struct{}{}
 	m.reuseDelay = reuseDelay
 	m.now = now
 	m.random = random
@@ -301,6 +449,9 @@ func (m *Manager) allocateLocked() (netip.Addr, bool) {
 		if m.excluded[ip] || m.sessionsByShadow[ip] != nil {
 			continue
 		}
+		if _, pending := m.cleanupPending[ip]; pending {
+			continue
+		}
 		if until, ok := m.cooling[ip]; ok {
 			if !m.now().Before(until) {
 				delete(m.cooling, ip)
@@ -335,6 +486,7 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		delete(m.sessionsByID, s.ID)
 		delete(m.sessionsByShadow, s.ShadowIP)
 		cleanup := m.cleanup
+		executor := m.cleanupExecutor
 		shadowIP := s.ShadowIP
 		if m.activeByIdentity[s.Identity] > 0 {
 			m.activeByIdentity[s.Identity]--
@@ -342,14 +494,15 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 				delete(m.activeByIdentity, s.Identity)
 			}
 		}
-		if m.reuseDelay > 0 {
+		pending := cleanup != nil && executor != nil
+		if pending {
+			m.cleanupPending[shadowIP] = struct{}{}
+		} else if m.reuseDelay > 0 {
 			m.cooling[shadowIP] = m.now().Add(m.reuseDelay)
 		}
 		m.mu.Unlock()
-		if cleanup != nil {
-			go func() {
-				_ = cleanup(shadowIP)
-			}()
+		if pending && !executor.enqueue(cleanupJob{manager: m, ip: shadowIP, cleanup: cleanup}) {
+			m.finishCleanup(shadowIP)
 		}
 		return true
 	}
@@ -406,7 +559,41 @@ func (m *Manager) IsShadowAddress(ip netip.Addr) bool {
 func (m *Manager) SetShadowCleanup(cleanup func(netip.Addr) error) {
 	m.mu.Lock()
 	m.cleanup = cleanup
+	if cleanup != nil && m.shadow && m.cleanupExecutor == nil {
+		m.cleanupExecutor = newCleanupExecutor(m.max)
+	}
 	m.mu.Unlock()
+}
+
+func (m *Manager) finishCleanup(ip netip.Addr) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, pending := m.cleanupPending[ip]; !pending {
+		return
+	}
+	delete(m.cleanupPending, ip)
+	if m.reuseDelay > 0 {
+		m.cooling[ip] = m.now().Add(m.reuseDelay)
+	}
+}
+
+func (m *Manager) CleanupStats() CleanupStats {
+	m.mu.RLock()
+	executor := m.cleanupExecutor
+	m.mu.RUnlock()
+	if executor == nil {
+		return CleanupStats{}
+	}
+	return executor.stats()
+}
+
+func (m *Manager) CloseCleanup() {
+	m.mu.RLock()
+	executor := m.cleanupExecutor
+	m.mu.RUnlock()
+	if executor != nil {
+		executor.close()
+	}
 }
 
 func ipv4Value(ip netip.Addr) uint32 {

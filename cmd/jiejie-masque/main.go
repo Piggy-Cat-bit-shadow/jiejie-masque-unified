@@ -155,6 +155,7 @@ func serveConnectIP() error {
 			}
 			return nil
 		})
+		defer mgr.CloseCleanup()
 	}
 	packetPool := session.NewPacketPool(c.Server.MTU)
 	fatal := make(chan error, 2)

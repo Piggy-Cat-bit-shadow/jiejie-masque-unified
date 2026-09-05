@@ -39,6 +39,14 @@ vet, benchmark comparison, module verification, and a new main pin.
 
 ## Ownership and lifecycle checks
 
+Session-NAT cleanup is a bounded asynchronous resource, not an unbounded
+goroutine-per-session path. Pending shadow addresses remain unavailable until
+their cleanup attempt completes; only then does `reuse_delay` begin. Keep the
+two-worker executor, its `max_sessions`-derived queue, queue-full backpressure,
+error observability, and explicit shutdown lifecycle covered by deterministic
+tests. A normal cleanup error must not terminate a worker; queued cleanup may
+be dropped only while shutting down.
+
 Before changing ownership code, cover queue-full drop, close drain, send
 rejection, `DatagramTooLargeError`, malformed input, duplicate Release, and
 exactly-once transfer. Never reset a release flag or resurrect an object after

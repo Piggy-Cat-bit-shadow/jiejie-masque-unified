@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -272,6 +273,222 @@ func TestShadowManagerAllocatesManySameVisibleSessions(t *testing.T) {
 	}
 }
 
+// Pending cleanup must reserve the shadow address even when reuse_delay is
+// zero and after a positive delay would otherwise have expired.
+func TestShadowCleanupPendingAddressUnavailable(t *testing.T) {
+	for _, delay := range []time.Duration{0, 10 * time.Millisecond} {
+		t.Run(delay.String(), func(t *testing.T) {
+			var now = time.Unix(100, 0)
+			release := make(chan struct{})
+			started := make(chan netip.Addr, 1)
+			m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 2, nil, delay, func() time.Time { return now }, func(uint32) uint32 { return 0 })
+			defer m.CloseCleanup()
+			m.SetShadowCleanup(func(ip netip.Addr) error {
+				started <- ip
+				<-release
+				return nil
+			})
+			defer close(release)
+			newSession := func(identity string) *Session {
+				return New(netip.MustParseAddr("10.200.0.2"), identity, &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
+			}
+			a, b := newSession("a"), newSession("b")
+			if err := m.Register(a); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Register(b); err != nil {
+				t.Fatal(err)
+			}
+			a.Close()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("cleanup did not start")
+			}
+			now = now.Add(time.Second)
+			c := newSession("c")
+			if err := m.Register(c); err == nil {
+				t.Fatal("pending cleanup address was reused before cleanup completed")
+			}
+			b.Close()
+		})
+	}
+}
+
+func TestShadowCleanupConcurrencyBounded(t *testing.T) {
+	const n = 128
+	var active, maxActive atomic.Int32
+	started := make(chan struct{}, n)
+	release := make(chan struct{})
+	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.0/24"), n, nil, 0, time.Now, func(uint32) uint32 { return 0 })
+	defer m.CloseCleanup()
+	m.SetShadowCleanup(func(netip.Addr) error {
+		current := active.Add(1)
+		for {
+			old := maxActive.Load()
+			if current <= old || maxActive.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return nil
+	})
+	sessions := make([]*Session, 0, n)
+	for i := 0; i < n; i++ {
+		s := New(netip.MustParseAddr("10.200.0.2"), "shared", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
+		if err := m.Register(s); err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, s)
+	}
+	for _, s := range sessions {
+		s.Close()
+	}
+	deadline := time.After(time.Second)
+	for len(started) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("cleanup did not start")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if maxActive.Load() > 2 {
+		t.Fatalf("cleanup concurrency exceeded fixed worker bound: max=%d", maxActive.Load())
+	}
+	close(release)
+	deadline = time.After(time.Second)
+	for m.CleanupStats().Completed < n {
+		select {
+		case <-deadline:
+			t.Fatalf("only %d/%d cleanup callbacks completed", m.CleanupStats().Completed, n)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+func TestShadowCleanupExecutorBackpressureAndWorkerSurvival(t *testing.T) {
+	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.0/29"), 1, nil, 0, time.Now, func(uint32) uint32 { return 0 })
+	defer m.CloseCleanup()
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	m.SetShadowCleanup(func(ip netip.Addr) error {
+		started <- struct{}{}
+		<-release
+		if ip == netip.MustParseAddr("10.200.0.1") {
+			return errors.New("expected cleanup error")
+		}
+		return nil
+	})
+	e := m.cleanupExecutor
+	jobs := []cleanupJob{
+		{manager: m, ip: netip.MustParseAddr("10.200.0.1"), cleanup: m.cleanup},
+		{manager: m, ip: netip.MustParseAddr("10.200.0.2"), cleanup: m.cleanup},
+		{manager: m, ip: netip.MustParseAddr("10.200.0.3"), cleanup: m.cleanup},
+		{manager: m, ip: netip.MustParseAddr("10.200.0.4"), cleanup: m.cleanup},
+	}
+	for _, job := range jobs {
+		m.cleanupPending[job.ip] = struct{}{}
+	}
+	if !e.enqueue(jobs[0]) || !e.enqueue(jobs[1]) {
+		t.Fatal("initial cleanup jobs were not accepted")
+	}
+	thirdDone := make(chan bool, 1)
+	go func() {
+		if !e.enqueue(jobs[2]) {
+			thirdDone <- false
+			return
+		}
+		thirdDone <- e.enqueue(jobs[3])
+	}()
+	select {
+	case <-thirdDone:
+		t.Fatal("queue-full enqueue did not apply backpressure")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case accepted := <-thirdDone:
+		if !accepted {
+			t.Fatal("backpressured cleanup job was dropped during normal operation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("backpressured cleanup job was not accepted")
+	}
+	deadline := time.After(time.Second)
+	for stats := m.CleanupStats(); stats.Completed+stats.Failed < 4; stats = m.CleanupStats() {
+		select {
+		case <-deadline:
+			t.Fatalf("cleanup workers did not survive error: %+v", m.CleanupStats())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	stats := m.CleanupStats()
+	if stats.Failed != 1 || stats.Completed != 3 || stats.MaxActive > shadowCleanupWorkers {
+		t.Fatalf("unexpected cleanup stats: %+v", stats)
+	}
+}
+
+func TestShadowCleanupShutdownDropsQueuedWork(t *testing.T) {
+	const n = 4
+	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.203.0.0/24"), n, nil, 0, time.Now, func(uint32) uint32 { return 0 })
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	started := make(chan struct{}, n)
+	defer m.CloseCleanup()
+	m.SetShadowCleanup(func(netip.Addr) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	})
+	defer releaseAll()
+	sessions := make([]*Session, 0, n)
+	for i := 0; i < n; i++ {
+		s := New(netip.MustParseAddr("10.200.0.2"), "shutdown", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
+		if err := m.Register(s); err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, s)
+	}
+	for _, s := range sessions {
+		s.Close()
+	}
+	deadline := time.After(time.Second)
+	for len(started) < shadowCleanupWorkers {
+		select {
+		case <-deadline:
+			t.Fatalf("only %d cleanup workers started", len(started))
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	closed := make(chan struct{})
+	go func() {
+		m.CloseCleanup()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("shutdown returned while cleanup callbacks were still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+	releaseAll()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not wait for running cleanup callbacks")
+	}
+	stats := m.CleanupStats()
+	if stats.Started != shadowCleanupWorkers || stats.Completed != shadowCleanupWorkers || stats.Dropped != n-shadowCleanupWorkers {
+		t.Fatalf("shutdown drained queued cleanup unexpectedly: %+v", stats)
+	}
+}
+
 func TestSessionActivity(t *testing.T) {
 	s := New(netip.MustParseAddr("10.200.0.2"), "test", &fakeConn{}, nil)
 	when := time.Unix(123, 456)
@@ -284,6 +501,7 @@ func TestSessionActivity(t *testing.T) {
 func TestShadowCleanupFailureStillCoolsAddress(t *testing.T) {
 	now := time.Unix(100, 0)
 	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, nil, time.Hour, func() time.Time { return now }, func(uint32) uint32 { return 0 })
+	defer m.CloseCleanup()
 	called := make(chan netip.Addr, 1)
 	m.SetShadowCleanup(func(ip netip.Addr) error { called <- ip; return errors.New("cleanup failed") })
 	s := New(netip.MustParseAddr("10.200.0.2"), "test", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
@@ -299,6 +517,15 @@ func TestShadowCleanupFailureStillCoolsAddress(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cleanup was not scheduled")
+	}
+	deadline := time.After(time.Second)
+	for stats := m.CleanupStats(); stats.Completed+stats.Failed < 1; stats = m.CleanupStats() {
+		select {
+		case <-deadline:
+			t.Fatal("cleanup did not complete")
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 	next := New(netip.MustParseAddr("10.200.0.2"), "next", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
 	if err := m.Register(next); err != nil {
