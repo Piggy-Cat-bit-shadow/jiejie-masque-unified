@@ -193,6 +193,7 @@ jobs:
           set -euo pipefail
           test "$BUILD_VERSION" = "${GITHUB_REF_NAME#v}"
           test "$BUILD_COMMIT" = "$(git rev-parse HEAD)"
+          chmod 0755 dist/jiejie-masque-linux-amd64
           (cd dist && sha256sum -c jiejie-masque-linux-amd64.sha256)
           test "$(dist/jiejie-masque-linux-amd64 --version)" = "jiejie-masque $BUILD_VERSION commit=$BUILD_COMMIT"
           grep -Fx "version=$BUILD_VERSION" dist/RELEASE.txt
