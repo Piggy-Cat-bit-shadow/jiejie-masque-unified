@@ -132,6 +132,17 @@ jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
 - CONNECT-IP client private key 是 SEC1 EC DER Base64；server endpoint public key 是 PKIX/SPKI DER Base64；client authentication public key 是 raw uncompressed P-256 point Base64，三者不要混用。
 - Mihomo/MetaCubeX CONNECT-IP 是当前主要客户端路径。CONNECT-UDP 使用标准 HTTP Basic authentication 模型，Surge 等客户端兼容性应按真实客户端继续验证，不在此处夸大承诺。
 
+## CONNECT-IP 部署时必须检查 Linux 防火墙
+
+CONNECT-IP 与普通应用层 UDP/TCP proxy 不同：它会把客户端 IP packet 注入 Linux TUN。创建 TUN、开启 IPv4 forwarding 和配置 NAT 之后，还必须确认主机 firewall 允许对应的 `INPUT` / `FORWARD` 流量。
+
+两类流量经过的 chain 不同：
+
+- **Tunnel-local DNS**：`client → TUN (masque0) → tunnel gateway:5353`。目标是 VPS 自身的 tunnel address，属于 `INPUT`，需要允许从 TUN interface 到 tunnel gateway 的 UDP/TCP 5353。
+- **普通 Internet 转发**：`client tunnel IP → TUN → Linux routing → WAN interface`。目标在外部网络，属于 `FORWARD`，需要允许从 TUN interface 到 WAN interface 的转发；NAT/MASQUERADE 不能替代这条 firewall rule。
+
+因此，出现“UDP/443、QUIC/TLS、SNI routing 和 CONNECT-IP session 都正常，但网页、测速或 DNS timeout”时，应同时检查 TUN 的 `INPUT` 和 `FORWARD`，而不只检查 handshake、`ip_forward` 或 NAT。UFW 用户请参阅 [运维手册中的防火墙示例](docs/OPERATIONS.md#8-connect-ip-linux-防火墙与-ufw)。
+
 ## 技术设计与优化
 
 下面只保留设计摘要；需要深入实现细节时再展开。

@@ -160,7 +160,57 @@ CONNECT-IP DNS gateway 同时提供 UDP 与 TCP，监听 server tunnel address �
 ss -Hlunpt | grep ':53'
 ```
 
-## 8. systemd
+## 8. CONNECT-IP Linux 防火墙与 UFW
+
+CONNECT-IP 的 QUIC handshake 成功，不代表 TUN 注入后的 IP packet 已经通过主机
+firewall。排查时区分两条路径：
+
+- **Tunnel-local DNS**：`client → TUN (masque0) → tunnel gateway:5353`。目标是本机 tunnel address，进入 `INPUT`。
+- **普通 Internet 转发**：`client tunnel IP → TUN → routing → WAN interface`。目标在外部网络，进入 `FORWARD`。
+
+这也解释了一个常见状态：QUIC 正常、session established、TUN RX 增长，但 TUN TX
+不增长，随后客户端网页、测速或 DNS timeout。此时除了检查 `ip_forward=1`、NAT/
+MASQUERADE 和 route，还要检查 UFW/nftables/iptables 是否拒绝了 TUN 的 `INPUT` 或
+`FORWARD`。
+
+先确认实际 interface、网段和 UFW 状态；下面的 `masque0`、`eth0`、`10.200.0.0/16`
+只是与 example 对应的示例，必须替换成实际值：
+
+```sh
+sudo ufw status verbose
+ip addr show masque0
+ip route
+sudo nft list ruleset
+```
+
+使用 UFW 时，DNS 是发往本机 tunnel gateway 的 `INPUT` 流量，普通 Internet 是
+经由 WAN interface 的 `FORWARD` 流量。可以按最小范围增加规则：
+
+```sh
+# Tunnel-local DNS；按实际 gateway address、interface 和 TCP/UDP 需求调整。
+sudo ufw allow in on masque0 to 10.200.0.1 port 5353 proto udp
+sudo ufw allow in on masque0 to 10.200.0.1 port 5353 proto tcp
+
+# Client packet 从 TUN 转发到 WAN；替换 interface 与 tunnel subnet。
+sudo ufw route allow in on masque0 out on eth0 from 10.200.0.0/16
+sudo ufw reload
+sudo ufw status verbose
+```
+
+不要为了绕过问题把全局 `INPUT` 或 `FORWARD` policy 改成无条件 `ACCEPT`。规则应
+限制在实际 TUN interface、tunnel subnet、WAN interface 和 DNS gateway port。
+UFW 规则通过后仍需确认 network prepare 写入的 NAT/MASQUERADE 规则存在；firewall
+放行不能替代 NAT，NAT 也不能替代 `FORWARD` 放行。
+
+日志排查可暂时提高 UFW logging，再复现一次后恢复合适级别：
+
+```sh
+sudo ufw logging medium
+sudo journalctl -k -n 200 --no-pager
+sudo nft list ruleset
+```
+
+## 9. systemd
 
 仓库提供两个 unit：
 
@@ -182,7 +232,7 @@ unit 使用 `Type=notify`、`WatchdogSec=30s` 和 graceful shutdown。watchdog �
 进程能调度并发送 heartbeat，不等于 QUIC event loop、数据面或公网可达性正常；
 host-network deep probe 是另一套 30 秒检查，连续两次失败才会变成 fatal。
 
-## 9. 健康检查与诊断
+## 10. 健康检查与诊断
 
 ```sh
 sudo journalctl -u jiejie-masque-connect-ip.service -n 200 --no-pager
@@ -195,7 +245,7 @@ sudo jiejie-masque --version
 实际转发。日志会避免记录 client identity、tunnel address、relay destination
 和 resolved next-hop 等隐私信息。
 
-## 10. 升级与回滚
+## 11. 升级与回滚
 
 升级步骤：
 
@@ -209,7 +259,7 @@ sudo jiejie-masque --version
 配置；CONNECT-IP client 会 pin server public key，升级时不要无意更换 server
 certificate/private key。
 
-## 11. 故障排查
+## 12. 故障排查
 
 | 现象 | 优先检查 |
 | --- | --- |
@@ -221,7 +271,7 @@ certificate/private key。
 | systemd 反复重启 | `journalctl`、ExecStartPre、watchdog/deep probe、端口占用 |
 | DNS 请求失败 | 本机 `127.0.0.1:53` listener、gateway port 5353、UDP/TCP resolver |
 
-## 12. 安全与边界
+## 13. 安全与边界
 
 不要把 CONNECT-UDP unauthenticated mode 暴露到公网；不要把 DNS gateway 暴露
 到公网；不要给 CONNECT-UDP service 增加 `CAP_NET_ADMIN`。`allow_private: true`
