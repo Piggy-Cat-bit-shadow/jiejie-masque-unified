@@ -15,7 +15,8 @@ host_network:
   external_interface: eth0
   check_interval: 30s
 client:
-  public_keys: []
+  # Example-only public key; replace it with the client's raw P-256 public key.
+  public_keys: [BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=]
   tunnel_ipv4: 10.200.0.2/32
 # For multiple devices, replace the legacy client block with:
 # clients:
