@@ -257,6 +257,12 @@ Linux binary without its executable bit. No GitHub Release or substituted
 artifact was created, and v1.0.6 remains immutable. The release-job permission
 fix is being carried into the v1.0.7 release attempt.
 
+The v1.0.7 build and artifact jobs passed and the workflow created the draft
+release, but draft verification used the published-release tag endpoint, which
+returns 404 before publication. The draft has not been published and v1.0.7
+remains an immutable failed release attempt. The verification query is being
+fixed for the v1.0.8 release attempt.
+
 ## v1.0.4 candidate — maintenance batch 1
 
 This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config

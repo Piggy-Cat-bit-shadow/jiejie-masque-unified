@@ -23,9 +23,11 @@ No CONNECT-IP or CONNECT-UDP dataplane architecture was redesigned.
 - F-406: release/version documentation remains aligned with the tag-driven
   release process.
 
-v1.0.4, v1.0.5, and v1.0.6 were not released. Their annotated tags remain
+v1.0.4, v1.0.5, v1.0.6, and v1.0.7 were not formally released. Their annotated tags remain
 immutable, tag-only failed release-attempt markers; no GitHub Release or
-substituted artifact was created for any of these tags.
+substituted artifact was used for any of these tags. v1.0.7 reached draft
+creation, but draft verification used a published-release endpoint and stopped
+before publication.
 
 ## Deferred finding
 
