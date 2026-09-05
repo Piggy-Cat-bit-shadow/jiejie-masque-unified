@@ -67,6 +67,11 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: TX GRO targeted stress
+        run: |
+          go test -count=200 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+          go test -race -count=100 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+
       - name: Race test
         run: go test -race ./...
 
