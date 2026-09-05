@@ -1,6 +1,6 @@
 # Architecture and frozen performance boundary
 
-This document describes the v1.0.1 maintenance baseline. Runtime changes are
+This document describes the v1.0.2 maintenance baseline. Runtime changes are
 reserved for correctness, security, compatibility, ownership, or shutdown
 bugs. Performance speculation is not a change request.
 
@@ -41,6 +41,13 @@ backpressure without holding the session manager lock. `reuse_delay` starts
 after the cleanup attempt completes, including failed attempts. Cleanup
 shutdown stops new work, waits only for callbacks already running, and may
 drop queued work as part of service shutdown.
+
+CONNECT-UDP and CONNECT-TCP target policy defaults to public, globally
+reachable unicast destinations. The policy follows the IANA
+`Globally Reachable` semantics, unmaps IPv4-mapped IPv6 addresses before
+classification, and permits more-specific globally reachable exceptions.
+`target_policy.connect_timeout` is one overall deadline covering DNS
+resolution and validated target establishment.
 
 ## CONNECT-IP receive and send paths
 

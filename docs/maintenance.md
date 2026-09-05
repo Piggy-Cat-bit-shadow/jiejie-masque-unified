@@ -1,6 +1,7 @@
 # Maintenance and release guide
 
-The v1.0.1 runtime baseline is frozen. Accept correctness, security,
+The v1.0.2 runtime baseline is frozen at
+`3a07c4be6ad027620cfdaddad13a53609b7c0a06`. Accept correctness, security,
 compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
 speculative performance work without reproducible production evidence.
 
@@ -25,7 +26,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-main HEAD at release preparation: adcf5f731e5fca8e1ba4d26724ea62b58af57248
+main runtime baseline:             3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
   pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
 quic-go:                           ac11e929d6decc0eb5f8235259ef82671dad3bca
@@ -46,6 +47,12 @@ two-worker executor, its `max_sessions`-derived queue, queue-full backpressure,
 error observability, and explicit shutdown lifecycle covered by deterministic
 tests. A normal cleanup error must not terminate a worker; queued cleanup may
 be dropped only while shutting down.
+
+The v1.0.2 maintenance batches are closed: Mihomo consumer-key contracts,
+DNS/config/YAML/privacy correctness, public globally reachable target policy
+with a 10-second establishment deadline, and bounded Session-NAT cleanup.
+The final runtime baseline is the SHA above; a later release-preparation SHA
+contains documentation and release metadata only.
 
 Before changing ownership code, cover queue-full drop, close drain, send
 rejection, `DatagramTooLargeError`, malformed input, duplicate Release, and
@@ -87,7 +94,7 @@ nanosecond values into CI gates.
 Build the static stripped Linux amd64 artifact with:
 
 ```sh
-VERSION=1.0.1 OUTPUT=dist/jiejie-masque-linux-amd64 scripts/build-release.sh
+VERSION=1.0.2 OUTPUT=dist/jiejie-masque-linux-amd64 scripts/build-release.sh
 sha256sum dist/jiejie-masque-linux-amd64 > dist/jiejie-masque-linux-amd64.sha256
 sha256sum -c dist/jiejie-masque-linux-amd64.sha256
 ```
@@ -98,6 +105,13 @@ Release. Do not include private paths, credentials, hostnames, or deployment
 identifiers.
 
 ## Frozen optimization boundary
+
+Server dataplane performance is closed for v1.0.2. Synthetic churn can expose
+Manager mutex activity, but current benchmarks do not justify lock architecture
+changes. The final local reference run was approximately 73.6 ns/op for lookup,
+72.9 ns/op under churn, and 1.09 us/op for the cooling-heavy allocator; the
+machine-specific values are evidence for this audit, not CI thresholds.
+`MANAGER LOCK REFACTOR NOT JUSTIFIED`.
 
 Normal CONNECT-IP RX and CONNECT-UDP client-to-target application payload
 copies are zero. Normal CONNECT-IP TX and CONNECT-UDP target-to-client paths
