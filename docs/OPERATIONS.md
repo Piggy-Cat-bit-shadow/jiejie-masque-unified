@@ -261,15 +261,26 @@ certificate/private key。
 
 ## 12. 故障排查
 
+`session established` 只表示 QUIC / TLS / CONNECT-IP 建连成功，不代表进入 Linux
+TUN 后的 `INPUT` / `FORWARD` 数据面已经被主机防火墙放行。
+
 | 现象 | 优先检查 |
 | --- | --- |
-| CONNECT-IP 能连但网页打不开 | tunnel DNS、`127.0.0.1:53`、IPv4 forwarding、NAT/interface |
+| CONNECT-IP 已显示 `session established`，但网页/测速全部超时 | TUN → WAN 的 `FORWARD` 防火墙规则、NAT/MASQUERADE、实际 WAN interface、IPv4 forwarding |
+| TUN RX 持续增长但 TX 不增长 | UFW/nftables/iptables 的 `INPUT` / `FORWARD`、routing、NAT、实际 TUN/WAN interface |
+| VPS 本机 DNS 正常，但 CONNECT-IP 客户端 DNS timeout | TUN → tunnel gateway `:5353` 的 `INPUT` 防火墙规则，同时确认 UDP/TCP 5353 和本机 `127.0.0.1:53` |
 | 完全无法建立 | UDP/443、防火墙、TLS certificate、client public key |
-| CONNECT-IP 无流量 | TUN、network prepare、`host_network.external_interface`、nft 规则 |
 | CONNECT-UDP 返回 401 | username、`password_env`、EnvironmentFile 权限和内容 |
 | 配置启动失败 | `jiejie-masque check-config --config PATH`、字段拼写和文件权限 |
 | systemd 反复重启 | `journalctl`、ExecStartPre、watchdog/deep probe、端口占用 |
 | DNS 请求失败 | 本机 `127.0.0.1:53` listener、gateway port 5353、UDP/TCP resolver |
+
+网页/测速全部 timeout 时优先看 `FORWARD`，因为路径是 TUN → routing → WAN；
+tunnel-local DNS timeout 时优先看 `INPUT`，因为目标是 server tunnel gateway:5353。
+两者同时失败时，先检查 UFW/nftables/iptables 的 TUN `INPUT` + `FORWARD` policy，
+再检查 routing、`ip_forward`、NAT 和 WAN interface。完整数据面需要同时满足
+routing、`ip_forward`、firewall `FORWARD` allow 和 NAT/MASQUERADE；NAT 不等于
+`FORWARD` allow，`FORWARD` allow 也不等于 NAT/MASQUERADE。
 
 ## 13. 安全与边界
 

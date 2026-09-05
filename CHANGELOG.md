@@ -16,6 +16,7 @@ release provenance，不在这里覆盖重写。
 - README 改为中文为主，并把深度技术说明放入可展开区。
 - 新增中文安装、配置、systemd、DNS、升级、回滚和故障排查手册。
 - 新增中文版本演进摘要与 v1.0.10 release notes。
+- 完善 CONNECT-IP 故障排查，明确 `session established` 后网页/测速失败优先检查 `FORWARD`，tunnel DNS 失败优先检查 `INPUT`。
 
 v1.0.10 已正式发布，但未部署 production。
 
