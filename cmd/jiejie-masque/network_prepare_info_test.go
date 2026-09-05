@@ -27,7 +27,7 @@ func writeNetworkPrepareConfig(t *testing.T, tunnelIPv4 string) string {
 func TestNetworkPrepareInfoUsesConfigParserForQuotedCIDR(t *testing.T) {
 	path := writeNetworkPrepareConfig(t, `"10.200.0.1/16"`)
 	var output bytes.Buffer
-	if err := networkPrepareInfo(&output, path); err != nil {
+	if err := networkPrepareInfo(&output, path, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := output.String(); got != "10.200.0.1/16\n" {
@@ -38,7 +38,7 @@ func TestNetworkPrepareInfoUsesConfigParserForQuotedCIDR(t *testing.T) {
 func TestNetworkPrepareInfoAcceptsSingleQuotedCIDRWithComment(t *testing.T) {
 	path := writeNetworkPrepareConfig(t, `'10.200.0.1/16' # tunnel network`)
 	var output bytes.Buffer
-	if err := networkPrepareInfo(&output, path); err != nil {
+	if err := networkPrepareInfo(&output, path, "tunnel-prefix"); err != nil {
 		t.Fatal(err)
 	}
 	if got := output.String(); got != "10.200.0.1/16\n" {
@@ -61,9 +61,46 @@ func TestNetworkPrepareInfoRejectsConfigParserErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
-			if err := networkPrepareInfo(&output, path); err == nil {
+			if err := networkPrepareInfo(&output, path, ""); err == nil {
 				t.Fatal("invalid configuration was accepted")
 			}
 		})
+	}
+}
+
+func TestNetworkPrepareInfoExternalInterface(t *testing.T) {
+	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(content, []byte("host_network:\n  external_interface: eth1\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := networkPrepareInfo(&output, path, "external-interface"); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "eth1\n" {
+		t.Fatalf("external interface = %q", got)
+	}
+}
+
+func TestNetworkPrepareInfoExternalInterfaceOmitted(t *testing.T) {
+	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
+	var output bytes.Buffer
+	if err := networkPrepareInfo(&output, path, "external-interface"); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("omitted external interface output = %q", output.String())
+	}
+}
+
+func TestNetworkPrepareInfoRejectsUnsupportedField(t *testing.T) {
+	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
+	var output bytes.Buffer
+	if err := networkPrepareInfo(&output, path, "password"); err == nil {
+		t.Fatal("unsupported field was accepted")
 	}
 }

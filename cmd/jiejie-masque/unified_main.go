@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 
-	ipconfig "github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
 	"gopkg.in/yaml.v3"
@@ -49,13 +48,14 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "network-prepare-info" {
 		fs := flag.NewFlagSet("network-prepare-info", flag.ContinueOnError)
 		path := fs.String("config", "", "configuration file")
+		field := fs.String("field", "", "field to output: tunnel-prefix or external-interface")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
 		if *path == "" {
 			log.Fatal("--config is required")
 		}
-		if err := networkPrepareInfo(os.Stdout, *path); err != nil {
+		if err := networkPrepareInfo(os.Stdout, *path, *field); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -119,13 +119,6 @@ func main() {
 	}
 	if strings.TrimSpace(env.Mode) != "connect-ip" {
 		log.Fatalf("unsupported mode %q", env.Mode)
-	}
-	var c ipconfig.Config
-	if err := yaml.Unmarshal(b, &c); err != nil {
-		log.Fatal(err)
-	}
-	if err := c.Validate(); err != nil {
-		log.Fatal(err)
 	}
 	if os.Args[1] == "check-config" {
 		if err := checkConfig(*path); err != nil {

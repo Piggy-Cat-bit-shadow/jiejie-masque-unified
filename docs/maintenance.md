@@ -174,3 +174,27 @@ neither changes runtime code in v1.0.3.
 The IANA IPv4 and IPv6 special-purpose policy snapshots are verified current
 through 2025-10-09. The frozen dataplane ownership, queue, buffer, cleanup,
 PacketPool, and final serialization-copy invariants remain unchanged.
+
+## v1.0.4 candidate — maintenance batch 1
+
+This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config
+loading, and network-preparation config propagation:
+
+| Finding | Candidate status |
+| --- | --- |
+| F-401 | FIXED |
+| F-402 | FIXED |
+| F-403 | FIXED |
+| F-404 | REPRODUCTION REQUIRED |
+| F-405 | OPEN |
+| F-406 | OPEN |
+
+CONNECT-TCP now treats directional EOF as half-close: client-to-target EOF
+uses TCP `CloseWrite`, target-to-client EOF closes only the HTTP/3 send
+direction, and only abnormal copy errors trigger bidirectional teardown.
+CONNECT-IP semantic YAML defaults and validation remain solely in
+`config.Load`; the mode envelope is routing-only. The network-prepare helper
+supports fixed `tunnel-prefix` and `external-interface` field queries while
+retaining the legacy no-field tunnel-prefix output and the CLI/env/YAML/route
+interface precedence. F-404, release provenance, README drift, H-305, and H-306
+are intentionally outside this batch.

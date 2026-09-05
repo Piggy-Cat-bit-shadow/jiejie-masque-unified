@@ -63,6 +63,28 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesSessionAndDNSDefaultsBeforeValidation(t *testing.T) {
+	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/24\n  session_nat:\n    enabled: true\n    pool: 10.200.0.128/25\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Server.MTU != 1280 || c.Server.OutboundQueueSize != 256 {
+		t.Fatalf("server defaults = mtu %d queue %d", c.Server.MTU, c.Server.OutboundQueueSize)
+	}
+	if c.Server.SessionNat.MaxSessions != 120 || c.Server.SessionNat.ReuseDelay != "30m" {
+		t.Fatalf("session NAT defaults = max %d delay %q", c.Server.SessionNat.MaxSessions, c.Server.SessionNat.ReuseDelay)
+	}
+	if c.DNSGateway.Enabled == nil || !*c.DNSGateway.Enabled || c.DNSGateway.Port != 5353 || c.DNSGateway.Upstream != "127.0.0.1:53" || c.DNSGateway.Timeout != "5s" || c.DNSGateway.Concurrency != 32 {
+		t.Fatalf("DNS defaults = %+v", c.DNSGateway)
+	}
+}
+
 func TestLoadTunOffload(t *testing.T) {
 	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
 	path := filepath.Join(t.TempDir(), "config.yaml")
