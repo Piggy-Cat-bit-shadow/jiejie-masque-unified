@@ -97,6 +97,25 @@ func TestNetworkPrepareInfoExternalInterfaceOmitted(t *testing.T) {
 	}
 }
 
+func TestNetworkPrepareInfoFirewallFields(t *testing.T) {
+	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
+	for _, tc := range []struct{ field, want string }{
+		{"tunnel-address", "10.200.0.1\n"},
+		{"tunnel-network", "10.200.0.0/16\n"},
+		{"dns-port", "5353\n"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := networkPrepareInfo(&output, path, tc.field); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tc.want {
+				t.Fatalf("%s = %q, want %q", tc.field, output.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestNetworkPrepareInfoRejectsUnsupportedField(t *testing.T) {
 	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
 	var output bytes.Buffer

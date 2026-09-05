@@ -24,6 +24,26 @@ func networkPrepareInfo(out io.Writer, path, field string) error {
 		}
 		_, err = fmt.Fprintln(out, prefix.String())
 		return err
+	case "tunnel-address":
+		prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+		if err != nil {
+			return fmt.Errorf("invalid server.tunnel_ipv4: %w", err)
+		}
+		_, err = fmt.Fprintln(out, prefix.Addr())
+		return err
+	case "tunnel-network":
+		prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+		if err != nil {
+			return fmt.Errorf("invalid server.tunnel_ipv4: %w", err)
+		}
+		_, err = fmt.Fprintln(out, prefix.Masked().String())
+		return err
+	case "dns-port":
+		if c.DNSGateway.Enabled != nil && !*c.DNSGateway.Enabled {
+			return nil
+		}
+		_, err := fmt.Fprintln(out, c.DNSGateway.Port)
+		return err
 	case "external-interface":
 		if c.HostNetwork.ExternalInterface == "" {
 			return nil

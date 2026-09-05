@@ -48,7 +48,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "network-prepare-info" {
 		fs := flag.NewFlagSet("network-prepare-info", flag.ContinueOnError)
 		path := fs.String("config", "", "configuration file")
-		field := fs.String("field", "", "field to output: tunnel-prefix or external-interface")
+		field := fs.String("field", "", "field to output: tunnel-prefix, tunnel-address, tunnel-network, dns-port, or external-interface")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}

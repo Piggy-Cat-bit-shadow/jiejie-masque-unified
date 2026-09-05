@@ -14,6 +14,9 @@ absent "$udp" 'network-prepare'
 need "$prepare_helper" 'network-prepare-info'
 need "$prepare_helper" '--field external-interface'
 need "$prepare_helper" '--field tunnel-prefix'
+need "$prepare_helper" '--field tunnel-address'
+need "$prepare_helper" '--field tunnel-network'
+need "$prepare_helper" '--field dns-port'
 if grep -Eq 'awk.*tunnel_ipv4|tunnel_ipv4.*(awk|sed|grep)' "$prepare_helper"; then
   echo 'network-prepare must not parse YAML tunnel_ipv4 in shell' >&2
   exit 1

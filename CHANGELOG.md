@@ -3,6 +3,12 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
+## Candidate maintenance
+
+- F-701：修复 active UFW 环境下 CONNECT-IP network prepare 未自动放行 TUN
+  `INPUT` / `FORWARD` 的 deployment correctness bug；当前为 `FIXED /
+  CANDIDATE VERIFIED`，不代表 v1.0.10 或正式 release 已改变。
+
 ## v1.0.10
 
 ### 修复

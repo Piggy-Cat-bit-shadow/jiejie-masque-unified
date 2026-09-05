@@ -5,6 +5,12 @@ config=/etc/jiejie-masque/connect-ip.yaml
 external_interface=${MASQUE_EXTERNAL_INTERFACE:-}
 external_interface_override=0
 masque_bin=${JIEJIE_MASQUE_BIN:-/usr/local/bin/jiejie-masque}
+nft_bin=${JIEJIE_MASQUE_NFT:-nft}
+ufw_bin=${JIEJIE_MASQUE_UFW:-ufw}
+ip_forward_path=${JIEJIE_MASQUE_IP_FORWARD_PATH:-/proc/sys/net/ipv4/ip_forward}
+tunnel_interface=${JIEJIE_MASQUE_TUN_INTERFACE:-masque0}
+dns_comment=jiejie-masque-connect-ip-dns
+forward_comment=jiejie-masque-connect-ip-forward
 
 if [ -n "$external_interface" ]; then
 	external_interface_override=1
@@ -31,12 +37,74 @@ if [ -z "$external_interface" ]; then
 fi
 
 tunnel_ipv4=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-prefix)
+tunnel_address=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-address)
+tunnel_network=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-network)
+dns_port=$("$masque_bin" network-prepare-info --config "$config" --field dns-port)
 
-nft add table ip masque_lite 2>/dev/null || true
-nft flush table ip masque_lite
-nft 'add chain ip masque_lite postrouting { type nat hook postrouting priority srcnat; policy accept; }'
-nft add rule ip masque_lite postrouting oifname "$external_interface" ip saddr "$tunnel_ipv4" masquerade
+"$nft_bin" add table ip masque_lite 2>/dev/null || true
+"$nft_bin" flush table ip masque_lite
+"$nft_bin" 'add chain ip masque_lite postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+"$nft_bin" add rule ip masque_lite postrouting oifname "$external_interface" ip saddr "$tunnel_ipv4" masquerade
 
-if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
-	printf '%s\n' 1 > /proc/sys/net/ipv4/ip_forward
+if [ "$(cat "$ip_forward_path")" != "1" ]; then
+	printf '%s\n' 1 > "$ip_forward_path"
+fi
+
+# UFW owns its generated nftables chains, so add rules through UFW instead of
+# mutating those chains directly. Inactive or unavailable UFW remains a valid
+# deployment; an active UFW must have both CONNECT-IP data paths allowed.
+if command -v "$ufw_bin" >/dev/null 2>&1; then
+	ufw_status=$("$ufw_bin" status verbose) || {
+		echo "jiejie-masque-connect-ip-network-prepare: unable to query UFW status" >&2
+		exit 1
+	}
+	case "$ufw_status" in
+		*"Status: active"*)
+			desired_dns_udp=""
+			desired_dns_tcp=""
+			desired_forward="route allow in on $tunnel_interface out on $external_interface from $tunnel_network comment $forward_comment"
+			if [ -n "$dns_port" ]; then
+				desired_dns_udp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto udp comment $dns_comment"
+				desired_dns_tcp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto tcp comment $dns_comment"
+			fi
+
+			added_rules=$("$ufw_bin" show added) || {
+				echo "jiejie-masque-connect-ip-network-prepare: unable to inspect UFW rules" >&2
+				exit 1
+			}
+			normalized_rules=$(printf '%s\n' "$added_rules" | sed -e 's/^ufw //' -e "s/'//g")
+			if [ -n "$desired_dns_udp" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_dns_udp"; then
+				"$ufw_bin" $desired_dns_udp
+			fi
+			if [ -n "$desired_dns_tcp" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_dns_tcp"; then
+				"$ufw_bin" $desired_dns_tcp
+			fi
+			if ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_forward"; then
+				"$ufw_bin" $desired_forward
+			fi
+
+			# The add phase above is deliberately complete before cleanup. Only
+			# rules carrying this project's private comments are candidates for
+			# deletion; unrelated UFW rules are never inspected for deletion.
+			added_rules=$("$ufw_bin" show added) || {
+				echo "jiejie-masque-connect-ip-network-prepare: unable to inspect UFW rules" >&2
+				exit 1
+			}
+			printf '%s\n' "$added_rules" | while IFS= read -r rule_line; do
+				case "$rule_line" in
+					*"$dns_comment"*|*"$forward_comment"*) ;;
+					*) continue ;;
+				esac
+				rule=${rule_line#ufw }
+				rule=$(printf '%s' "$rule" | tr -d "'")
+				case "$rule" in
+					"$desired_dns_udp"|"$desired_dns_tcp"|"$desired_forward") continue ;;
+					esac
+				# Project comments contain no whitespace, so word splitting here
+				# preserves the exact UFW rule arguments without eval.
+				set -- $rule
+				"$ufw_bin" delete "$@"
+			done
+			;;
+	esac
 fi
