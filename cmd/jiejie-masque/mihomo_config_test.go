@@ -55,8 +55,17 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 	if got := nodes[0]["ip"]; got != "10.200.0.3/32" {
 		t.Fatalf("selected wrong client IP: got %v, want %s", got, "10.200.0.3/32")
 	}
-	if got := nodes[0]["private-key"]; got != privateB {
-		t.Fatalf("private key was changed: got %v", got)
+	privateDER := mustBase64Decode(t, nodes[0]["private-key"].(string))
+	parsedPrivate, err := x509.ParseECPrivateKey(privateDER)
+	if err != nil {
+		t.Fatalf("generated private key does not match Mihomo SEC1 contract: %v", err)
+	}
+	wantPrivate, err := x509.ParseECPrivateKey(mustBase64Decode(t, privateB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsedPrivate.D.Cmp(wantPrivate.D) != 0 || parsedPrivate.PublicKey.X.Cmp(wantPrivate.PublicKey.X) != 0 || parsedPrivate.PublicKey.Y.Cmp(wantPrivate.PublicKey.Y) != 0 {
+		t.Fatal("generated private key changed key identity")
 	}
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
@@ -71,9 +80,17 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverPublic := cert.PublicKey.(*ecdsa.PublicKey)
-	wantServerPublic := base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), serverPublic.X, serverPublic.Y))
-	if got := nodes[0]["public-key"]; got != wantServerPublic {
-		t.Fatalf("server public key changed: got %v, want %s", got, wantServerPublic)
+	serverDER := mustBase64Decode(t, nodes[0]["public-key"].(string))
+	parsedServer, err := x509.ParsePKIXPublicKey(serverDER)
+	if err != nil {
+		t.Fatalf("generated server public key does not match Mihomo PKIX contract: %v", err)
+	}
+	parsedServerPublic, ok := parsedServer.(*ecdsa.PublicKey)
+	if !ok || parsedServerPublic.Curve != elliptic.P256() {
+		t.Fatalf("generated server public key is not P-256 ECDSA: %T", parsedServer)
+	}
+	if parsedServerPublic.X.Cmp(serverPublic.X) != 0 || parsedServerPublic.Y.Cmp(serverPublic.Y) != 0 {
+		t.Fatal("generated server public key does not match the TLS certificate")
 	}
 
 	var selectedClientOutput bytes.Buffer
@@ -84,6 +101,55 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 	err = mihomoConfigTo(&selectedClientOutput, []string{"--config", configPath, "--server", "example.com", "--private-key", privateB, "--client", "missing"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("unknown client selector was not rejected: %v", err)
+	}
+}
+
+func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
+	privateKey, publicKey, err := generateClientKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := writeTestServerCertificate(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	config := "mode: connect-ip\n" +
+		"listen: 127.0.0.1:4434\n" +
+		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  mtu: 1280\n" +
+		"dns_gateway:\n  enabled: false\n" +
+		"clients:\n" +
+		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := mihomoConfigTo(&output, []string{"--config", configPath, "--server", "example.com", "--private-key", privateKey}); err != nil {
+		t.Fatal(err)
+	}
+	var nodes []map[string]any
+	if err := yaml.Unmarshal(output.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	decoded := mustBase64Decode(t, nodes[0]["public-key"].(string))
+	if _, err := x509.ParsePKIXPublicKey(decoded); err != nil {
+		t.Fatalf("server public key does not match Mihomo PKIX contract: %v", err)
+	}
+}
+
+func TestMihomoConfigRawClientPointIsNotMihomoServerPKIX(t *testing.T) {
+	privateKey, publicKey, err := generateClientKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := mustBase64Decode(t, publicKey)
+	if len(decoded) != 65 || decoded[0] != 4 {
+		t.Fatalf("test client auth key is not a raw uncompressed P-256 point: len=%d prefix=%x", len(decoded), decoded[:1])
+	}
+	if _, err := x509.ParsePKIXPublicKey(decoded); err == nil {
+		t.Fatal("raw client auth point unexpectedly parsed as Mihomo server PKIX public key")
+	}
+	if _, err := clientPublicKeyFromPrivateKey(privateKey); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -128,6 +194,55 @@ func TestMihomoConfigPrivateKeyFormatsAndFailures(t *testing.T) {
 	}
 	if _, err := clientPublicKeyFromPrivateKey(privateKey + "="); err == nil {
 		t.Fatal("malformed private key was accepted")
+	}
+}
+
+func TestMihomoConfigPKCS8InputCanonicalizesToSEC1ConsumerContract(t *testing.T) {
+	sec1Input, publicKey, err := generateClientKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := x509.ParseECPrivateKey(mustBase64Decode(t, sec1Input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8DER, err := x509.MarshalPKCS8PrivateKey(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8Input := base64.StdEncoding.EncodeToString(pkcs8DER)
+
+	certPath := writeTestServerCertificate(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	config := "mode: connect-ip\n" +
+		"listen: 127.0.0.1:4434\n" +
+		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  mtu: 1280\n" +
+		"dns_gateway:\n  enabled: false\n" +
+		"clients:\n" +
+		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := mihomoConfigTo(&output, []string{"--config", configPath, "--server", "example.com", "--private-key", pkcs8Input}); err != nil {
+		t.Fatal(err)
+	}
+	var nodes []map[string]any
+	if err := yaml.Unmarshal(output.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	canonicalDER := mustBase64Decode(t, nodes[0]["private-key"].(string))
+	canonical, err := x509.ParseECPrivateKey(canonicalDER)
+	if err != nil {
+		t.Fatalf("PKCS#8 input was not canonicalized to Mihomo SEC1 contract: %v", err)
+	}
+	if canonical.D.Cmp(original.D) != 0 || canonical.PublicKey.X.Cmp(original.PublicKey.X) != 0 || canonical.PublicKey.Y.Cmp(original.PublicKey.Y) != 0 {
+		t.Fatal("PKCS#8 input changed private key identity")
+	}
+	if string(canonicalDER) == string(pkcs8DER) {
+		t.Fatal("canonical private-key unexpectedly remained PKCS#8")
 	}
 }
 

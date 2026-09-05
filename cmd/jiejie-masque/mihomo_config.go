@@ -43,7 +43,15 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	clientPublicKey, err := clientPublicKeyFromPrivateKey(*privateKey)
+	clientPrivateKey, err := parseClientPrivateKey(*privateKey)
+	if err != nil {
+		return err
+	}
+	clientPublicKey, err := encodeClientAuthPublicKey(clientPrivateKey)
+	if err != nil {
+		return err
+	}
+	canonicalPrivateKey, err := canonicalClientPrivateKey(clientPrivateKey)
 	if err != nil {
 		return err
 	}
@@ -67,10 +75,14 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if !ok || pub.Curve != elliptic.P256() {
 		return fmt.Errorf("server certificate must use P-256 ECDSA")
 	}
+	serverPublicKey, err := encodeServerEndpointPublicKey(pub)
+	if err != nil {
+		return err
+	}
 	serverPrefix, _ := parseTunnelAddress(c.Server.TunnelIPv4)
 	node := map[string]any{
 		"name": *name, "type": "masque", "server": *server, "port": *port,
-		"private-key": *privateKey, "public-key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), pub.X, pub.Y)),
+		"private-key": canonicalPrivateKey, "public-key": serverPublicKey,
 		"ip": client.TunnelIPv4.String(), "mtu": c.Server.MTU, "udp": true,
 		"ip-stack":              map[string]any{"mode": "mips", "congestion-controller": "bbr3"},
 		"congestion-controller": "bbr", "bbr-profile": "standard",
@@ -95,23 +107,67 @@ func clientPublicKeyFromPrivateKey(encoded string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid client private key: base64 encoding")
 	}
+	key, err := parseClientPrivateKeyDER(der)
+	if err != nil {
+		return "", err
+	}
+	return encodeClientAuthPublicKey(key)
+}
+
+func parseClientPrivateKey(encoded string) (*ecdsa.PrivateKey, error) {
+	der, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("invalid client private key: base64 encoding")
+	}
+	return parseClientPrivateKeyDER(der)
+}
+
+func parseClientPrivateKeyDER(der []byte) (*ecdsa.PrivateKey, error) {
 	key, err := x509.ParseECPrivateKey(der)
 	if err != nil {
 		parsed, pkcs8Err := x509.ParsePKCS8PrivateKey(der)
 		if pkcs8Err != nil {
-			return "", fmt.Errorf("invalid client private key: DER encoding")
+			return nil, fmt.Errorf("invalid client private key: DER encoding")
 		}
 		var ok bool
 		key, ok = parsed.(*ecdsa.PrivateKey)
 		if !ok {
-			return "", fmt.Errorf("invalid client private key: expected ECDSA key")
+			return nil, fmt.Errorf("invalid client private key: expected ECDSA key")
 		}
 	}
 	if key.Curve == nil || key.Curve.Params() == nil || key.Curve.Params().Name != elliptic.P256().Params().Name || key.Curve.Params().BitSize != elliptic.P256().Params().BitSize {
+		return nil, fmt.Errorf("invalid client private key: expected P-256 ECDSA key")
+	}
+	return key, nil
+}
+
+// Client auth public key: raw uncompressed P-256 point Base64.
+func encodeClientAuthPublicKey(key *ecdsa.PrivateKey) (string, error) {
+	if key == nil || key.Curve != elliptic.P256() {
 		return "", fmt.Errorf("invalid client private key: expected P-256 ECDSA key")
 	}
 	public := elliptic.Marshal(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y)
 	return base64.StdEncoding.EncodeToString(public), nil
+}
+
+func canonicalClientPrivateKey(key *ecdsa.PrivateKey) (string, error) {
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", fmt.Errorf("encode client private key: SEC1 DER: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(der), nil
+}
+
+// Mihomo server endpoint public-key: PKIX / SubjectPublicKeyInfo DER Base64.
+func encodeServerEndpointPublicKey(pub *ecdsa.PublicKey) (string, error) {
+	if pub == nil || pub.Curve != elliptic.P256() {
+		return "", fmt.Errorf("server certificate must use P-256 ECDSA")
+	}
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("encode server public key: PKIX DER: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(der), nil
 }
 
 func selectMihomoClient(clients []config.ResolvedClient, publicKey, clientName string) (config.ResolvedClient, error) {

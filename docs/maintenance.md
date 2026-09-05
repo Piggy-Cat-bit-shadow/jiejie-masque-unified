@@ -4,6 +4,11 @@ The v1.0.1 runtime baseline is frozen. Accept correctness, security,
 compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
 speculative performance work without reproducible production evidence.
 
+Changes to `mihomo-config` key encodings must be checked against the consumer
+parser contract: client `private-key` is SEC1 EC DER Base64, while the server
+endpoint `public-key` is PKIX/SubjectPublicKeyInfo DER Base64. Client
+authentication `public_key` values remain raw uncompressed P-256 point Base64.
+
 ## Exact dependency provenance
 
 ```text
