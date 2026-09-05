@@ -9,9 +9,9 @@ performance tuning, architecture rewrites, or new zero-copy experiments.
 The release candidate pins these self-maintained forks:
 
 ```text
-main            cf11f126dcfa1621dffc98b6595a4f77b33d5b88
-connect-ip-go   76018bfccf9fc03af9a966279d7e52fa036b063b
-quic-go         fd7d2285552d315feaf11ea103a215357ab38405
+main            c94b448f4497f5308cf128efa3e1c5f0b515a068
+connect-ip-go   1375f5fae7e5b13f23d834535e10d5ec54d6812b
+quic-go         6674cd87ed8493c20168276d9dd4086263a8e515
 ```
 
 Never use `go get -u`. An upstream or fork update requires upstream diff
@@ -74,4 +74,3 @@ Under repeated local connect-ip load, `TestClientWaitForSettings` can also hit
 its deadline. These are not release highlights; confirm the relevant targeted
 tests, the main CI race gate, and the release gates before classifying a
 failure as a product defect.
-
