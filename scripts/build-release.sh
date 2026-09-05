@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=${VERSION:-0.1.0}
+version=${VERSION:-1.0.1}
 commit=${COMMIT:-$(git rev-parse --short=12 HEAD)}
 output=${OUTPUT:-dist/jiejie-masque-linux-amd64}
 mkdir -p "$(dirname "$output")"

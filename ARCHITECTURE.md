@@ -1,3 +1,9 @@
-# Architecture
+# jiejie-masque architecture
 
-One Go module and binary. CONNECT-IP remains an independent engine with TUN, session NAT, mTLS, a lightweight systemd runtime heartbeat, and an independent host-network deep probe. The heartbeat only demonstrates that the service runtime can schedule and notify systemd; it does not prove QUIC or packet datapath progress. CONNECT-UDP is a separate engine with its own configuration and service, signal-aware graceful shutdown, and the same systemd lifecycle contract.
+This repository contains one Go binary with independent CONNECT-IP and
+CONNECT-UDP MASQUE services. The canonical architecture, ownership rules,
+queue limits, security model, operational boundaries, and frozen optimization
+decisions are documented in [docs/architecture.md](docs/architecture.md).
+
+Runtime is in maintenance mode: change it only for a demonstrated correctness,
+security, compatibility, ownership, or shutdown issue.

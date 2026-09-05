@@ -1,5 +1,37 @@
 # Provider operations
 
+## Runtime health and diagnostics
+
+At startup, the QUIC fork reports requested and effective UDP receive/send
+socket buffers when the platform exposes those values. A lower effective value
+is a warning and does not by itself prevent startup. Inspect service logs for
+the requested/effective pair before changing host limits.
+
+The systemd watchdog and host-network probe have different scopes. The
+watchdog uses `WATCHDOG_USEC / 2` and only proves that the service can schedule
+and send a systemd heartbeat. It does not prove that the QUIC event loop,
+dataplane forwarding, or the remote Internet is healthy. The deep probe runs at
+the configured 30-second interval and checks forwarding, TUN, and nft/NAT
+conditions; two consecutive failures are required before it becomes fatal.
+
+Both services use `Type=notify`, `WatchdogSec=30s`, and graceful,
+signal-aware `ServeContext` shutdown. CONNECT-UDP uses `NotifyAccess=main`.
+Readiness is sent only after the listener, QUIC transport, and HTTP/3 server
+are constructed. Do not treat READY or WATCHDOG as a packet-forwarding SLA.
+
+## Deployment validation experiments
+
+If production uses a UDP SNI Router, compare a direct UDP backend with the
+router path using the same client, target, payload, and duration. This is a
+deployment variable to validate, not a known repository bottleneck. Similarly,
+compare the supported `default` congestion controller with explicit `cubic`
+only under a controlled, reversible test. The repository does not change the
+default based on theory or an isolated benchmark.
+
+The current release explicitly defers sendmmsg/recvmmsg and UDP batching. A
+future investigation must provide Linux syscall count, CPU, burst, and latency
+evidence without waiting for future packets or changing ownership semantics.
+
 This release candidate targets roughly 10–20 trusted users and 20–50 devices on a small Linux VPS. These are starting points, not universal tuning values.
 
 CONNECT-UDP defaults are 256 active flows globally, 64 per user, one-hour flow idle cleanup, a 10-second handshake timeout, 64 incoming streams, 15-second keepalive, and two-minute QUIC idle timeout. CONNECT-IP defaults are 120 sessions globally, 32 per client, one-hour session idle cleanup, 30-minute shadow-address reuse delay, a 30-second host-network deep-probe interval, and a bounded 256-packet outbound queue. The systemd watchdog is a lightweight runtime heartbeat and is independent of the deep probe; it does not claim to detect arbitrary QUIC or datapath deadlocks. Queue overflow is logged only as an anonymous aggregate count; a stalled client cannot block the global TUN dispatcher. Per-session queue counters (accepted, dequeued, dropped, high-water) are lock-free and intentionally contain no client identity.

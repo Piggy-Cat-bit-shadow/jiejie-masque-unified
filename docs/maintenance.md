@@ -1,50 +1,40 @@
-# Maintenance Guide
+# Maintenance and release guide
 
-The v1 runtime is frozen. Maintenance accepts bug fixes, security fixes,
-compatibility fixes, and release metadata corrections. Do not add speculative
-performance tuning, architecture rewrites, or new zero-copy experiments.
+The v1.0.1 runtime baseline is frozen. Accept correctness, security,
+compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
+speculative performance work without reproducible production evidence.
 
-## Frozen dependency graph
-
-The release candidate pins these self-maintained forks:
+## Exact dependency provenance
 
 ```text
-main            735918cbc73181f84b925ecc11ea10658aa06f3f
-connect-ip-go   1778afbfe8fa31df908cbbe9efe8129ecd5410c7
-quic-go         6d5c3eafe61bd98847d0e018d29ab559e71e06b0
+main HEAD at release preparation: adcf5f731e5fca8e1ba4d26724ea62b58af57248
+connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
+  pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
+quic-go:                           ac11e929d6decc0eb5f8235259ef82671dad3bca
+  pseudo-version:                  v0.0.0-20260905040559-ac11e929d6de
 ```
 
-Never use `go get -u`. An upstream or fork update requires upstream diff
-review, fork rebase/merge, targeted tests, race tests, benchmarks, and a main
-module pin update.
+The main module and connect-ip-go both replace the MetaCubeX quic-go module
+with the same Piggy-Cat-bit-shadow fork checkpoint. Do not use `go get -u`.
+Any dependency change requires upstream diff review, targeted tests, race,
+vet, benchmark comparison, module verification, and a new main pin.
 
-## Required checks by change area
+## Ownership and lifecycle checks
 
-Before changing the quic-go fork, run the modified wire, DATAGRAM, HTTP/3,
-packet-buffer, and send-queue tests, followed by `go test -race` for those
-packages and the quic full suite when the local environment supports it.
+Before changing ownership code, cover queue-full drop, close drain, send
+rejection, `DatagramTooLargeError`, malformed input, duplicate Release, and
+exactly-once transfer. Never reset a release flag or resurrect an object after
+it has been returned to `sync.Pool`; a new generation comes only from
+`Acquire`/`Get`.
 
-Before changing connect-ip-go, run its full test, race, and vet suites. For
-ownership changes, cover queue-full drop, close drain, send rejection,
-`DatagramTooLargeError`, duplicate Release, and exactly-once owner transfer.
+The CONNECT-IP retained receive budget is 64. The CONNECT-IP session outbound
+queue is 256 by default. QUIC DATAGRAM send/receive queues are 32/128 and the
+HTTP/3 stream DATAGRAM queue is 32. CONNECT-UDP uses a Proxy-level shared
+1510-byte pool; this is reusable cache, not a strict global memory bound.
 
-Before changing the main PacketPool or session handoff, verify headroom 9,
-the one-byte TUN sentinel, queue overflow release, connection close drain,
-direct-read ownership, and pool generation rules. Never reset `refCount` or a
-release flag on an object already returned to `sync.Pool`.
+## Required validation
 
-Before changing the receive parser, preserve reusable scratch behavior and the
-zero-allocation parser benchmark. Verify malformed frames, multiple DATAGRAMs
-sharing one packet backing, owner transfer, retained budget 64, and the 65th
-compact fallback.
-
-Before changing send serialization, preserve the intentional final copy. Do
-not reopen that optimization boundary without profile evidence demonstrating a
-material production benefit and a complete AEAD/GSO/lifetime design.
-
-## Release gates
-
-From the final release commit, run:
+From the final release commit:
 
 ```sh
 test -z "$(gofmt -l .)"
@@ -60,17 +50,42 @@ bash scripts/verify-public-repo-selftest.sh
 bash scripts/verify-systemd-contract.sh
 ```
 
-Also build the stripped static Linux amd64 artifact with
-`scripts/build-release.sh`, verify ELF/x86-64/stripped properties, generate a
-SHA256 file, and validate the Git tag and GitHub Release artifacts.
+Also run the focused CONNECT-IP and CONNECT-UDP ownership, malformed-input,
+Flow.Touch/Reap, cancellation, fallback, and notify tests with suitable
+`-count` stress. Run the borrowed parser, CONNECT-IP receive, Flow.Touch, and
+owned-pool benchmarks for allocation regressions; do not turn machine-specific
+nanosecond values into CI gates.
 
-## Local test-environment caveats
+## Release artifact
 
-Some upstream-style quic loopback tests can fail on a constrained local UDP
-environment: `TestDial/{Dial,DialEarly,DialAddr,DialAddrEarly}` can time out,
-`TestTransportAndDialConcurrentClose` uses an intentionally empty TLS config,
-and `TestFrameParserAllocs/STREAM` can count race instrumentation allocations.
-Under repeated local connect-ip load, `TestClientWaitForSettings` can also hit
-its deadline. These are not release highlights; confirm the relevant targeted
-tests, the main CI race gate, and the release gates before classifying a
-failure as a product defect.
+Build the static stripped Linux amd64 artifact with:
+
+```sh
+VERSION=1.0.1 OUTPUT=dist/jiejie-masque-linux-amd64 scripts/build-release.sh
+sha256sum dist/jiejie-masque-linux-amd64 > dist/jiejie-masque-linux-amd64.sha256
+sha256sum -c dist/jiejie-masque-linux-amd64.sha256
+```
+
+Verify x86-64 ELF, static linkage, stripped symbols, exact byte size, and the
+embedded version/commit. Upload only the binary and checksum to the GitHub
+Release. Do not include private paths, credentials, hostnames, or deployment
+identifiers.
+
+## Frozen optimization boundary
+
+Normal CONNECT-IP RX and CONNECT-UDP client-to-target application payload
+copies are zero. Normal CONNECT-IP TX and CONNECT-UDP target-to-client paths
+have zero full payload copies before final QUIC serialization. The final
+`DatagramFrame.Append` copy remains intentional. `sendmmsg`/`recvmmsg`,
+MSG_ZEROCOPY, io_uring, public DATAGRAM pooling, custom crypto, incremental
+checksum, new congestion controllers, and UDP batching are deferred and are
+not release blockers. Reopen them only with Linux production profile,
+syscall/CPU/latency, allocation, qlog, or packet-loss evidence.
+
+## Local environment caveats
+
+Constrained local UDP/TLS environments can expose timing failures in upstream-
+style quic loopback tests or race-instrumented allocation tests. Confirm the
+targeted package, main CI, and release gates before classifying such a failure
+as a product defect. This is a validation caveat, not a reason to alter runtime
+behavior during a release audit.

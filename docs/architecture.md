@@ -1,153 +1,178 @@
-# Architecture and Performance Invariants
+# Architecture and frozen performance boundary
 
-This document records the frozen v1 architecture. The project is in maintenance
-mode: make changes for bugs, security, or compatibility, not speculative
-performance tuning.
+This document describes the v1.0.1 maintenance baseline. Runtime changes are
+reserved for correctness, security, compatibility, ownership, or shutdown
+bugs. Performance speculation is not a change request.
 
-## Data plane
+## Services and limits
 
-The binary contains two independent services:
+The binary contains two independent MASQUE services:
 
 - CONNECT-IP uses HTTP/3 Extended CONNECT, Linux TUN, optional session NAT,
-  packet ownership transfer, and a tunnel-local DNS gateway.
-- CONNECT-UDP uses RFC 9298 CONNECT-UDP, HTTP Datagrams, bounded UDP relay
-  flows, and HTTP Basic authentication.
+  mTLS, and a tunnel-local DNS gateway.
+- CONNECT-UDP uses RFC 9298 HTTP Datagrams, bounded UDP relay flows, target
+  policy validation, and HTTP Basic authentication. CONNECT-TCP uses the same
+  target policy and stream relay.
 
-## Queue and buffer limits
+Frozen queue and buffer invariants:
 
-These values are release invariants:
-
-| Component | Limit |
-| --- | ---: |
+| Component | Limit or layout |
+| --- | --- |
 | QUIC DATAGRAM send queue | 32 |
 | QUIC DATAGRAM receive queue | 128 |
 | HTTP/3 stream DATAGRAM receive queue | 32 |
 | CONNECT-IP session outbound queue | 256 by default |
-| Retained receive-buffer budget | 64 |
+| CONNECT-IP retained receive budget | 64 |
 | CONNECT-IP PacketPool headroom | 9 bytes |
-| TUN oversized-read sentinel | 1 byte |
-| Default CONNECT-IP MTU | 1280 bytes |
+| CONNECT-UDP owned backing | 1510 bytes |
+| CONNECT-UDP H3 headroom | 8 bytes |
+| CONNECT-UDP Context ID | 1 byte |
+| CONNECT-UDP UDP read area | 1501 bytes |
 
-The configured session queue remains bounded. The PacketPool headroom reserves
-HTTP/3 quarter-stream-ID and CONNECT-IP Context ID prefixes; the sentinel makes
-an oversized direct TUN read fail instead of accepting a truncated packet.
+The production defaults are one-minute flow/session reaping, one-hour idle
+timeouts, CONNECT-UDP limits of 256 global and 64 per user, and a 256-packet
+CONNECT-IP outbound queue. The example configs are the compatibility source
+for these defaults.
 
-## Receive ownership
+## CONNECT-IP receive and send paths
 
 The normal receive path is:
 
 ```text
 UDP packetBuffer
-  -> decrypt
+  -> QUIC decrypt in place
   -> reusable borrowed DATAGRAM parser scratch
   -> retained packetBuffer reference
   -> quic.DatagramBuffer
-  -> HTTP/3 queue
+  -> HTTP/3 stream queue
   -> connect-ip PacketBuffer pointer view
-  -> TUN
+  -> Context ID strip/reslice and validation
+  -> TUN Write
   -> Release
 ```
 
-Normal receive payload copy count is zero. The first 64 retained buffers keep
-their transport backing. When the retained budget is full, the 65th and later
-eligible buffers use an exact-size compact fallback copy and release the
-transport owner immediately. A full queue is a real drop, not a fallback-copy
-case. Every owner, budget token, and packet-buffer reference is released once.
+The retained budget is 64. Eligible packets 1 through 64 retain their
+transport backing. When the budget is exhausted, the next eligible packet uses
+an exact-size compact fallback copy and releases the original transport owner
+immediately. A full receive queue drops the packet; it does not turn queue
+overflow into a fallback copy. Normal application payload copying is zero.
 
-The parser owns reusable `DatagramFrame` metadata. Its `Data`, `DataOwner`,
-`SendOwner`, and release state are reset before reuse. The retained owner is a
-zero-allocation `retainedPacketBufferRef` pointer view. The CONNECT-IP
-`PacketBuffer` is a named pointer view over `quic.DatagramBuffer`.
-
-## Send ownership
-
-The normal CONNECT-IP send path is:
+The normal send path is:
 
 ```text
-main PacketPool
-  -> session outbound queue
-  -> CONNECT-IP prefix
-  -> HTTP/3 prefix
-  -> QUIC SendDatagramOwned
+session PacketPool
+  -> CONNECT-IP Context ID and HTTP/3 prefix in reserved headroom
+  -> stateTrackingStream.SendDatagramBufferOwned
+  -> rawConn.sendDatagramBufferOwned
+  -> quic.Conn.SendDatagramOwned
+  -> QUIC DATAGRAM send queue
+  -> packetPacker / DatagramFrame.Append
+  -> AEAD and header protection
+  -> owner Release
+```
+
+`TrackStream` wires the owned callback into `stateTrackingStream`; the
+production path does not rely on the legacy synchronous-copy fallback. There
+are zero full payload copies before final QUIC serialization. The final
+`DatagramFrame.Append` copy remains intentional because the current contiguous
+packet, AEAD, header-protection, and GSO path requires it.
+
+## CONNECT-UDP paths and ownership
+
+Client to target:
+
+```text
+HTTP/3 DatagramBuffer
+  -> ReceiveDatagramBuffer
+  -> Context ID parse/reslice
+  -> connected UDP Write
+  -> DatagramBuffer.Release
+```
+
+Malformed context, unsupported context, oversized payload, write error, and
+successful forwarding all release the received buffer exactly once.
+
+Target to client:
+
+```text
+target UDP socket
+  -> direct read into owned 1510-byte backing
+  -> Context ID at offset 8
+  -> SendDatagramBufferOwned with 8-byte H3 headroom
+  -> stateTrackingStream / rawConn owned forwarding
   -> QUIC DATAGRAM queue
-  -> final serialization
-  -> ReleaseSendOwner
-  -> QUIC packetBuffer
-  -> send queue
-  -> UDP / GSO
+  -> final serialization and owner Release
+  -> Proxy-level shared sync.Pool
 ```
 
-There are zero payload copies before QUIC serialization. The final
-`DatagramFrame.Append` payload serialization copy is intentional and required
-by the current contiguous QUIC packet, AEAD, header-protection, and GSO
-architecture. The source PacketPool backing can be released after final
-serialization because the encrypted packet is then held by the QUIC
-`packetBuffer`.
-
-## Pool lifetime and close rules
-
-`sync.Pool` objects must never be manually resurrected after `Release` or
-`Put`. A new generation is obtained only through `Get` or `Acquire`; tests must
-not reset the refcount or release flag on an object already returned to a pool.
-
-CONNECT-IP maps terminal local and remote closes to `CloseError`, preserving
-`errors.Is(err, net.ErrClosed)` and the `Remote` bit. Context cancellation,
-deadlines, `DatagramTooLargeError`, and unrelated errors retain their original
-semantics. Queue close and drain paths release owned buffers exactly once.
-
-CONNECT-IP receive handling releases an unsupported or invalid current
-DATAGRAM and reads a fresh next DATAGRAM. It never loops on stale data.
-
-## TUN offload and GSO
-
-Both options default to disabled:
-
-```yaml
-server:
-  tun_offload: false
-  tun_tx_gro: false
-```
-
-When enabled, RX supports TCPv4/TCPv6 GSO splitting and TX supports ordered
-TCPv4/TCPv6 GRO. UDP GRO/USO is not supported, and TX GRO requires TUN
-offload. QUIC Linux UDP GSO remains enabled: multiple complete encrypted QUIC
-packets are placed in one contiguous large buffer and sent with
-`UDP_SEGMENT`.
-
-## DNS and routing security
-
-The CONNECT-IP DNS gateway listens only on the tunnel address and forwards UDP
-and TCP to `127.0.0.1:53`. It has no public listener and no external-DNS
-fallback.
-
-CONNECT-UDP target policy resolves a hostname, validates the resulting allowed
-IP snapshot, and dials only those validated addresses. TCP racing uses at most
-the currently implemented four validated candidates; losing attempts are
-cancelled and closed. The target is never resolved again after validation.
-
-The supported congestion-controller values are `default` and `cubic`. BBR is
-not included in v1.
-
-## Zero-copy optimization boundary
-
-The following are deliberately outside v1 and must not be reopened without
-real profile and benchmark evidence:
-
-- scatter/gather AEAD or custom crypto;
-- external caller buffers as final QUIC packets;
-- multi-iovec UDP GSO, `sendmmsg`, `MSG_ZEROCOPY`, or `io_uring` sends;
-- disabling GSO or increasing syscall count to remove a memcpy;
-- public `DatagramBuffer` pooling.
-
-The complexity, safety, lifecycle, and GSO trade-offs exceed the expected
-benefit. The frozen performance state is:
+The backing layout is:
 
 ```text
-normal RX payload copies                   0
-normal TX copies before QUIC serialization 0
-final QUIC serialization copies            1 intentional copy
-borrowed parser benchmark                  0 B/op, 0 allocs/op
-parser -> queue benchmark                  64 B/op, 1 alloc/op
-CONNECT-IP receive benchmark               64 B/op, 1 alloc/op
+[0:8]     H3 quarter-stream-ID headroom
+[8]       CONNECT-UDP Context ID 0
+[9:1509]  up to 1500-byte UDP payload
+[1509]    oversized sentinel
 ```
 
+Exactly 1500 bytes are forwarded. A 1501-byte or larger UDP packet produces a
+sentinel-sized read and is dropped without forwarding a truncated prefix. The
+flow remains healthy for the next valid packet. Oversized drops use one
+aggregate log at most every 30 seconds; normal packets do not call `time.Now`
+for this logging path.
+
+The owned pool is shared by all flows of one `Proxy`. `sync.Pool` is a
+reusable cache, not a strict global memory bound. Live owned memory is roughly
+the owned buffers queued by each relevant QUIC connection plus one active
+target read per active relay; total live memory scales with concurrent flows
+and connections. Recycled cached memory may remain available to the Go runtime
+until garbage collection.
+
+## Activity, policy, and cancellation
+
+`Flow.Touch` performs only an atomic activity mark. The one-minute reaper
+coalesces marks and materializes the timestamp. It rechecks activity before
+closing an idle candidate; close, resource close, and admission release remain
+exactly once.
+
+CONNECT-UDP and CONNECT-TCP handlers pass the request context through DNS and
+dial operations. Target policy resolves a hostname once, validates the
+numeric result, and never passes the hostname to a dialer. UDP tries at most
+four validated addresses sequentially; TCP races at most four validated
+numeric addresses and closes losing attempts. Request cancellation stops DNS,
+UDP dial fallback, and TCP dial work.
+
+## TUN offload, congestion, and operations
+
+TUN offload and TCP TX GRO default to false. UDP GRO/USO is not supported.
+QUIC UDP GSO remains enabled. Congestion controller values are `default` and
+`cubic`; `default` preserves baseline behavior, and BBR is not implemented.
+
+QUIC startup reports requested/effective UDP socket buffers where the platform
+allows inspection. Insufficient tuning is observable and non-fatal. The
+systemd watchdog is a runtime heartbeat only; it does not prove QUIC event-loop
+progress, packet forwarding, or remote reachability. The independent host
+network deep probe covers forwarding/TUN/nft-NAT checks at its 30-second
+interval and requires two consecutive failures before becoming fatal.
+
+## Frozen optimization boundary
+
+Measured baseline invariants are:
+
+```text
+CONNECT-IP normal RX application payload copies             0
+CONNECT-IP TX pre-final payload copies                      0
+CONNECT-UDP client->target application payload copies       0
+CONNECT-UDP target->client pre-final payload copies         0
+final QUIC serialization copies                             1 intentional
+borrowed parser benchmark                                  0 B/op, 0 allocs/op
+CONNECT-IP receive handle                                  64 B/op, 1 alloc/op
+CONNECT-UDP owned pool steady state                        0 allocs/op
+```
+
+The current Flow.Touch benchmark is in the low-nanosecond range with zero
+allocations, and the shared owned pool remains zero-allocation in steady state.
+The final serialization copy, public DatagramBuffer pooling, sendmmsg,
+recvmmsg, MSG_ZEROCOPY, io_uring, custom crypto, incremental checksum, new
+congestion controllers, and UDP batching are deferred. `sendmmsg`/`recvmmsg`
+are explicitly deferred, not release blockers: reopen them only with Linux
+production profiling or reproducible syscall/CPU/latency evidence.
