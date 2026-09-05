@@ -3,6 +3,16 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
+## v1.0.11 之后维护候选
+
+- F-803 串行化共享 TX-GRO scratch buffer，并增加并发 `WriteBatch` 回归测试。
+- F-804 校验完整 IPv4 fragment field，同时保留仅设置 DF 的正常报文。
+- F-805 仅对 ICMP error 类型解析 quoted IPv4，informational payload 保持不透明。
+- F-806 对分片 ICMP 只转换外层地址并重算外层校验和，保留 payload 与 ICMP 校验和。
+- CI 对齐仓库默认分支、固定官方 Actions 完整 SHA，并校验当前依赖 provenance。
+
+本节是维护候选，不是发布；不会创建 v1.0.12 tag 或 release。
+
 ## v1.0.11
 
 ### 修复

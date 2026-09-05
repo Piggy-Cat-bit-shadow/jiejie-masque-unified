@@ -2,15 +2,14 @@
 
 See `go.mod` and `NOTICE` for dependency and license notices. Runtime dependencies use the MetaCubeX QUIC, HTTP, TLS, and CONNECT-IP modules.
 
-## MetaCubeX quic-go and the CONNECT-IP CUBIC selector fork
+## MetaCubeX quic-go and the CONNECT-IP integration fork
 
 The CONNECT-IP congestion-control selector uses the MIT-licensed
 `github.com/Piggy-Cat-bit-shadow/quic-go` fork at commit
-`6d5c3eafe61b`, based on MIT-licensed
+`ac11e929d6decc0eb5f8235259ef82671dad3bca`, based on MIT-licensed
 `github.com/metacubex/quic-go` commit `2548683b76f4`. The fork exposes only
-the upstream native CUBIC selector, bounded DATAGRAM ownership and borrowed-
-parser changes, and the explicit HTTP/3 DATAGRAM polling API used by this
-project; it contains no BBR code. See
+the project-maintained DATAGRAM and ownership integration plus selected
+congestion-control support used by this project; it contains no BBR code. See
 `docs/CONNECT_IP_QUIC_CONGESTION.md` for the upstream and license provenance.
 
 CONNECT-UDP server-side relay behavior was adapted from the MIT-licensed `github.com/quic-go/masque-go` v0.4.0 reference implementation. The final binary does not depend on that module or on upstream quic-go; it uses the MetaCubeX forked QUIC/HTTP/3 substrate.

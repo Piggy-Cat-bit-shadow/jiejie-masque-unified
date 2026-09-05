@@ -8,6 +8,11 @@ Current released version: `v1.0.11`
 | --- | --- | --- |
 | F-802 | CONFIRMED CORRECTNESS / OPTIONAL TX GRO | FIXED / CANDIDATE VERIFIED |
 | F-801 | CONFIG / EXAMPLE CORRECTNESS | FIXED / CANDIDATE VERIFIED |
+| F-803 | TX GRO SHARED SCRATCH RACE | FIXED / CANDIDATE VERIFIED |
+| F-804 | TX GRO IPv4 FRAGMENT MASK | FIXED / CANDIDATE VERIFIED |
+| F-805 | SESSION-NAT ICMP QUOTE CLASSIFICATION | FIXED / CANDIDATE VERIFIED |
+| F-806 | SESSION-NAT FRAGMENTED ICMP SAFETY | FIXED / CANDIDATE VERIFIED |
+| CI-02 | DEFAULT-BRANCH / ACTION PIN / PROVENANCE DRIFT | FIXED / CANDIDATE VERIFIED |
 | DOC-01 | DOCUMENTATION SELF-DESCRIPTION DRIFT | FIXED ON CURRENT BRANCH / FUTURE GATE HARDENED |
 | H-311 | OBSERVABILITY GAP | DEFERRED |
 | H-312 | OPTIONAL IPv6 GSO HYPOTHESIS | DEFERRED / NO CODE CHANGE |
@@ -17,8 +22,15 @@ F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
 `tun_tx_gro: false` path is unaffected. F-801 removes the stale root example,
 leaving the two mode-specific canonical examples with semantic validation
 coverage. DOC-01 corrects the current-version claim below and hardens the
-future release-document consistency check. H-311, H-312, and S-801 are not
-runtime changes in this batch.
+future release-document consistency check. F-803 serializes the shared TX-GRO
+scratch buffer through completion of the device write, and F-804 rejects the
+full IPv4 fragment field while preserving DF-only packets. F-805 parses quoted
+IPv4 only for ICMP error types; F-806 leaves fragmented ICMP payloads and ICMP
+checksums opaque while translating only the outer address and checksum. DNS
+fragmentation tracking remains deferred; deployments should use EDNS around
+1232 bytes and TCP fallback. CI-02 aligns pull requests with the repository
+default branch, pins official actions, and checks current module provenance.
+H-311, H-312, and broader S-801 hardening remain deferred.
 
 ## v1.0.11 final release provenance
 
@@ -149,6 +161,8 @@ connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
   pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
 quic-go:                           ac11e929d6decc0eb5f8235259ef82671dad3bca
   pseudo-version:                  v0.0.0-20260905040559-ac11e929d6de
+current connect-ip-go version: v0.0.0-20260905040753-57381910bb5f
+current quic-go replacement version: v0.0.0-20260905040559-ac11e929d6de
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module

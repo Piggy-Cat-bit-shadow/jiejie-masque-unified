@@ -29,9 +29,11 @@ HTTP/3 control stream and CONNECT-IP data plane
 ## Fork provenance
 
 `github.com/metacubex/quic-go` is replaced by
-`github.com/Piggy-Cat-bit-shadow/quic-go` commit `6d5c3eafe61b`.
+`github.com/Piggy-Cat-bit-shadow/quic-go` commit
+`ac11e929d6decc0eb5f8235259ef82671dad3bca`.
 It is based on the pinned MetaCubeX upstream commit `2548683b76f4`; the fork
-adds `Conn.SetCubicCongestionControl` and its narrow internal bridge, plus the
+adds the project's DATAGRAM/ownership integration and selected congestion-control
+support, plus the
 bounded DATAGRAM ownership, retained receive-buffer, and reusable borrowed
 parser paths used by this project. It does not change HTTP/3 wire behavior,
 ECN, GSO, PMTU, or loss-recovery policy. Both upstream and fork are MIT

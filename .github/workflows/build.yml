@@ -9,7 +9,7 @@ on:
       - "v*"
   pull_request:
     branches:
-      - main
+      - codex/unified-masque
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,7 @@ jobs:
       artifact-name: jiejie-masque-build-artifacts
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -53,7 +53,7 @@ jobs:
           printf 'version=%s commit=%s\n' "$build_version" "$build_commit" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -69,8 +69,13 @@ jobs:
 
       - name: TX GRO targeted stress
         run: |
-          go test -count=200 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
-          go test -race -count=100 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+          go test -count=300 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+          go test -race -count=150 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+
+      - name: ICMP translation targeted stress
+        run: |
+          go test -count=300 ./internal/connectip/packet -run 'TestICMP|TestFragment'
+          go test -race -count=150 ./internal/connectip/packet -run 'TestICMP|TestFragment'
 
       - name: Race test
         run: go test -race ./...
@@ -80,6 +85,9 @@ jobs:
 
       - name: Dependency check
         run: scripts/verify-deps.sh
+
+      - name: Dependency provenance
+        run: bash scripts/verify-dependency-provenance.sh
 
       - name: Install privacy scanner
         run: sudo apt-get update && sudo apt-get install -y ripgrep
@@ -93,15 +101,21 @@ jobs:
       - name: Systemd contract
         run: bash scripts/verify-systemd-contract.sh
 
+      - name: Workflow contract
+        run: bash scripts/verify-workflow-contract.sh
+
       - name: Shell check
         run: |
           bash -n scripts/verify-deps.sh
-          bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh scripts/verify-release-docs.sh scripts/verify-release-docs-selftest.sh
+          bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh scripts/verify-release-docs.sh scripts/verify-release-docs-selftest.sh scripts/verify-workflow-contract.sh scripts/verify-dependency-provenance.sh scripts/verify-dependency-provenance-selftest.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
           bash -n scripts/verify-release-tag.sh scripts/verify-release-tag-selftest.sh
 
       - name: Release tag validator self-test
         run: bash scripts/verify-release-tag-selftest.sh
+
+      - name: Dependency provenance self-test
+        run: bash scripts/verify-dependency-provenance-selftest.sh
 
       - name: Build Linux amd64
         env:
@@ -151,7 +165,7 @@ jobs:
           cat dist/jiejie-masque-linux-amd64.sha256
 
       - name: Upload validated build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: jiejie-masque-build-artifacts
           path: |
@@ -168,7 +182,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -186,7 +200,7 @@ jobs:
           grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
 
       - name: Download validated build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: dist
