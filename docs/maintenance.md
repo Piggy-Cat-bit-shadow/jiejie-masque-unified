@@ -2,7 +2,25 @@
 
 Current released version: `v1.0.11`
 
-## F-701 release preparation — CONNECT-IP active-UFW firewall integration
+## v1.0.11 final release provenance
+
+The v1.0.11 annotated tag object is
+`61b3e31c33b680828e4762c0cf32cd37f0647185` and targets
+`34b22e20112a0f5acf7b65d1e4df99524e798fbd`. Tag workflow `33978955171`
+passed both the build and release jobs. The published release is
+https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.11
+with `draft=false` and `prerelease=false`; it is the current latest release.
+
+The formal binary is `jiejie-masque-linux-amd64`, with 8,954,004 bytes and
+SHA256 `0162110e753d892da7225073844e1d1a8255414a588309b6fcb8bc5c410357ef`.
+The CI artifact and GitHub Release asset have matching size, digest, and
+byte-for-byte comparison (`cmp PASS`). `RELEASE.txt` records version `1.0.11`
+and commit `34b22e20112a0f5acf7b65d1e4df99524e798fbd`; Linux CI binary gates
+also verified the embedded `--version` metadata.
+
+F-701 is FIXED / RELEASED in v1.0.11. Production remains NOT DEPLOYED.
+
+## F-701 — CONNECT-IP active-UFW firewall integration
 
 F-701 is a deployment-correctness finding, not a CONNECT-IP protocol or core
 dataplane bug. The privileged network-prepare helper now obtains the canonical
@@ -20,9 +38,8 @@ formal release provenance will be recorded only after the tag workflow succeeds.
 | --- | --- | --- |
 | F-701 | DEPLOYMENT CORRECTNESS / HOST NETWORK PREPARATION / FIREWALL INTEGRATION | FIXED / RELEASE TARGET v1.0.11 |
 
-This release preparation does not move, delete, recreate, or modify the v1.0.10
-tag or release artifacts, and does not change the frozen dataplane or dependency
-pins.
+The release does not move, delete, recreate, or modify the v1.0.10 tag or
+release artifacts, and does not change the frozen dataplane or dependency pins.
 
 v1.0.9 runtime correctness fix:
 `66cb3bd1057d93f81bb5858b0eabb7fe865ca251`

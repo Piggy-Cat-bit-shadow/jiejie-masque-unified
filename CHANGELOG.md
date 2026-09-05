@@ -20,6 +20,12 @@ release provenance，不在这里覆盖重写。
   timeout 的部署问题。
 - 这不是 protocol performance improvement，也不声称兼容所有 firewall 实现。
 
+### 发布 provenance
+
+- v1.0.11 已由 annotated tag workflow 正式发布；CI artifact 与 GitHub
+  Release asset 已完成大小、SHA256 与 byte-for-byte 校验。
+- F-701：FIXED / RELEASED v1.0.11；production 未部署。
+
 ## v1.0.10
 
 ### 修复
