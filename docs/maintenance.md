@@ -1,6 +1,11 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.3`
+Current released version: `v1.0.4`
+
+v1.0.4 networking/runtime behavior baseline:
+`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
+
+The v1.0.4 tag is the authoritative final release commit reference.
 
 v1.0.3 runtime baseline:
 `5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`
@@ -8,7 +13,7 @@ v1.0.3 runtime baseline:
 v1.0.3 release commit:
 `1203497d5b21b85cacea63c5312465a6fe7085c2`
 
-Current v1.0.4 candidate:
+v1.0.4 release-preparation baseline:
 `dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
 
 Formal releases are tag-triggered GitHub Actions builds. The annotated tag
@@ -47,8 +52,8 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.3
-current candidate:                  dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
+current released version:           v1.0.4
+v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
   pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
@@ -130,7 +135,7 @@ annotated tag
 The release job never rebuilds. Local builds are for reproduction/audit only:
 
 ```sh
-TAG="${TAG:?set an annotated tag such as v1.0.3}"
+TAG="${TAG:?set an annotated tag such as v1.0.4}"
 VERSION="${TAG#v}" COMMIT="$(git rev-list -n1 "$TAG")" \
   scripts/build-release.sh
 ```
@@ -217,6 +222,34 @@ This is a release provenance gap, not a claim that the historical binary was
 corrupt. The v1.0.4 candidate workflow closes this gap through tag-derived
 metadata and same-artifact release upload; v1.0.3 tags and assets are unchanged.
 
+## v1.0.4 final release closure
+
+The v1.0.4 release is a post-v1.0.3 correctness, deployment, and release-
+provenance maintenance release. It does not redesign the CONNECT-IP or
+CONNECT-UDP dataplanes. The final tag target is authoritative; it is not
+duplicated here to avoid a self-referential release-preparation commit.
+
+| Finding | Final pre-tag status |
+| --- | --- |
+| F-401 | FIXED |
+| F-402 | FIXED |
+| F-403 | FIXED |
+| F-404 | REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING |
+| F-405 | IMPLEMENTED / REAL TAG-PATH VALIDATION PENDING |
+| F-406 | FIXED |
+| H-305 | MEASURE FIRST |
+| H-306 | PRODUCTION A/B REQUIRED |
+
+The v1.0.4 release notes record the CONNECT-TCP half-close correctness fix,
+CONNECT-IP configuration and interface-precedence fixes, tag-derived
+single-build provenance, the v1.0.3 provenance gap, and the documentation
+alignment. The CONNECT-IP packet dataplane, CONNECT-UDP DATAGRAM path,
+PacketPool, owned buffers, queues, retained receive budget, final
+serialization copy, GSO, TargetPolicy, DNS Gateway, Session-NAT cleanup
+lifecycle, Mihomo performance profile, SNI Router, and fork dependency SHAs
+are unchanged. F-404 remains deferred pending real Linux/VPS conntrack
+reproduction.
+
 ## v1.0.4 candidate — maintenance batch 1
 
 This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config
@@ -228,8 +261,8 @@ loading, and network-preparation config propagation:
 | F-402 | FIXED |
 | F-403 | FIXED |
 | F-404 | REPRODUCTION REQUIRED |
-| F-405 | OPEN |
-| F-406 | OPEN |
+| F-405 | IMPLEMENTED / REAL TAG-PATH VALIDATION PENDING |
+| F-406 | FIXED |
 
 CONNECT-TCP now treats directional EOF as half-close: client-to-target EOF
 uses TCP `CloseWrite`, target-to-client EOF closes only the HTTP/3 send
