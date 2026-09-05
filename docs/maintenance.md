@@ -84,8 +84,14 @@ syscall/CPU/latency, allocation, qlog, or packet-loss evidence.
 
 ## Local environment caveats
 
-Constrained local UDP/TLS environments can expose timing failures in upstream-
-style quic loopback tests or race-instrumented allocation tests. Confirm the
-targeted package, main CI, and release gates before classifying such a failure
-as a product defect. This is a validation caveat, not a reason to alter runtime
-behavior during a release audit.
+Constrained local UDP/TLS/TLS-config environments can expose failures in
+upstream-style quic tests that are unrelated to this release: `TestDial`'s
+four loopback variants may time out; `TestTransportClose` may return too early;
+`TestTransportAndDialConcurrentClose` may see the intentionally incomplete TLS
+config before the transport-close error; HTTP/3 self-tests may reject an empty
+client TLS ServerName; and race instrumentation can make
+`TestFrameParserAllocs/STREAM` report allocations. The known `gofmt -l` files
+`qlog/benchmark_test.go` and `quicvarint/varint_test.go` are inherited fork
+formatting exceptions. Confirm targeted packages, main CI, and release gates
+before classifying such a failure as a product defect. This is a validation
+caveat, not a reason to alter runtime behavior during a release audit.
