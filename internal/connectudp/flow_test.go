@@ -1,6 +1,7 @@
 package connectudp
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,4 +31,34 @@ func TestFlowTrackerActivityRefreshesDeadline(t *testing.T) {
 		t.Fatalf("reaped=%d count=%d", got, tracker.Count())
 	}
 	flow.Close()
+}
+
+func TestFlowTouchCoalescesAndConcurrentReapDoesNotCloseActiveFlow(t *testing.T) {
+	tracker := NewFlowTracker()
+	var released atomic.Int32
+	flow := tracker.New(func() { released.Add(1) })
+	flow.lastActivity.Store(time.Now().Add(-time.Second).UnixNano())
+	flow.Touch()
+	const workers = 8
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				flow.Touch()
+			}
+		}()
+	}
+	for range 100 {
+		tracker.Reap(time.Now(), time.Second)
+	}
+	wg.Wait()
+	if tracker.Reap(time.Now(), time.Second) != 0 || released.Load() != 0 {
+		t.Fatalf("active flow was reaped: count=%d released=%d", tracker.Count(), released.Load())
+	}
+	flow.Close()
+	if released.Load() != 1 {
+		t.Fatalf("released=%d, want 1", released.Load())
+	}
 }

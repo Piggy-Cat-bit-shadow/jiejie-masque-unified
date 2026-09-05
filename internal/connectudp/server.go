@@ -166,7 +166,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 				w.WriteHeader(503)
 				return
 			}
-			_ = p.Proxy(w, q, flows.New(release))
+			_ = p.ProxyContext(r.Context(), w, q, flows.New(release))
 			return
 		}
 		if r.Proto == "HTTP/3.0" && r.Method == "CONNECT" {
@@ -179,7 +179,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 				w.WriteHeader(503)
 				return
 			}
-			tcpRelay.Relay(w, target, flows.New(release))
+			tcpRelay.RelayContext(r.Context(), w, target, flows.New(release))
 			return
 		}
 		if r.Proto == "HTTP/3.0" {

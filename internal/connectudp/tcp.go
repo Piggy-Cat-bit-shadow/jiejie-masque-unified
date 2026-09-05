@@ -45,12 +45,16 @@ func statusForDialError(err error) int {
 }
 
 func (r *TCPRelay) Relay(w mh.ResponseWriter, target string, flow *Flow) {
+	r.RelayContext(context.Background(), w, target, flow)
+}
+
+func (r *TCPRelay) RelayContext(ctx context.Context, w mh.ResponseWriter, target string, flow *Flow) {
 	defer flow.Close()
 	if target == "" {
 		w.WriteHeader(400)
 		return
 	}
-	conn, err := r.Policy.DialTCP(context.Background(), target)
+	conn, err := r.Policy.DialTCP(ctx, target)
 	if err != nil {
 		w.WriteHeader(statusForDialError(err))
 		return

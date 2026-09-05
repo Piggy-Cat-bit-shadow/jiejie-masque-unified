@@ -14,20 +14,21 @@ type FlowTracker struct {
 }
 
 type Flow struct {
-	tracker       *FlowTracker
-	resourceMu    sync.Mutex
-	closeResource func()
-	closed        bool
-	release       func()
-	lastActivity  atomic.Int64
-	closeOnce     sync.Once
+	tracker         *FlowTracker
+	resourceMu      sync.Mutex
+	closeResource   func()
+	closed          bool
+	release         func()
+	lastActivity    atomic.Int64
+	activityPending atomic.Bool
+	closeOnce       sync.Once
 }
 
 func NewFlowTracker() *FlowTracker { return &FlowTracker{flows: make(map[*Flow]struct{})} }
 
 func (t *FlowTracker) New(release func()) *Flow {
 	f := &Flow{tracker: t, release: release}
-	f.Touch()
+	f.lastActivity.Store(time.Now().UnixNano())
 	t.mu.Lock()
 	t.flows[f] = struct{}{}
 	t.mu.Unlock()
@@ -46,11 +47,19 @@ func (f *Flow) SetCloseResource(closeResource func()) {
 	}
 }
 
-// Touch records successful payload forwarding only.
-func (f *Flow) Touch() { f.lastActivity.Store(time.Now().UnixNano()) }
+// Touch records successful payload forwarding only. The reaper materializes
+// the timestamp, so the forwarding hot path only performs an atomic mark.
+func (f *Flow) Touch() { f.activityPending.Store(true) }
 
 func (f *Flow) idleFor(now time.Time, timeout time.Duration) bool {
-	return timeout > 0 && now.Sub(time.Unix(0, f.lastActivity.Load())) >= timeout
+	if timeout <= 0 {
+		return false
+	}
+	if f.activityPending.Swap(false) {
+		f.lastActivity.Store(now.UnixNano())
+		return false
+	}
+	return now.Sub(time.Unix(0, f.lastActivity.Load())) >= timeout
 }
 
 func (f *Flow) Close() {
@@ -86,10 +95,15 @@ func (t *FlowTracker) Reap(now time.Time, timeout time.Duration) int {
 		}
 	}
 	t.mu.Unlock()
+	reaped := 0
 	for _, f := range flows {
+		if f.activityPending.Load() {
+			continue
+		}
 		f.Close()
+		reaped++
 	}
-	return len(flows)
+	return reaped
 }
 
 func (t *FlowTracker) Close() {

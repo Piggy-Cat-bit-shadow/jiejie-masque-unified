@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/dunglas/httpsfv"
 	"github.com/metacubex/quic-go"
@@ -57,11 +58,20 @@ func (e proxyEntry) Close() error {
 
 // A Proxy is an RFC 9298 CONNECT-UDP proxy.
 type Proxy struct {
-	Policy   TargetPolicy
-	mx       sync.Mutex
-	closed   bool
-	refCount sync.WaitGroup // counter for the Go routines spawned in Upgrade
-	closers  map[io.Closer]struct{}
+	Policy    TargetPolicy
+	mx        sync.Mutex
+	closed    bool
+	refCount  sync.WaitGroup // counter for the Go routines spawned in Upgrade
+	closers   map[io.Closer]struct{}
+	ownedPool *udpOwnedDatagramPool
+	oversized oversizedDatagramLogger
+}
+
+func (s *Proxy) sharedOwnedPoolLocked() *udpOwnedDatagramPool {
+	if s.ownedPool == nil {
+		s.ownedPool = newUDPOwnedDatagramPool()
+	}
+	return s.ownedPool
 }
 
 func errToStatus(err error) int {
@@ -106,6 +116,10 @@ func dnsErrorToProxyStatus(proxyStatus *httpsfv.Item, dnsError *net.DNSError) {
 // Applications may add custom header fields to the response header,
 // but MUST NOT call WriteHeader on the http.ResponseWriter.
 func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
+	return s.ProxyContext(context.Background(), w, r, flow)
+}
+
+func (s *Proxy) ProxyContext(ctx context.Context, w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
 	defer flow.Close()
 	s.mx.Lock()
 	if s.closed {
@@ -128,24 +142,14 @@ func (s *Proxy) Proxy(w mh.ResponseWriter, r *ProxyRequest, flow *Flow) error {
 		return err
 	}
 
-	resolved, err := s.Policy.ResolveTarget(context.Background(), "udp", r.Target)
+	conn, err := s.Policy.DialUDP(ctx, r.Target)
 	if err != nil {
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
 			dnsErrorToProxyStatus(&proxyStatus, dnsError)
+		} else {
+			proxyStatus.Params.Add("error", "destination_ip_unroutable")
 		}
-		err = writeProxyStatus(err)
-		w.WriteHeader(errToStatus(err))
-		return err
-	}
-	addr, err := net.ResolveUDPAddr("udp", resolved)
-	if err != nil {
-		w.WriteHeader(errToStatus(err))
-		return err
-	}
-	conn, err := net.DialUDP("udp", nil, addr)
-	if err != nil {
-		proxyStatus.Params.Add("error", "destination_ip_unroutable")
 		err = writeProxyStatus(err)
 		w.WriteHeader(errToStatus(err))
 		return err
@@ -171,6 +175,7 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return net.ErrClosed
 	}
+	ownedPool := s.sharedOwnedPoolLocked()
 
 	str := w.(http3.HTTPStreamer).HTTPStream()
 	entry := proxyEntry{str: str, conn: conn}
@@ -189,7 +194,6 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	w.WriteHeader(http.StatusOK)
 
 	var wg sync.WaitGroup
-	ownedPool := newUDPOwnedDatagramPool()
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -266,7 +270,9 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flo
 		}
 		if n > maxUDPPayloadSize {
 			buffer.Release()
-			log.Printf("dropping UDP packet larger than MTU")
+			if count, ok := s.oversized.Record(time.Now()); ok {
+				log.Printf("CONNECT-UDP dropped oversized UDP datagrams: count=%d", count)
+			}
 			continue
 		}
 		buffer.data[udpContextIDOffset] = 0

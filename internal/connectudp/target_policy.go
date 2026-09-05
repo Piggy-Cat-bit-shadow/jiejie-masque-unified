@@ -12,6 +12,8 @@ import (
 // denied unless an administrator explicitly enables them.
 type TargetPolicy struct {
 	AllowPrivate bool `yaml:"allow_private"`
+	lookupNetIP  func(context.Context, string, string) ([]netip.Addr, error)
+	dialContext  func(context.Context, string, string) (net.Conn, error)
 }
 
 func (p TargetPolicy) allow(addr netip.Addr) bool {
@@ -43,7 +45,11 @@ func (p TargetPolicy) ResolveTargets(ctx context.Context, target string) ([]stri
 		}
 		return []string{net.JoinHostPort(ip.String(), port)}, nil
 	}
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	lookup := p.lookupNetIP
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupNetIP
+	}
+	ips, err := lookup(ctx, "ip", host)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +76,9 @@ func (p TargetPolicy) ResolveTarget(ctx context.Context, network, target string)
 // DialTCP races at most four already-validated addresses. No hostname reaches
 // net.Dialer, preserving exactly-once DNS resolution and policy enforcement.
 func (p TargetPolicy) DialTCP(ctx context.Context, target string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	addresses, err := p.ResolveTargets(ctx, target)
 	if err != nil {
 		return nil, err
@@ -107,6 +116,47 @@ func (p TargetPolicy) DialTCP(ctx context.Context, target string) (net.Conn, err
 			return r.c, nil
 		}
 		last = r.e
+	}
+	return nil, last
+}
+
+// DialUDP resolves exactly once, validates every result, and then tries at
+// most four validated numeric addresses in resolver order. It deliberately
+// does not race UDP dials: a successful UDP connect does not prove reachability.
+func (p TargetPolicy) DialUDP(ctx context.Context, target string) (*net.UDPConn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	addresses, err := p.ResolveTargets(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if len(addresses) > 4 {
+		addresses = addresses[:4]
+	}
+	dial := p.dialContext
+	if dial == nil {
+		d := &net.Dialer{}
+		dial = d.DialContext
+	}
+	var last error
+	for _, address := range addresses {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		conn, err := dial(ctx, "udp", address)
+		if err == nil {
+			udpConn, ok := conn.(*net.UDPConn)
+			if !ok {
+				_ = conn.Close()
+				return nil, fmt.Errorf("UDP dial returned %T", conn)
+			}
+			return udpConn, nil
+		}
+		last = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 	return nil, last
 }

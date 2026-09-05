@@ -96,6 +96,35 @@ func TestUDPOwnedDatagramPoolUsesAcquireGenerations(t *testing.T) {
 	b.Release()
 }
 
+func TestProxySharesOwnedDatagramPoolAcrossFlows(t *testing.T) {
+	proxy := &Proxy{}
+	proxy.mx.Lock()
+	first := proxy.sharedOwnedPoolLocked()
+	second := proxy.sharedOwnedPoolLocked()
+	proxy.mx.Unlock()
+	if first != second {
+		t.Fatal("proxy created independent owned pools")
+	}
+}
+
+func TestOversizedDatagramLoggerAggregatesForThirtySeconds(t *testing.T) {
+	var logger oversizedDatagramLogger
+	if count, ok := logger.Record(time.Unix(100, 0)); !ok || count != 1 {
+		t.Fatalf("first record = count %d log %v", count, ok)
+	}
+	for i := 1; i <= 10; i++ {
+		if count, ok := logger.Record(time.Unix(int64(100+i), 0)); ok || count != uint64(i+1) {
+			t.Fatalf("burst record %d = count %d log %v", i, count, ok)
+		}
+	}
+	if count, ok := logger.Record(time.Unix(129, 0)); ok || count != 12 {
+		t.Fatalf("boundary record = count %d log %v", count, ok)
+	}
+	if count, ok := logger.Record(time.Unix(130, 0)); !ok || count != 13 {
+		t.Fatalf("next-window record = count %d log %v", count, ok)
+	}
+}
+
 func TestUDPSentinelPreservesOversizedPacketSignal(t *testing.T) {
 	receiver, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero})
 	if err != nil {

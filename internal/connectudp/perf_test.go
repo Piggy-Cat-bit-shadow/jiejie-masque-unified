@@ -8,6 +8,52 @@ import (
 	"testing"
 )
 
+//go:noinline
+func benchmarkFlowTouch(flow *Flow) { flow.Touch() }
+
+func BenchmarkFlowTouch(b *testing.B) {
+	for _, workers := range []int{1, 2, 8} {
+		b.Run(fmt.Sprintf("%d-goroutines", workers), func(b *testing.B) {
+			flow := &Flow{}
+			b.ReportAllocs()
+			b.ResetTimer()
+			var wg sync.WaitGroup
+			for range workers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for range b.N / workers {
+						benchmarkFlowTouch(flow)
+					}
+				}()
+			}
+			wg.Wait()
+		})
+	}
+}
+
+func BenchmarkUDPOwnedDatagramPool(b *testing.B) {
+	for _, workers := range []int{1, 2, 8, 32} {
+		b.Run(fmt.Sprintf("%d-goroutines", workers), func(b *testing.B) {
+			pool := newUDPOwnedDatagramPool()
+			b.ReportAllocs()
+			b.ResetTimer()
+			var wg sync.WaitGroup
+			for range workers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for range b.N / workers {
+						buffer := pool.Acquire()
+						buffer.Release()
+					}
+				}()
+			}
+			wg.Wait()
+		})
+	}
+}
+
 func BenchmarkBuildContextDatagram1500(b *testing.B) {
 	payload := bytes.Repeat([]byte{'x'}, maxUDPPayloadSize)
 	b.ReportAllocs()

@@ -3,6 +3,7 @@ package connectudp
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/metacubex/quic-go"
 )
@@ -48,3 +49,21 @@ func (b *udpOwnedDatagram) Release() {
 }
 
 var _ quic.DatagramPayloadOwner = (*udpOwnedDatagram)(nil)
+
+type oversizedDatagramLogger struct {
+	dropped       atomic.Uint64
+	lastLogSecond atomic.Int64
+}
+
+func (l *oversizedDatagramLogger) Record(now time.Time) (uint64, bool) {
+	count := l.dropped.Add(1)
+	second := now.Unix()
+	last := l.lastLogSecond.Load()
+	if last != 0 && second-last < 30 {
+		return count, false
+	}
+	if l.lastLogSecond.CompareAndSwap(last, second) {
+		return count, true
+	}
+	return count, false
+}
