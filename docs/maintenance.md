@@ -9,6 +9,13 @@ parser contract: client `private-key` is SEC1 EC DER Base64, while the server
 endpoint `public-key` is PKIX/SubjectPublicKeyInfo DER Base64. Client
 authentication `public_key` values remain raw uncompressed P-256 point Base64.
 
+The CONNECT-IP DNS gateway accepts UDP requests up to 4096 bytes and drops
+larger datagrams before upstream relay. The privileged network-prepare helper
+must obtain `server.tunnel_ipv4` through `network-prepare-info`; it must not
+parse YAML itself. Public-repository checks scan all tracked files for
+high-confidence private-key material and scan public documentation/configuration
+for non-example addresses and domains.
+
 ## Exact dependency provenance
 
 ```text

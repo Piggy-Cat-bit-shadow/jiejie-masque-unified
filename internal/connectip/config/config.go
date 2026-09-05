@@ -186,6 +186,14 @@ func (c Config) Validate() error {
 	if _, e := c.ResolvedClients(); e != nil {
 		return e
 	}
+	if c.Server.SessionNat.MaxSessionsPerClient < 0 {
+		return fmt.Errorf("server.session_nat.max_sessions_per_client must not be negative")
+	}
+	if c.Server.SessionNat.ReuseDelay != "" {
+		if reuseDelay, e := time.ParseDuration(c.Server.SessionNat.ReuseDelay); e == nil && reuseDelay < 0 {
+			return fmt.Errorf("server.session_nat.reuse_delay must not be negative")
+		}
+	}
 	if c.DNSGateway.Enabled != nil && *c.DNSGateway.Enabled {
 		if c.DNSGateway.Port < 1024 || c.DNSGateway.Port > 65535 {
 			return fmt.Errorf("dns_gateway.port must be between 1024 and 65535")
@@ -222,7 +230,8 @@ func (c Config) Validate() error {
 		if c.Server.SessionNat.MaxSessions > 4096 {
 			return fmt.Errorf("session_nat.max_sessions must not exceed 4096")
 		}
-		if _, e := time.ParseDuration(c.Server.SessionNat.ReuseDelay); e != nil || c.Server.SessionNat.ReuseDelay == "" {
+		reuseDelay, e := time.ParseDuration(c.Server.SessionNat.ReuseDelay)
+		if e != nil || c.Server.SessionNat.ReuseDelay == "" || reuseDelay < 0 {
 			return fmt.Errorf("invalid session_nat.reuse_delay")
 		}
 		available := uint64(1) << uint(32-pool.Bits())
@@ -265,7 +274,13 @@ func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 	out := make([]ResolvedClient, 0, len(clients))
 	seenIP := map[netip.Addr]bool{}
 	seenKeyIP := map[string]netip.Addr{}
-	for _, cl := range clients {
+	seenNames := map[string]bool{}
+	for i, cl := range clients {
+		effectiveName := EffectiveClientName(i, cl.Name)
+		if seenNames[effectiveName] {
+			return nil, fmt.Errorf("duplicate client identity %q", effectiveName)
+		}
+		seenNames[effectiveName] = true
 		p, e := netip.ParsePrefix(cl.TunnelIPv4)
 		if e != nil || !p.Addr().Is4() || p.Bits() != 32 {
 			return nil, fmt.Errorf("client %q tunnel_ipv4 must be an IPv4 /32", cl.Name)
@@ -296,4 +311,13 @@ func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 		out = append(out, ResolvedClient{Name: cl.Name, PublicKeys: keys, TunnelIPv4: p})
 	}
 	return out, nil
+}
+
+// EffectiveClientName is the in-memory session/quota principal for a client.
+// It intentionally never derives identity from public-key material.
+func EffectiveClientName(index int, configured string) string {
+	if configured != "" {
+		return configured
+	}
+	return fmt.Sprintf("client-%d", index+1)
 }

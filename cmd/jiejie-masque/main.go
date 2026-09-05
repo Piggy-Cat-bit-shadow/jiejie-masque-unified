@@ -78,9 +78,7 @@ func serveConnectIP() error {
 	}
 	for i := range clients {
 		if clients[i].Name == "" {
-			// This name is only an in-memory session key.  Do not derive it
-			// from the client's public key: it can otherwise turn up in logs.
-			clients[i].Name = fmt.Sprintf("client-%d", i+1)
+			clients[i].Name = config.EffectiveClientName(i, clients[i].Name)
 		}
 	}
 	byKey := make(map[string]config.ResolvedClient)

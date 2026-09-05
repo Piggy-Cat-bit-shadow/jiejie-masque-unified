@@ -3,12 +3,14 @@ set -eu
 
 config=/etc/jiejie-masque/connect-ip.yaml
 external_interface=${MASQUE_EXTERNAL_INTERFACE:-}
+masque_bin=${JIEJIE_MASQUE_BIN:-/usr/local/bin/jiejie-masque}
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--config) config=$2; shift 2 ;;
 		--interface) external_interface=$2; shift 2 ;;
-		*) echo "usage: $0 [--config PATH] [--interface IFACE]" >&2; exit 2 ;;
+		--binary) masque_bin=$2; shift 2 ;;
+		*) echo "usage: $0 [--config PATH] [--interface IFACE] [--binary PATH]" >&2; exit 2 ;;
 	esac
 done
 
@@ -20,11 +22,7 @@ if [ -z "$external_interface" ]; then
 	exit 1
 fi
 
-tunnel_ipv4=$(awk '/^server:[[:space:]]*$/{in_server=1; next} in_server && /^[^[:space:]]/{exit} in_server && $1 == "tunnel_ipv4:" { print $2; exit }' "$config")
-if [ -z "$tunnel_ipv4" ]; then
-	echo "jiejie-masque-connect-ip-network-prepare: server.tunnel_ipv4 not found in $config" >&2
-	exit 1
-fi
+tunnel_ipv4=$("$masque_bin" network-prepare-info --config "$config")
 
 nft add table ip masque_lite 2>/dev/null || true
 nft flush table ip masque_lite

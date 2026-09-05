@@ -23,6 +23,8 @@ type Config struct {
 	Concurrency int
 }
 
+const maxUDPRequestSize = 4096
+
 type Gateway struct {
 	udp *net.UDPConn
 	tcp net.Listener
@@ -80,11 +82,17 @@ func validMessage(b []byte) bool { return len(b) >= 12 }
 
 func (g *Gateway) serveUDP() {
 	defer g.wg.Done()
-	buf := make([]byte, 4096)
+	// Read one byte beyond the accepted request size so an oversized UDP
+	// datagram is rejected instead of being forwarded as a truncated DNS packet.
+	buf := make([]byte, maxUDPRequestSize+1)
 	for {
 		n, client, err := g.udp.ReadFromUDP(buf)
 		if err != nil {
 			return
+		}
+		if n > maxUDPRequestSize {
+			g.errors.Add(1)
+			continue
 		}
 		request := append([]byte(nil), buf[:n]...)
 		if !validMessage(request) {
