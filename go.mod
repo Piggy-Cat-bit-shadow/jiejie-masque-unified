@@ -3,7 +3,7 @@ module github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified
 go 1.25.0
 
 require (
-	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260904231547-d9fb020adc06
+	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260905000748-c2e7cf9711ec
 	github.com/dunglas/httpsfv v1.0.2
 	github.com/metacubex/http v0.1.7
 	github.com/metacubex/quic-go v0.61.1-0.20260727080200-2548683b76f4
