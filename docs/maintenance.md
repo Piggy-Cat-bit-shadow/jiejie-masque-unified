@@ -10,8 +10,8 @@ The release candidate pins these self-maintained forks:
 
 ```text
 main            c94b448f4497f5308cf128efa3e1c5f0b515a068
-connect-ip-go   1375f5fae7e5b13f23d834535e10d5ec54d6812b
-quic-go         6674cd87ed8493c20168276d9dd4086263a8e515
+connect-ip-go   9121aa8beb9b7603dba9ba081c042e386414d809
+quic-go         a0f328dde1d9f3d9028e345209fdf74dd9cac3c6
 ```
 
 Never use `go get -u`. An upstream or fork update requires upstream diff
