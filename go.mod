@@ -14,8 +14,8 @@ require (
 )
 
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior. The replacement is
-// a minimal fork at the same upstream commit which exposes native CUBIC for
-// the CONNECT-IP server selector.
+// a project-maintained fork carrying required DATAGRAM/ownership integration
+// plus selected congestion-control support for the CONNECT-IP server.
 replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.0.0-20260905040559-ac11e929d6de
 
 require (

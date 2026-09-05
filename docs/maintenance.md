@@ -2,6 +2,24 @@
 
 Current released version: `v1.0.11`
 
+## Maintenance candidate ledger — post-v1.0.11
+
+| Finding | Classification | Status |
+| --- | --- | --- |
+| F-802 | CONFIRMED CORRECTNESS / OPTIONAL TX GRO | FIXED / CANDIDATE VERIFIED |
+| F-801 | CONFIG / EXAMPLE CORRECTNESS | FIXED / CANDIDATE VERIFIED |
+| DOC-01 | DOCUMENTATION SELF-DESCRIPTION DRIFT | FIXED ON CURRENT BRANCH / FUTURE GATE HARDENED |
+| H-311 | OBSERVABILITY GAP | DEFERRED |
+| H-312 | OPTIONAL IPv6 GSO HYPOTHESIS | DEFERRED / NO CODE CHANGE |
+| S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
+
+F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
+`tun_tx_gro: false` path is unaffected. F-801 removes the stale root example,
+leaving the two mode-specific canonical examples with semantic validation
+coverage. DOC-01 corrects the current-version claim below and hardens the
+future release-document consistency check. H-311, H-312, and S-801 are not
+runtime changes in this batch.
+
 ## v1.0.11 final release provenance
 
 The v1.0.11 annotated tag object is
@@ -124,7 +142,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.10
+current released version:           v1.0.11
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11

@@ -44,8 +44,7 @@ jobs:
             notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
             test -f "$notes"
             grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
-            grep -Fqx "The current maintenance release is \`$GITHUB_REF_NAME\`." README.md
-            grep -Fqx "Current released version: \`$GITHUB_REF_NAME\`" docs/maintenance.md
+            scripts/verify-release-docs.sh "$GITHUB_REF_NAME" .
           else
             build_version=dev
           fi
@@ -92,7 +91,7 @@ jobs:
       - name: Shell check
         run: |
           bash -n scripts/verify-deps.sh
-          bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh
+          bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh scripts/verify-release-docs.sh scripts/verify-release-docs-selftest.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
           bash -n scripts/verify-release-tag.sh scripts/verify-release-tag-selftest.sh
 
@@ -176,6 +175,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           scripts/verify-release-tag.sh "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          scripts/verify-release-docs.sh "$GITHUB_REF_NAME" .
           notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
           test -f "$notes"
           grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
