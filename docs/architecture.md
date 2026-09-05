@@ -1,12 +1,12 @@
-# Architecture and frozen performance boundary
+# 架构与冻结的性能边界
 
-This document describes the v1.0.2 maintenance baseline. Runtime changes are
-reserved for correctness, security, compatibility, ownership, or shutdown
-bugs. Performance speculation is not a change request.
+本文描述项目的维护基线与当前冻结的性能边界。runtime 代码只因 correctness、
+security、compatibility、ownership 或 shutdown bug 修改；没有可复现的生产证据时，
+性能猜测不构成变更请求。
 
-## Services and limits
+## 服务与限制
 
-The binary contains two independent MASQUE services:
+该 binary 包含两个独立的 MASQUE service：
 
 - CONNECT-IP uses HTTP/3 Extended CONNECT, Linux TUN, optional session NAT,
   mTLS, and a tunnel-local DNS gateway.
@@ -14,7 +14,7 @@ The binary contains two independent MASQUE services:
   policy validation, and HTTP Basic authentication. CONNECT-TCP uses the same
   target policy and stream relay.
 
-Frozen queue and buffer invariants:
+冻结的 queue 与 buffer invariant：
 
 | Component | Limit or layout |
 | --- | --- |
@@ -29,7 +29,7 @@ Frozen queue and buffer invariants:
 | CONNECT-UDP Context ID | 1 byte |
 | CONNECT-UDP UDP read area | 1501 bytes |
 
-The production defaults are one-minute flow/session reaping, one-hour idle
+生产默认值包括一分钟 flow/session reaping、一个小时 idle
 timeouts, CONNECT-UDP limits of 256 global and 64 per user, and a 256-packet
 CONNECT-IP outbound queue. The example configs are the compatibility source
 for these defaults.
@@ -49,9 +49,9 @@ classification, and permits more-specific globally reachable exceptions.
 `target_policy.connect_timeout` is one overall deadline covering DNS
 resolution and validated target establishment.
 
-## CONNECT-IP receive and send paths
+## CONNECT-IP 接收与发送路径
 
-The normal receive path is:
+正常接收路径：
 
 ```text
 UDP packetBuffer
@@ -66,13 +66,13 @@ UDP packetBuffer
   -> Release
 ```
 
-The retained budget is 64. Eligible packets 1 through 64 retain their
+retained budget 为 64。前 64 个符合条件的 packet 保留其
 transport backing. When the budget is exhausted, the next eligible packet uses
 an exact-size compact fallback copy and releases the original transport owner
 immediately. A full receive queue drops the packet; it does not turn queue
 overflow into a fallback copy. Normal application payload copying is zero.
 
-The normal send path is:
+正常发送路径：
 
 ```text
 session PacketPool
@@ -86,15 +86,15 @@ session PacketPool
   -> owner Release
 ```
 
-`TrackStream` wires the owned callback into `stateTrackingStream`; the
+`TrackStream` 将 owned callback 接入 `stateTrackingStream`；
 production path does not rely on the legacy synchronous-copy fallback. There
 are zero full payload copies before final QUIC serialization. The final
 `DatagramFrame.Append` copy remains intentional because the current contiguous
 packet, AEAD, header-protection, and GSO path requires it.
 
-## CONNECT-UDP paths and ownership
+## CONNECT-UDP 路径与 ownership
 
-Client to target:
+client 到 target：
 
 ```text
 HTTP/3 DatagramBuffer
@@ -107,7 +107,7 @@ HTTP/3 DatagramBuffer
 Malformed context, unsupported context, oversized payload, write error, and
 successful forwarding all release the received buffer exactly once.
 
-Target to client:
+target 到 client：
 
 ```text
 target UDP socket
@@ -120,7 +120,7 @@ target UDP socket
   -> Proxy-level shared sync.Pool
 ```
 
-The backing layout is:
+backing layout：
 
 ```text
 [0:8]     H3 quarter-stream-ID headroom
@@ -135,14 +135,14 @@ flow remains healthy for the next valid packet. Oversized drops use one
 aggregate log at most every 30 seconds; normal packets do not call `time.Now`
 for this logging path.
 
-The owned pool is shared by all flows of one `Proxy`. `sync.Pool` is a
+同一个 `Proxy` 的所有 flow 共享 owned pool。`sync.Pool` 是
 reusable cache, not a strict global memory bound. Live owned memory is roughly
 the owned buffers queued by each relevant QUIC connection plus one active
 target read per active relay; total live memory scales with concurrent flows
 and connections. Recycled cached memory may remain available to the Go runtime
 until garbage collection.
 
-## Activity, policy, and cancellation
+## Activity、policy 与 cancellation
 
 `Flow.Touch` performs only an atomic activity mark. The one-minute reaper
 coalesces marks and materializes the timestamp. It rechecks activity before
@@ -156,7 +156,7 @@ four validated addresses sequentially; TCP races at most four validated
 numeric addresses and closes losing attempts. Request cancellation stops DNS,
 UDP dial fallback, and TCP dial work.
 
-## TUN offload, congestion, and operations
+## TUN offload、congestion 与运维
 
 TUN offload and TCP TX GRO default to false. UDP GRO/USO is not supported.
 QUIC UDP GSO remains enabled. Congestion controller values are `default` and
@@ -169,7 +169,7 @@ progress, packet forwarding, or remote reachability. The independent host
 network deep probe covers forwarding/TUN/nft-NAT checks at its 30-second
 interval and requires two consecutive failures before becoming fatal.
 
-## Frozen optimization boundary
+## 冻结的优化边界
 
 Measured baseline invariants are:
 

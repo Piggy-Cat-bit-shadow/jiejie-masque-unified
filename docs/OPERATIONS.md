@@ -1,65 +1,235 @@
-# Provider operations
+# jiejie-masque 中文运维手册
 
-## Runtime health and diagnostics
+本文面向第一次部署 jiejie-masque 的 Linux 运维人员。命令、配置字段和
+systemd unit 以仓库当前代码与 `configs/*.example.yaml` 为准；不要从旧博客
+复制已经废弃的字段。
 
-At startup, the QUIC fork reports requested and effective UDP receive/send
-socket buffers when the platform exposes those values. A lower effective value
-is a warning and does not by itself prevent startup. Inspect service logs for
-the requested/effective pair before changing host limits.
+## 1. 适用范围与运行模式
 
-The systemd watchdog and host-network probe have different scopes. The
-watchdog uses `WATCHDOG_USEC / 2` and only proves that the service can schedule
-and send a systemd heartbeat. It does not prove that the QUIC event loop,
-dataplane forwarding, or the remote Internet is healthy. The deep probe runs at
-the configured 30-second interval and checks forwarding, TUN, and nft/NAT
-conditions; two consecutive failures are required before it becomes fatal.
+jiejie-masque 有两个独立运行模式：
 
-Both services use `Type=notify`, `WatchdogSec=30s`, and graceful,
-signal-aware `ServeContext` shutdown. CONNECT-UDP uses `NotifyAccess=main`.
-Readiness is sent only after the listener, QUIC transport, and HTTP/3 server
-are constructed. Do not treat READY or WATCHDOG as a packet-forwarding SLA.
+- `connect-ip`：Linux TUN、P-256 client authentication、Session NAT、tunnel-local DNS。
+- `connect-udp`：RFC 9298 CONNECT-UDP、HTTP/3 DATAGRAM、UDP relay，以及同一服务中的 CONNECT-TCP stream relay。
 
-## Deployment validation experiments
+CONNECT-IP 需要 `CAP_NET_ADMIN` 与 network prepare；CONNECT-UDP 不需要
+`CAP_NET_ADMIN`，也不应获得该 capability。
 
-If production uses a UDP SNI Router, compare a direct UDP backend with the
-router path using the same client, target, payload, and duration. This is a
-deployment variable to validate, not a known repository bottleneck. Similarly,
-compare the supported `default` congestion controller with explicit `cubic`
-only under a controlled, reversible test. The repository does not change the
-default based on theory or an isolated benchmark.
+## 2. 安装
 
-The current release explicitly defers sendmmsg/recvmmsg and UDP batching. A
-future investigation must provide Linux syscall count, CPU, burst, and latency
-evidence without waiting for future packets or changing ownership semantics.
+从 GitHub Releases 下载 Linux amd64 binary，核对 SHA256 后安装：
 
-This release candidate targets roughly 10–20 trusted users and 20–50 devices on a small Linux VPS. These are starting points, not universal tuning values.
+```sh
+chmod +x jiejie-masque-linux-amd64
+sudo install -m 755 jiejie-masque-linux-amd64 /usr/local/bin/jiejie-masque
+sudo install -d -m 700 /etc/jiejie-masque
+```
 
-CONNECT-UDP defaults are 256 active flows globally, 64 per user, one-hour flow idle cleanup, a 10-second handshake timeout, 64 incoming streams, 15-second keepalive, and two-minute QUIC idle timeout. CONNECT-IP defaults are 120 sessions globally, 32 per client, one-hour session idle cleanup, 30-minute shadow-address reuse delay, a 30-second host-network deep-probe interval, and a bounded 256-packet outbound queue. The systemd watchdog is a lightweight runtime heartbeat and is independent of the deep probe; it does not claim to detect arbitrary QUIC or datapath deadlocks. Queue overflow is logged only as an anonymous aggregate count; a stalled client cannot block the global TUN dispatcher. Per-session queue counters (accepted, dequeued, dropped, high-water) are lock-free and intentionally contain no client identity.
+复制对应 example：
 
-CONNECT-UDP and CONNECT-TCP target policy defaults to public, globally
-reachable unicast destinations only. DNS answers are resolved once, filtered
-before dialing, and only validated numeric addresses are passed to the dialer.
-Private, local, documentation, benchmarking, CGNAT, and other non-global
-special-purpose ranges are rejected unless `target_policy.allow_private: true`
-is explicitly enabled. That opt-in permits private/local server-visible
-networks, including loopback, LAN, link-local, CGNAT, and ULA destinations;
-unspecified, multicast, broadcast, reserved, discard-only, and dummy address
-categories remain rejected. `target_policy.connect_timeout` is the overall
-DNS-resolution plus validated-target-dial establishment deadline and defaults
-to 10 seconds; it is not a flow idle or relay lifetime timeout.
+```sh
+sudo install -m 600 configs/connect-ip.example.yaml /etc/jiejie-masque/connect-ip.yaml
+sudo install -m 600 configs/connect-udp.example.yaml /etc/jiejie-masque/connect-udp.yaml
+```
 
-Enabling `target_policy.allow_private` is a deliberate security relaxation for
-trusted deployments and can expose private or local server-visible networks.
-For CONNECT-IP session NAT, a removed shadow address remains unavailable while
-its conntrack cleanup is pending. Cleanup uses a bounded two-worker executor;
-only after the cleanup attempt completes does `reuse_delay` begin, including
-when cleanup reports an error. Service shutdown waits for running cleanup and
-may discard queued cleanup work.
+服务配置和 EnvironmentFile 只允许 service user 或 root 读取：
 
-To compare the bounded handoff under reproducible overload, run `go test -run '^$' -bench BenchmarkQueue -benchmem ./internal/connectip/session`. The controlled-drain benchmark offers eight packets for each logical writer dequeue; the burst-recovery benchmark offers 256 packets then fully drains before the next burst. They report allocation cost, drop rate, and queue high-water without scheduler-dependent sleeps. The 256-packet default is the smallest tested depth that absorbs the recovery burst; use production measurements before increasing it.
+```sh
+sudo chmod 600 /etc/jiejie-masque/*.yaml /etc/jiejie-masque/*.env 2>/dev/null || true
+```
 
-CONNECT-IP DNS defaults to a TCP+UDP gateway on the server tunnel address and port 5353, forwarding only to the VPS-local `127.0.0.1:53` resolver. Keep AdGuard Home listening on that loopback address. The service neither changes kernel BBR/qdisc/sysctl settings nor exposes DNS on a public address.
+## 3. 生成 server 与 client key
 
-Edit users only through `auth.users` and `password_env`; do not store passwords in YAML. Add or remove CONNECT-IP clients through `clients`, using generated public keys. Before every restart, run `jiejie-masque check-config --config PATH`, then use `systemctl restart jiejie-masque-connect-ip` or `systemctl restart jiejie-masque-connect-udp`.
+生成 CONNECT-IP server certificate/private key：
 
-Inspect resource use with `systemctl show SERVICE -p MemoryCurrent -p MemoryPeak -p TasksCurrent`, open listeners with `ss -Huanp`, and file descriptors with `ls /proc/$(systemctl show -p MainPID --value SERVICE)/fd | wc -l`. Confirm the deployed build with `jiejie-masque --version`. Roll back by restoring the previous verified binary and SHA256, checking config, then restarting the affected service.
+```sh
+sudo install -d -m 700 /etc/jiejie-masque/connect-ip
+jiejie-masque server-keygen \
+  --cert /etc/jiejie-masque/connect-ip/server.crt \
+  --key /etc/jiejie-masque/connect-ip/server.key
+sudo chmod 600 /etc/jiejie-masque/connect-ip/server.key
+```
+
+生成 client P-256 key：
+
+```sh
+jiejie-masque keygen
+```
+
+把输出的 client public key 放进 `client.public_keys` 或命名的 `clients` 条目，
+把 private key 安全保存给客户端。不要把真实 private key 写进 README、YAML
+或公开 issue。
+
+## 4. CONNECT-IP
+
+从 `configs/connect-ip.example.yaml` 开始。必须核对：
+
+- `listen`、TLS certificate/key 和 QUIC stateless reset key path。
+- `server.tunnel_ipv4`、`server.mtu` 与 client tunnel address。
+- `host_network.external_interface`；留空时程序根据 default route 自动检测。
+- `server.session_nat` 的 pool 必须位于 server network 内，且不能包含 server tunnel address。
+- `dns_gateway.upstream` 默认是 `127.0.0.1:53`，gateway 只绑定 tunnel address。
+
+示例默认保持 `tun_offload: false`、`tun_tx_gro: false`。如果开启 TX GRO，
+必须同时开启 `tun_offload`，并先在 Linux 环境验证。v1.0.10 candidate 修复了
+TCP TX GRO 的 PSH boundary correctness，但默认 offload 行为没有改变。
+
+检查配置：
+
+```sh
+jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
+```
+
+### network prepare
+
+CONNECT-IP network prepare helper 的 external interface 优先级是：
+
+```text
+CLI --interface > MASQUE_EXTERNAL_INTERFACE > YAML host_network.external_interface > default-route auto-detect
+```
+
+helper 通过 binary 的 `network-prepare-info` 获取 tunnel prefix/interface，不自行
+解析 YAML。手工运行前确认 `nft`、`/proc/sys/net/ipv4/ip_forward` 和目标 interface：
+
+```sh
+sudo /usr/local/libexec/jiejie-masque-connect-ip-network-prepare \
+  --config /etc/jiejie-masque/connect-ip.yaml
+```
+
+## 5. CONNECT-UDP 与 CONNECT-TCP
+
+从 `configs/connect-udp.example.yaml` 开始：
+
+- `public_authority` 必须是客户端实际使用的 authority。
+- `tls.cert` / `tls.key` 必须存在并匹配。
+- 使用 `auth.users` 与 `password_env`，不要把 password 直接写入 YAML。
+- `target_policy.allow_private` 默认 `false`，只允许 globally reachable unicast。
+- `limits.max_active_flows` 默认 256，单用户默认 64，idle timeout 默认 1h。
+
+公网服务保持：
+
+```yaml
+auth:
+  allow_unauthenticated: false
+```
+
+CONNECT-TCP 与 CONNECT-UDP 共用 HTTP/3 listener、认证和 TargetPolicy。client
+request EOF 会转为 target `CloseWrite`，response 方向继续工作，保留 TCP
+half-close 语义。
+
+检查配置：
+
+```sh
+jiejie-masque check-config --config /etc/jiejie-masque/connect-udp.yaml
+```
+
+## 6. Mihomo 配置生成
+
+```sh
+jiejie-masque mihomo-config \
+  --config /etc/jiejie-masque/connect-ip.yaml \
+  --server vpn.example.com \
+  --port 443 \
+  --private-key BASE64_CLIENT_PRIVATE_KEY \
+  --name MASQUE
+```
+
+生成器会根据 server certificate 导出 endpoint public key，并在 DNS gateway
+启用时生成 `remote-dns-resolve` 与 `udp://<tunnel-gateway>:5353`。
+
+密钥格式必须区分：
+
+| 用途 | 格式 |
+| --- | --- |
+| client `private-key` | SEC1 EC DER Base64 |
+| server endpoint `public-key` | PKIX / SubjectPublicKeyInfo DER Base64 |
+| client authentication `public_key` | raw uncompressed P-256 point Base64 |
+
+不要把这三种 Base64 互换。Mihomo 的 inner MIPS/`bbr3` 和 outer `bbr` 是生成器
+当前输出的一部分；不同网络路径的表现应自行 A/B，不代表本项目对所有链路的性能承诺。
+
+## 7. DNS gateway
+
+CONNECT-IP DNS gateway 同时提供 UDP 与 TCP，监听 server tunnel address 的
+5353 端口，向本机 `127.0.0.1:53` 转发。UDP request 最大 4096 bytes；DNS-over-TCP
+保持 downstream connection，可处理 sequential 和 pipelined length-prefixed query，
+并按顺序返回结果。它不会监听公网地址，也不会回退到公共 DNS resolver。
+
+部署前确认本机 resolver（例如 AdGuard Home）确实监听 `127.0.0.1:53`：
+
+```sh
+ss -Hlunpt | grep ':53'
+```
+
+## 8. systemd
+
+仓库提供两个 unit：
+
+- `jiejie-masque-connect-ip.service`：`User=masque-lite`，拥有 `CAP_NET_ADMIN`，执行 network prepare。
+- `jiejie-masque-connect-udp.service`：`User=masque`，无 `CAP_NET_ADMIN`。
+
+安装、检查并启动：
+
+```sh
+sudo install -m 644 contrib/jiejie-masque-connect-ip.service /etc/systemd/system/
+sudo install -m 644 contrib/jiejie-masque-connect-udp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jiejie-masque-connect-ip.service
+sudo systemctl status jiejie-masque-connect-ip.service
+```
+
+按实际启用的 mode 选择一个 service，不要同时让两个 service 争用同一 listener。
+unit 使用 `Type=notify`、`WatchdogSec=30s` 和 graceful shutdown。watchdog 只证明
+进程能调度并发送 heartbeat，不等于 QUIC event loop、数据面或公网可达性正常；
+host-network deep probe 是另一套 30 秒检查，连续两次失败才会变成 fatal。
+
+## 9. 健康检查与诊断
+
+```sh
+sudo journalctl -u jiejie-masque-connect-ip.service -n 200 --no-pager
+sudo systemctl show jiejie-masque-connect-ip.service -p MemoryCurrent -p MemoryPeak -p TasksCurrent
+sudo ss -Huanp
+sudo jiejie-masque --version
+```
+
+检查时区分 runtime watchdog、listener readiness、TUN/NAT deep probe 和客户端
+实际转发。日志会避免记录 client identity、tunnel address、relay destination
+和 resolved next-hop 等隐私信息。
+
+## 10. 升级与回滚
+
+升级步骤：
+
+1. 下载新 binary 与 checksum，并核对 SHA256。
+2. 备份当前 binary 和 YAML/EnvironmentFile。
+3. 运行 `check-config`。
+4. 原子替换 binary，重启对应 service。
+5. 查看 `systemctl status`、journal 和实际客户端流量。
+
+回滚时恢复上一个已验证 binary，重新运行 `check-config` 后重启。不要自动修改
+配置；CONNECT-IP client 会 pin server public key，升级时不要无意更换 server
+certificate/private key。
+
+## 11. 故障排查
+
+| 现象 | 优先检查 |
+| --- | --- |
+| CONNECT-IP 能连但网页打不开 | tunnel DNS、`127.0.0.1:53`、IPv4 forwarding、NAT/interface |
+| 完全无法建立 | UDP/443、防火墙、TLS certificate、client public key |
+| CONNECT-IP 无流量 | TUN、network prepare、`host_network.external_interface`、nft 规则 |
+| CONNECT-UDP 返回 401 | username、`password_env`、EnvironmentFile 权限和内容 |
+| 配置启动失败 | `jiejie-masque check-config --config PATH`、字段拼写和文件权限 |
+| systemd 反复重启 | `journalctl`、ExecStartPre、watchdog/deep probe、端口占用 |
+| DNS 请求失败 | 本机 `127.0.0.1:53` listener、gateway port 5353、UDP/TCP resolver |
+
+## 12. 安全与边界
+
+不要把 CONNECT-UDP unauthenticated mode 暴露到公网；不要把 DNS gateway 暴露
+到公网；不要给 CONNECT-UDP service 增加 `CAP_NET_ADMIN`。`allow_private: true`
+会放宽目标地址策略，只在可信网络使用。
+
+Session NAT cleanup 使用 bounded two-worker executor，cleanup pending 地址不会
+立即复用。F-302/F-404 仍需要真实 Linux/VPS reproduction；本手册不把 deferred
+finding 描述成已解决问题。
+
+当前正式 release 仍是 v1.0.9；v1.0.10 处于 candidate/documentation 阶段，
+尚未创建 tag，也尚未部署 production。
