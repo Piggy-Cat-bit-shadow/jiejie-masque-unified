@@ -21,6 +21,16 @@ func valid(b []byte) (int, int, bool) {
 }
 func RewriteSourceIPv4(b []byte, old, new netip.Addr) bool      { return rewrite(b, old, new, true) }
 func RewriteDestinationIPv4(b []byte, old, new netip.Addr) bool { return rewrite(b, old, new, false) }
+
+func icmpCarriesIPv4Quote(typ byte) bool {
+	switch typ {
+	case 3, 4, 5, 11, 12: // unreachable, source quench, redirect, time exceeded, parameter problem
+		return true
+	default:
+		return false
+	}
+}
+
 func TranslateICMP(b []byte, visible, shadow netip.Addr, toKernel bool) bool {
 	ihl, total, ok := valid(b)
 	if !ok || b[9] != 1 || total < ihl+8 {
@@ -36,6 +46,19 @@ func TranslateICMP(b []byte, visible, shadow netip.Addr, toKernel bool) bool {
 		}
 	} else if !rewrite(b, old, new, false) {
 		return false
+	}
+	fragment := binary.BigEndian.Uint16(b[6:8])
+	if fragment&0x2000 != 0 || fragment&0x1fff != 0 {
+		// A fragmented outer packet may not contain a complete ICMP message.
+		// Translate only the outer IPv4 address and leave the fragment payload
+		// and ICMP checksum untouched.
+		checksumIPv4(b[:ihl])
+		return true
+	}
+	if !icmpCarriesIPv4Quote(b[ihl]) {
+		// Informational ICMP payload is opaque; it is not a quoted IPv4 packet.
+		checksumIPv4(b[:ihl])
+		return true
 	}
 	quote := b[ihl+8 : total]
 	if len(quote) >= 20 && quote[0]>>4 == 4 {

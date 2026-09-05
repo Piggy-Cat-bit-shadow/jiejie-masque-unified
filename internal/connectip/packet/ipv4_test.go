@@ -154,12 +154,79 @@ func TestICMPMessageTypes(t *testing.T) {
 		copy(b[12:16], netip.MustParseAddr("8.8.8.8").AsSlice())
 		copy(b[16:20], shadow.AsSlice())
 		b[20], b[21] = typ, 0
+		binary.BigEndian.PutUint16(b[22:24], 0)
+		binary.BigEndian.PutUint16(b[22:24], checksum(b[20:]))
+		beforeBody := append([]byte(nil), b[20:]...)
 		if !TranslateICMP(b, old, shadow, false) {
 			t.Fatalf("type %d translation failed", typ)
 		}
 		if d, _ := Destination(b); d != old || checksum(b[:20]) != 0 || checksum(b[20:]) != 0 {
-			t.Fatalf("type %d checksum/address invalid", typ)
+			t.Fatalf("type %d checksum/address invalid: dst=%s ip=%#x icmp=%#x", typ, d, checksum(b[:20]), checksum(b[20:]))
 		}
+		if typ == 0 && string(b[20:]) != string(beforeBody) {
+			t.Fatalf("echo reply body changed")
+		}
+	}
+}
+
+func TestICMPEchoPayloadIsOpaque(t *testing.T) {
+	old := netip.MustParseAddr("10.200.0.2")
+	shadow := netip.MustParseAddr("10.200.0.128")
+	b := make([]byte, 20+8+16)
+	b[0], b[9] = 0x45, 1
+	binary.BigEndian.PutUint16(b[2:4], uint16(len(b)))
+	copy(b[12:16], netip.MustParseAddr("8.8.8.8").AsSlice())
+	copy(b[16:20], shadow.AsSlice())
+	b[20], b[21] = 8, 0 // echo request
+	copy(b[28:], []byte{0x45, 0, 0, 20, 10, 200, 0, 128, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 1, 2})
+	binary.BigEndian.PutUint16(b[22:24], checksum(b[20:]))
+	before := append([]byte(nil), b[28:]...)
+	if !TranslateICMP(b, old, shadow, false) {
+		t.Fatal("ICMP echo translation failed")
+	}
+	if got, _ := Destination(b); got != old {
+		t.Fatalf("echo destination = %s, want %s", got, old)
+	}
+	if string(b[28:]) != string(before) {
+		t.Fatal("echo payload was modified as a quoted packet")
+	}
+	if checksum(b[:20]) != 0 || checksum(b[20:]) != 0 {
+		t.Fatalf("echo checksums invalid: ip=%#x icmp=%#x", checksum(b[:20]), checksum(b[20:]))
+	}
+}
+
+func TestTranslateICMPFragmentsPreservesPayload(t *testing.T) {
+	old := netip.MustParseAddr("10.200.0.2")
+	shadow := netip.MustParseAddr("10.200.0.128")
+	for _, tc := range []struct {
+		name  string
+		field uint16
+	}{
+		{name: "non-initial", field: 1},
+		{name: "first-with-more", field: 0x2000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := make([]byte, 20+8)
+			b[0], b[9] = 0x45, 1
+			binary.BigEndian.PutUint16(b[2:4], uint16(len(b)))
+			binary.BigEndian.PutUint16(b[6:8], tc.field)
+			copy(b[16:20], shadow.AsSlice())
+			copy(b[20:], []byte{3, 4, 0x12, 0x34, 0x45, 0x67, 0x89, 0xab})
+			payload := append([]byte(nil), b[20:]...)
+			checksumIPv4(b[:20])
+			if !TranslateICMP(b, old, shadow, false) {
+				t.Fatal("fragment translation failed")
+			}
+			if got, _ := Destination(b); got != old {
+				t.Fatalf("fragment destination = %s, want %s", got, old)
+			}
+			if string(b[20:]) != string(payload) {
+				t.Fatal("fragment payload was modified")
+			}
+			if checksum(b[:20]) != 0 {
+				t.Fatal("fragment IPv4 checksum invalid")
+			}
+		})
 	}
 }
 
