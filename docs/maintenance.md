@@ -245,6 +245,12 @@ are unchanged. F-404 remains deferred pending real Linux/VPS conntrack
 reproduction. The corrected remote-object validator is being carried into the
 v1.0.5 release attempt.
 
+The v1.0.5 annotated tag was then created from the first validator-hotfix
+candidate, but its workflow stopped before tests/build because the build
+metadata step did not receive `GH_TOKEN` for the GitHub API call. No GitHub
+Release or substituted artifact was created, and v1.0.5 remains immutable.
+The token wiring fix is being carried into the v1.0.6 release attempt.
+
 ## v1.0.4 candidate — maintenance batch 1
 
 This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config

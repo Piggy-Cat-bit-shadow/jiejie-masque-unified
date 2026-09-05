@@ -26,6 +26,12 @@ No CONNECT-IP or CONNECT-UDP dataplane architecture was redesigned.
 v1.0.4 was not released. Its annotated tag remains as an immutable, tag-only
 failed release-attempt marker after the workflow stopped before tests/build.
 
+This v1.0.5 candidate was also not released: the first remote-object
+validator workflow stopped before tests/build because its build metadata step
+was missing `GH_TOKEN`. Its annotated tag remains immutable and no artifact
+was substituted. The token wiring correction is carried into the next release
+attempt.
+
 ## Deferred finding
 
 F-404 remains `REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING`. H-305 remains
