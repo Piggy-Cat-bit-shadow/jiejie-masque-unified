@@ -228,7 +228,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+          release_json=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets)
           local_size=$(stat -c '%s' dist/jiejie-masque-linux-amd64)
           local_sha=$(sha256sum dist/jiejie-masque-linux-amd64 | awk '{print $1}')
           remote_size=$(jq -r '.assets[] | select(.name == "jiejie-masque-linux-amd64") | .size' <<<"$release_json")
