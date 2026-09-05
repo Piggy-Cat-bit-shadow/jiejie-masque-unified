@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,6 +20,7 @@ type Device struct {
 	offload    bool
 	txGRO      bool
 	txGROBuf   []byte
+	txGROMu    sync.Mutex
 	readBuffer [65545]byte
 }
 

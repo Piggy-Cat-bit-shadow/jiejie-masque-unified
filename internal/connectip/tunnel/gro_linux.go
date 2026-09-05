@@ -37,7 +37,8 @@ func tcpGROMetaFor(p []byte) (tcpGROMeta, bool) {
 	m.v6 = p[0]>>4 == 6
 	if !m.v6 {
 		m.ipLen = int(p[0]&15) * 4
-		if m.ipLen < 20 || m.ipLen > len(p) || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || p[9] != unix.IPPROTO_TCP || p[6]&0x3f != 0 {
+		fragment := binary.BigEndian.Uint16(p[6:8])
+		if m.ipLen < 20 || m.ipLen > len(p) || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || p[9] != unix.IPPROTO_TCP || fragment&0x2000 != 0 || fragment&0x1fff != 0 {
 			return m, false
 		}
 		// IPv4 options are not TX-GRO candidates. Their semantics are not
@@ -118,6 +119,8 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 		}
 		return total, nil
 	}
+	d.txGROMu.Lock()
+	defer d.txGROMu.Unlock()
 	if d.txGROBuf == nil {
 		d.txGROBuf = make([]byte, virtioNetHdrLen+65535)
 	}

@@ -5,6 +5,7 @@ package tunnel
 import (
 	"encoding/binary"
 	"os"
+	"sync"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -195,5 +196,97 @@ func TestTXGRORejectsIPv4Options(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTXGROFragmentFieldSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field uint16
+		want  bool
+	}{
+		{name: "unfragmented", field: 0, want: true},
+		{name: "df", field: 0x4000, want: true},
+		{name: "offset-low-byte", field: 1, want: false},
+		{name: "offset-high-bits", field: 0x0100, want: false},
+		{name: "more-fragments", field: 0x2000, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := makeTCPv4Segment(1000, 100, false)
+			binary.BigEndian.PutUint16(p[6:8], tc.field)
+			binary.BigEndian.PutUint16(p[10:12], 0)
+			binary.BigEndian.PutUint16(p[10:12], ^checksum(p[:20], 0))
+			_, got := tcpGROMetaFor(p)
+			if got != tc.want {
+				t.Fatalf("fragment field %#x candidate = %t, want %t", tc.field, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTXGROConcurrentWriteBatch(t *testing.T) {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{f: os.NewFile(uintptr(fds[0]), "gro-concurrent"), offload: true, txGRO: true}
+	defer d.Close()
+	defer unix.Close(fds[1])
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, base := range []uint32{1000, 5000} {
+		base := base
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := d.WriteBatch([][]byte{
+				makeTCPv4Segment(base, 100, false),
+				makeTCPv4Segment(base+100, 100, false),
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	outputs := make([][]byte, 0, 2)
+	for len(outputs) < 2 {
+		buf := make([]byte, virtioNetHdrLen+65535)
+		n, err := unix.Read(fds[1], buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs = append(outputs, buf[:n])
+	}
+	seen := map[uint32]bool{}
+	for _, output := range outputs {
+		var h virtioNetHdr
+		if err := h.decode(output); err != nil {
+			t.Fatal(err)
+		}
+		if h.gsoType != unix.VIRTIO_NET_HDR_GSO_TCPV4 || h.gsoSize != 100 || h.hdrLen != 40 {
+			t.Fatalf("concurrent aggregate header = %+v", h)
+		}
+		p := output[virtioNetHdrLen:]
+		if len(p) != 20+20+200 || binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || checksum(p[:20], 0) != 0 {
+			t.Fatalf("corrupt concurrent IPv4 aggregate: len=%d", len(p))
+		}
+		seq := binary.BigEndian.Uint32(p[24:])
+		if seq != 1000 && seq != 5000 {
+			t.Fatalf("unexpected aggregate sequence %d", seq)
+		}
+		seen[seq] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("concurrent batches collapsed or duplicated: seen=%v", seen)
 	}
 }
