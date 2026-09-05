@@ -17,6 +17,11 @@ parse YAML itself. Public-repository checks scan all tracked files for
 high-confidence private-key material and scan public documentation/configuration
 for non-example addresses and domains.
 
+CONNECT-IP DNS-over-TCP keeps one downstream connection open for sequential or
+pipelined length-prefixed queries, processing them in order. Each query still
+uses its own upstream TCP connection; the existing downstream concurrency and
+timeout bounds remain in force.
+
 CONNECT-UDP/CONNECT-TCP `allow_private: false` follows the IANA
 Special-Purpose Address Registries' `Globally Reachable` semantics, including
 more-specific globally reachable exceptions. IPv4-mapped IPv6 addresses are

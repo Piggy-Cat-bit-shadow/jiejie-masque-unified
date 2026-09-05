@@ -26,10 +26,15 @@ type Config struct {
 const maxUDPRequestSize = 4096
 
 type Gateway struct {
-	udp *net.UDPConn
-	tcp net.Listener
-	cfg Config
-	wg  sync.WaitGroup
+	udp       *net.UDPConn
+	tcp       net.Listener
+	cfg       Config
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	closing   bool
+	clients   map[net.Conn]struct{}
+	closeOnce sync.Once
+	closeErr  error
 
 	queries atomic.Uint64
 	errors  atomic.Uint64
@@ -52,7 +57,7 @@ func Start(cfg Config) (*Gateway, error) {
 		_ = udp.Close()
 		return nil, err
 	}
-	g := &Gateway{udp: udp, tcp: tcp, cfg: cfg}
+	g := &Gateway{udp: udp, tcp: tcp, cfg: cfg, clients: make(map[net.Conn]struct{})}
 	for range cfg.Concurrency {
 		g.wg.Add(1)
 		go g.serveUDP()
@@ -63,16 +68,25 @@ func Start(cfg Config) (*Gateway, error) {
 }
 
 func (g *Gateway) Close() error {
-	err1 := g.udp.Close()
-	err2 := g.tcp.Close()
-	g.wg.Wait()
-	if err1 != nil && !errors.Is(err1, net.ErrClosed) {
-		return err1
-	}
-	if err2 != nil && !errors.Is(err2, net.ErrClosed) {
-		return err2
-	}
-	return nil
+	g.closeOnce.Do(func() {
+		g.mu.Lock()
+		g.closing = true
+		err1 := g.udp.Close()
+		err2 := g.tcp.Close()
+		for conn := range g.clients {
+			_ = conn.Close()
+		}
+		g.mu.Unlock()
+		g.wg.Wait()
+		if err1 != nil && !errors.Is(err1, net.ErrClosed) {
+			g.closeErr = err1
+			return
+		}
+		if err2 != nil && !errors.Is(err2, net.ErrClosed) {
+			g.closeErr = err2
+		}
+	})
+	return g.closeErr
 }
 
 func (g *Gateway) Queries() uint64 { return g.queries.Load() }
@@ -140,11 +154,20 @@ func (g *Gateway) serveTCP() {
 		if err != nil {
 			return
 		}
+		g.mu.Lock()
+		if g.closing {
+			g.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
 		select {
 		case sem <- struct{}{}:
+			g.clients[conn] = struct{}{}
 			g.wg.Add(1)
+			g.mu.Unlock()
 			go func() { defer g.wg.Done(); defer func() { <-sem }(); g.proxyTCP(conn) }()
 		default:
+			g.mu.Unlock()
 			_ = conn.Close()
 			g.errors.Add(1)
 		}
@@ -153,54 +176,101 @@ func (g *Gateway) serveTCP() {
 
 func (g *Gateway) proxyTCP(client net.Conn) {
 	defer client.Close()
-	if err := client.SetDeadline(time.Now().Add(g.cfg.Timeout)); err != nil {
-		return
+	defer g.untrackTCP(client)
+	for {
+		if err := client.SetDeadline(time.Now().Add(g.cfg.Timeout)); err != nil {
+			return
+		}
+		request, readBytes, err := readTCPMessage(client)
+		if err != nil {
+			if readBytes == 0 && isCleanTCPIdleOrEOF(err) {
+				return
+			}
+			g.errors.Add(1)
+			return
+		}
+		response, err := g.exchangeTCP(request)
+		if err != nil {
+			g.errors.Add(1)
+			return
+		}
+		if err = client.SetDeadline(time.Now().Add(g.cfg.Timeout)); err != nil {
+			return
+		}
+		if err = writeTCPMessage(client, response); err != nil {
+			return
+		}
+		g.queries.Add(1)
 	}
-	var length [2]byte
-	if _, err := io.ReadFull(client, length[:]); err != nil {
-		return
-	}
-	n := int(binary.BigEndian.Uint16(length[:]))
-	if n == 0 || n > 65535 {
-		g.errors.Add(1)
-		return
-	}
-	request := make([]byte, n)
-	if _, err := io.ReadFull(client, request); err != nil || !validMessage(request) {
-		g.errors.Add(1)
-		return
-	}
+}
+
+func (g *Gateway) exchangeTCP(request []byte) ([]byte, error) {
 	upstream, err := net.DialTimeout("tcp", g.cfg.Upstream, g.cfg.Timeout)
 	if err != nil {
-		g.errors.Add(1)
-		return
+		return nil, err
 	}
 	defer upstream.Close()
 	if err = upstream.SetDeadline(time.Now().Add(g.cfg.Timeout)); err != nil {
-		return
+		return nil, err
 	}
-	if _, err = upstream.Write(append(length[:], request...)); err != nil {
-		g.errors.Add(1)
-		return
+	if err = writeTCPMessage(upstream, request); err != nil {
+		return nil, err
 	}
-	if _, err = io.ReadFull(upstream, length[:]); err != nil {
-		g.errors.Add(1)
-		return
+	response, _, err := readTCPMessage(upstream)
+	if err != nil {
+		return nil, err
 	}
-	n = int(binary.BigEndian.Uint16(length[:]))
+	return response, nil
+}
+
+func readTCPMessage(conn net.Conn) ([]byte, int, error) {
+	var length [2]byte
+	if n, err := io.ReadFull(conn, length[:]); err != nil {
+		return nil, n, err
+	}
+	n := int(binary.BigEndian.Uint16(length[:]))
 	if n < 12 {
-		g.errors.Add(1)
-		return
+		return nil, len(length), fmt.Errorf("invalid DNS TCP message length %d", n)
 	}
-	response := make([]byte, n)
-	if _, err = io.ReadFull(upstream, response); err != nil {
-		g.errors.Add(1)
-		return
+	message := make([]byte, n)
+	if read, err := io.ReadFull(conn, message); err != nil {
+		return nil, len(length) + read, err
 	}
-	if _, err = client.Write(append(length[:], response...)); err != nil {
-		return
+	return message, len(length) + n, nil
+}
+
+func writeTCPMessage(conn net.Conn, message []byte) error {
+	if !validMessage(message) || len(message) > 65535 {
+		return fmt.Errorf("invalid DNS TCP message length %d", len(message))
 	}
-	g.queries.Add(1)
+	frame := make([]byte, 2+len(message))
+	binary.BigEndian.PutUint16(frame[:2], uint16(len(message)))
+	copy(frame[2:], message)
+	for len(frame) > 0 {
+		n, err := conn.Write(frame)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		frame = frame[n:]
+	}
+	return nil
+}
+
+func isCleanTCPIdleOrEOF(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func (g *Gateway) untrackTCP(conn net.Conn) {
+	g.mu.Lock()
+	delete(g.clients, conn)
+	g.mu.Unlock()
 }
 
 // RunUntilClosed is convenient for callers that own a cancellation context.
