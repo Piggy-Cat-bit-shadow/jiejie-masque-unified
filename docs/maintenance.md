@@ -28,6 +28,22 @@ provides the version and exact commit; the build job produces and validates one
 artifact, and the release job uploads that same artifact without rebuilding.
 Branch and pull-request artifacts are candidate artifacts, not release assets.
 
+## v1.0.10 final release provenance
+
+The v1.0.10 annotated tag object is
+`2240380d78695850fc645785c12c35cc9ea8ea1a` and targets
+`69791767a9e11f3a5b6a7f0ebf8c69e30b372304`. Preparation CI was
+`33973339000`; tag workflow `33973458145` passed all build and release gates.
+The published release is
+https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.10
+with `draft=false` and `prerelease=false`.
+
+The CI artifact and GitHub Release binary are both 8,954,004 bytes with SHA256
+`163a35d5e612ea831d917f27358e5732a3256f9bc44a6e18c18d8c60b408dbca`.
+The checksum file, `RELEASE.txt`, remote asset digest, and byte-for-byte
+comparison all agree. F-601 is FIXED / RELEASED in v1.0.10. The release job
+downloaded the validated CI artifact and did not rebuild it.
+
 ## v1.0.10 release — F-601 and Chinese documentation
 
 F-601 preserves the TCP TX GRO boundary after a segment carrying PSH is
