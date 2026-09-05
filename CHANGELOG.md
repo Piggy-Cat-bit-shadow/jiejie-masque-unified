@@ -3,11 +3,22 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
-## Candidate maintenance
+## v1.0.11
+
+### 修复
 
 - F-701：修复 active UFW 环境下 CONNECT-IP network prepare 未自动放行 TUN
-  `INPUT` / `FORWARD` 的 deployment correctness bug；当前为 `FIXED /
-  CANDIDATE VERIFIED`，不代表 v1.0.10 或正式 release 已改变。
+  `INPUT` / `FORWARD` 的 deployment correctness bug。
+- active UFW 自动配置 tunnel-local DNS 的 UDP/TCP `INPUT` 与 TUN→WAN
+  `FORWARD`，并保留 NAT/MASQUERADE 与 IPv4 forwarding。
+- UFW 规则具备幂等检测，仅清理项目专属 stale rules；UFW inactive/missing
+  不修改，custom firewall 仍由管理员自行集成。
+
+### 运维
+
+- 修复 `session established` 但 TUN 数据面被 UFW 阻断导致网页、测速或 DNS
+  timeout 的部署问题。
+- 这不是 protocol performance improvement，也不声称兼容所有 firewall 实现。
 
 ## v1.0.10
 

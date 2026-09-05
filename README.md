@@ -4,8 +4,8 @@
 > CONNECT-IP、CONNECT-UDP 与 CONNECT-TCP，重点关注协议正确性、可控内存、
 > 生命周期安全和长期可维护性。
 
-The current maintenance release is `v1.0.10`.
-当前正式维护版本：v1.0.10。
+The current maintenance release is `v1.0.11`.
+当前正式维护版本：v1.0.11。
 
 ## 项目简介
 
@@ -141,7 +141,7 @@ CONNECT-IP 与普通应用层 UDP/TCP proxy 不同：它会把客户端 IP packe
 - **Tunnel-local DNS**：`client → TUN (masque0) → tunnel gateway:5353`。目标是 VPS 自身的 tunnel address，属于 `INPUT`，需要允许从 TUN interface 到 tunnel gateway 的 UDP/TCP 5353。
 - **普通 Internet 转发**：`client tunnel IP → TUN → Linux routing → WAN interface`。目标在外部网络，属于 `FORWARD`，需要允许从 TUN interface 到 WAN interface 的转发；NAT/MASQUERADE 不能替代这条 firewall rule。
 
-因此，出现“UDP/443、QUIC/TLS、SNI routing 和 CONNECT-IP session 都正常，但网页、测速或 DNS timeout”时，应同时检查 TUN 的 `INPUT` 和 `FORWARD`，而不只检查 handshake、`ip_forward` 或 NAT。UFW 用户请参阅 [运维手册中的防火墙示例](docs/OPERATIONS.md#8-connect-ip-linux-防火墙与-ufw)。
+因此，出现“UDP/443、QUIC/TLS、SNI routing 和 CONNECT-IP session 都正常，但网页、测速或 DNS timeout”时，应同时检查 TUN 的 `INPUT` 和 `FORWARD`，而不只检查 handshake、`ip_forward` 或 NAT。active UFW 环境下，network prepare 会按实际 tunnel/WAN/DNS 配置自动加入并维护最小权限规则；UFW inactive/missing 或 custom firewall 仍需管理员自行集成。请参阅 [运维手册中的防火墙示例](docs/OPERATIONS.md#8-connect-ip-linux-防火墙与-ufw)。
 
 ## 技术设计与优化
 
@@ -235,8 +235,9 @@ Session NAT 使用 bounded two-worker cleanup executor。shadow address 在 clea
 
 - F-501：FIXED / RELEASED in v1.0.9。
 - F-601：FIXED / RELEASED in v1.0.10。
+- F-701：FIXED / RELEASED in v1.0.11。
 - F-404：REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING。
-- v1.0.10：正式发布，未部署 production。
+- v1.0.11：正式发布，未部署 production。
 - 当前 core dataplane 保持冻结，暂不部署 production。
 
 ## 致谢

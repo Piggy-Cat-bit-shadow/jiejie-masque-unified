@@ -1,8 +1,8 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.10`
+Current released version: `v1.0.11`
 
-## F-701 candidate — CONNECT-IP active-UFW firewall integration
+## F-701 release preparation — CONNECT-IP active-UFW firewall integration
 
 F-701 is a deployment-correctness finding, not a CONNECT-IP protocol or core
 dataplane bug. The privileged network-prepare helper now obtains the canonical
@@ -13,14 +13,16 @@ existing project-owned nft MASQUERADE setup and IPv4 forwarding setup. It adds
 the desired rules first, then removes only stale rules carrying the project's
 private comments; if an add fails, cleanup is not reached and old rules remain.
 UFW is left untouched when unavailable or inactive. Shell and config-query
-tests cover the candidate path.
+tests cover the candidate path. This release-preparation entry targets v1.0.11;
+formal release provenance will be recorded only after the tag workflow succeeds.
 
 | Finding | Classification | Candidate status |
 | --- | --- | --- |
-| F-701 | DEPLOYMENT CORRECTNESS / HOST NETWORK PREPARATION / FIREWALL INTEGRATION | FIXED / CANDIDATE VERIFIED |
+| F-701 | DEPLOYMENT CORRECTNESS / HOST NETWORK PREPARATION / FIREWALL INTEGRATION | FIXED / RELEASE TARGET v1.0.11 |
 
-This candidate does not move, delete, recreate, or modify the v1.0.10 tag or
-release artifacts, and does not change the frozen dataplane or dependency pins.
+This release preparation does not move, delete, recreate, or modify the v1.0.10
+tag or release artifacts, and does not change the frozen dataplane or dependency
+pins.
 
 v1.0.9 runtime correctness fix:
 `66cb3bd1057d93f81bb5858b0eabb7fe865ca251`
