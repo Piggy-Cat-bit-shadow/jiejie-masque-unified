@@ -1,9 +1,12 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.9`
+Current released version: `v1.0.10`
 
 v1.0.9 runtime correctness fix:
 `66cb3bd1057d93f81bb5858b0eabb7fe865ca251`
+
+F-601 runtime fix:
+`e6ceea21360d5a4e0cddfe86719d13774a82d0ca`
 
 v1.0.8 networking/runtime behavior baseline:
 `dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
@@ -25,7 +28,7 @@ provides the version and exact commit; the build job produces and validates one
 artifact, and the release job uploads that same artifact without rebuilding.
 Branch and pull-request artifacts are candidate artifacts, not release assets.
 
-## v1.0.10 candidate — F-601 only
+## v1.0.10 release — F-601 and Chinese documentation
 
 F-601 preserves the TCP TX GRO boundary after a segment carrying PSH is
 absorbed: that segment may remain the final segment of the current aggregate,
@@ -66,7 +69,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.9
+current released version:           v1.0.10
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11

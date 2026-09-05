@@ -3,7 +3,7 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
-## v1.0.10（开发中）
+## v1.0.10
 
 ### 修复
 
@@ -15,9 +15,9 @@ release provenance，不在这里覆盖重写。
 
 - README 改为中文为主，并把深度技术说明放入可展开区。
 - 新增中文安装、配置、systemd、DNS、升级、回滚和故障排查手册。
-- 新增中文版本演进摘要与 v1.0.10 candidate release notes。
+- 新增中文版本演进摘要与 v1.0.10 release notes。
 
-v1.0.10 尚未创建 tag 或 GitHub Release，也未部署 production。
+v1.0.10 已正式发布，但未部署 production。
 
 ## v1.0.9
 

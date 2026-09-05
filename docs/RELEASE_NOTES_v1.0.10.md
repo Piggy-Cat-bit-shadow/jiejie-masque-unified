@@ -1,6 +1,6 @@
 # jiejie-masque v1.0.10
 
-> 开发中，尚未发布。
+> F-601 correctness maintenance 与中文用户文档 release。
 
 ## 修复
 
@@ -18,10 +18,9 @@
 
 ## 兼容性与边界
 
-- `tun_tx_gro` 默认仍为 `false`；本版本不改变默认 offload 行为。
+- `tun_tx_gro` 默认仍为 `false`；默认生产路径此前不受该 optional feature 影响。
 - CONNECT-IP、CONNECT-UDP、CONNECT-TCP、DNS gateway、Session NAT、QUIC、queue、PacketPool
   和 release provenance architecture 没有重新设计。
 - F-404 仍为 `REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING`。
 
-v1.0.10 当前只完成 candidate verification。正式 tag、GitHub Release 和 production deployment
-将在单独的 release-preparation 流程中进行。
+v1.0.10 已通过正式 tag workflow 与 same-artifact release 验证；本次 release 不包含 production deployment。

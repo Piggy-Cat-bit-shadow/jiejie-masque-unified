@@ -4,7 +4,8 @@
 > CONNECT-IP、CONNECT-UDP 与 CONNECT-TCP，重点关注协议正确性、可控内存、
 > 生命周期安全和长期可维护性。
 
-The current maintenance release is `v1.0.9`.
+The current maintenance release is `v1.0.10`.
+当前正式维护版本：v1.0.10。
 
 ## 项目简介
 
@@ -166,7 +167,7 @@ CONNECT-TCP 使用 stream relay 和 TargetPolicy。client request EOF 会对 tar
 <details>
 <summary><strong>点击展开：Linux Offload、GSO 与 GRO</strong></summary>
 
-UDP GSO 保留；TUN offload 与 TCP TX GRO 默认关闭：`tun_offload: false`、`tun_tx_gro: false`。v1.0.10 candidate 修复了可选 TCP TX GRO 在吸收带 PSH 的 segment 后仍继续跨越 PSH 边界聚合的问题。该修复尚未发布为 v1.0.10。
+UDP GSO 保留；TUN offload 与 TCP TX GRO 默认关闭：`tun_offload: false`、`tun_tx_gro: false`。v1.0.10 修复了可选 TCP TX GRO 在吸收带 PSH 的 segment 后仍继续跨越 PSH 边界聚合的问题。
 
 </details>
 
@@ -222,9 +223,9 @@ Session NAT 使用 bounded two-worker cleanup executor。shadow address 在 clea
 ## 当前状态
 
 - F-501：FIXED / RELEASED in v1.0.9。
-- F-601：FIXED / CANDIDATE VERIFIED in current development branch。
+- F-601：FIXED / RELEASED in v1.0.10。
 - F-404：REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING。
-- v1.0.10：开发中，尚未创建 tag 或 GitHub Release。
+- v1.0.10：正式发布，未部署 production。
 - 当前 core dataplane 保持冻结，暂不部署 production。
 
 ## 致谢
