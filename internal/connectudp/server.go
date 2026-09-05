@@ -85,6 +85,12 @@ func ServeContext(ctx context.Context, c Config) error {
 	return serveContext(ctx, c, nil)
 }
 
+// ServeContextReady is like ServeContext and reports readiness only after the
+// listener, QUIC transport, and HTTP/3 server have been constructed.
+func ServeContextReady(ctx context.Context, c Config, ready chan<- string) error {
+	return serveContext(ctx, c, ready)
+}
+
 func serveContext(ctx context.Context, c Config, ready chan<- string) error {
 	return serveContextWithReaper(ctx, c, ready, time.Minute)
 }

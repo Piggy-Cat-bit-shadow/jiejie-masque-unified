@@ -107,7 +107,7 @@ func Load(path string) (Config, error) {
 		c.Server.OutboundQueueSize = 256
 	}
 	if c.HostNetwork.CheckInterval == "" {
-		c.HostNetwork.CheckInterval = "10s"
+		c.HostNetwork.CheckInterval = "30s"
 	}
 	if c.Server.SessionNat.Enabled && c.Server.SessionNat.MaxSessions == 0 {
 		c.Server.SessionNat.MaxSessions = 120
@@ -175,7 +175,7 @@ func (c Config) Validate() error {
 	}
 	checkInterval := c.HostNetwork.CheckInterval
 	if checkInterval == "" {
-		checkInterval = "10s"
+		checkInterval = "30s"
 	}
 	if _, e := time.ParseDuration(checkInterval); e != nil {
 		return fmt.Errorf("invalid host_network.check_interval")

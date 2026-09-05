@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	ipconfig "github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -76,7 +80,25 @@ func main() {
 		if os.Args[1] != "serve" {
 			log.Fatalf("unknown command %q", os.Args[1])
 		}
-		if err := connectudp.Serve(c); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		ready := make(chan string, 1)
+		serveErr := make(chan error, 1)
+		go func() { serveErr <- connectudp.ServeContextReady(ctx, c, ready) }()
+		select {
+		case addr := <-ready:
+			log.Printf("CONNECT-UDP ready on %s", addr)
+			if err := notify.Send("READY=1"); err != nil {
+				log.Printf("systemd notify failed: %v", err)
+			}
+			go runSystemdWatchdog(ctx)
+		case err := <-serveErr:
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		if err := <-serveErr; err != nil {
 			log.Fatal(err)
 		}
 		return

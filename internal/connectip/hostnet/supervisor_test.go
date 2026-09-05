@@ -52,7 +52,7 @@ func TestSupervisorRequiresTwoConsecutiveFailures(t *testing.T) {
 	fatal := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go (Supervisor{Probe: p, Interval: time.Millisecond}).Run(ctx, fatal, nil)
+	go (Supervisor{Probe: p, Interval: time.Millisecond}).Run(ctx, fatal)
 	select {
 	case err := <-fatal:
 		if err == nil {

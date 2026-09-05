@@ -38,7 +38,7 @@ type Supervisor struct {
 	Interval time.Duration
 }
 
-func (s Supervisor) Run(ctx context.Context, fatal chan<- error, watchdog func()) {
+func (s Supervisor) Run(ctx context.Context, fatal chan<- error) {
 	ticker := time.NewTicker(s.Interval)
 	defer ticker.Stop()
 	failures := 0
@@ -49,7 +49,7 @@ func (s Supervisor) Run(ctx context.Context, fatal chan<- error, watchdog func()
 		case <-ticker.C:
 			if err := s.Probe.Check(); err != nil {
 				failures++
-				log.Printf("data-plane unhealthy: %v", err)
+				log.Printf("host-network probe failed (%d/2): %v", failures, err)
 				if failures >= 2 {
 					fatal <- err
 					return
@@ -57,9 +57,6 @@ func (s Supervisor) Run(ctx context.Context, fatal chan<- error, watchdog func()
 				continue
 			}
 			failures = 0
-			if watchdog != nil {
-				watchdog()
-			}
 		}
 	}
 }

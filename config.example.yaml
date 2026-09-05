@@ -12,7 +12,7 @@ quic:
 host_network:
   # Optional; otherwise the default-route interface is detected.
   external_interface: eth0
-  check_interval: 10s
+  check_interval: 30s
 client:
   public_keys: []
   tunnel_ipv4: 10.200.0.2/32

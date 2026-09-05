@@ -58,7 +58,7 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.Server.SessionIdleTimeout != "0" {
 		t.Fatalf("disabled idle timeout = %q", c.Server.SessionIdleTimeout)
 	}
-	if c.HostNetwork.CheckInterval != "10s" {
+	if c.HostNetwork.CheckInterval != "30s" {
 		t.Fatalf("default check interval = %q", c.HostNetwork.CheckInterval)
 	}
 }

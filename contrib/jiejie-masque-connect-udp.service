@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=masque
 Group=masque
 EnvironmentFile=-/etc/jiejie-masque/connect-udp.env
@@ -12,6 +12,8 @@ ExecStartPre=/usr/local/bin/jiejie-masque check-config --config /etc/jiejie-masq
 ExecStart=/usr/local/bin/jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
 LimitNOFILE=65536
 TimeoutStopSec=5s
+WatchdogSec=30s
+NotifyAccess=main
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

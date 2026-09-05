@@ -9,9 +9,9 @@ performance tuning, architecture rewrites, or new zero-copy experiments.
 The release candidate pins these self-maintained forks:
 
 ```text
-main            cadcd1d68a06d2a5df365d0d7a8df11b4b392bfa
-connect-ip-go   9121aa8beb9b7603dba9ba081c042e386414d809
-quic-go         a0f328dde1d9f3d9028e345209fdf74dd9cac3c6
+main            735918cbc73181f84b925ecc11ea10658aa06f3f
+connect-ip-go   1778afbfe8fa31df908cbbe9efe8129ecd5410c7
+quic-go         6d5c3eafe61bd98847d0e018d29ab559e71e06b0
 ```
 
 Never use `go get -u`. An upstream or fork update requires upstream diff

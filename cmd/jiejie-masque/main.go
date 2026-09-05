@@ -22,11 +22,11 @@ import (
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/hostnet"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/notify"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/quicstate"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
 	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
@@ -198,10 +198,11 @@ func serveConnectIP() error {
 		go sessionReaper(appCtx, mgr, idleTimeout)
 	}
 	supervisor := hostnet.Supervisor{Probe: probe, Interval: checkInterval}
-	go supervisor.Run(appCtx, fatal, func() { _ = notify.Send("WATCHDOG=1") })
+	go supervisor.Run(appCtx, fatal)
 	if err := notify.Send("READY=1"); err != nil {
 		log.Printf("systemd notify failed: %v", err)
 	}
+	go runSystemdWatchdog(appCtx)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -229,6 +230,34 @@ func serveConnectIP() error {
 
 func isServerClosed(err error) bool {
 	return errors.Is(err, stdhttp.ErrServerClosed) || errors.Is(err, quic.ErrServerClosed) || errors.Is(err, net.ErrClosed)
+}
+
+// runSystemdWatchdog is deliberately independent of host-network probing. It
+// only proves that this service's runtime can schedule and send a heartbeat;
+// it does not claim that QUIC or the packet datapath is making progress.
+func runSystemdWatchdog(ctx context.Context) {
+	interval, ok := notify.WatchdogInterval()
+	if !ok {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	warned := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := notify.Send("WATCHDOG=1"); err != nil {
+				if !warned {
+					log.Printf("systemd watchdog notify failed: %v", err)
+					warned = true
+				}
+				continue
+			}
+			warned = false
+		}
+	}
 }
 
 func sessionReaper(ctx context.Context, mgr *session.Manager, timeout time.Duration) {
