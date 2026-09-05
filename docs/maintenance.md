@@ -9,7 +9,7 @@ performance tuning, architecture rewrites, or new zero-copy experiments.
 The release candidate pins these self-maintained forks:
 
 ```text
-main            c94b448f4497f5308cf128efa3e1c5f0b515a068
+main            cadcd1d68a06d2a5df365d0d7a8df11b4b392bfa
 connect-ip-go   9121aa8beb9b7603dba9ba081c042e386414d809
 quic-go         a0f328dde1d9f3d9028e345209fdf74dd9cac3c6
 ```
