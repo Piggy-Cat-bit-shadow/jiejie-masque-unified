@@ -44,6 +44,8 @@ jobs:
             notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
             test -f "$notes"
             grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
+            grep -Fqx "The current maintenance release is \`$GITHUB_REF_NAME\`." README.md
+            grep -Fqx "Current released version: \`$GITHUB_REF_NAME\`" docs/maintenance.md
           else
             build_version=dev
           fi

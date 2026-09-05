@@ -1,6 +1,9 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.8`
+Current released version: `v1.0.9`
+
+v1.0.9 runtime correctness fix:
+`66cb3bd1057d93f81bb5858b0eabb7fe865ca251`
 
 v1.0.8 networking/runtime behavior baseline:
 `dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
@@ -193,18 +196,6 @@ the runtime baseline remains frozen.
 | H-305 | MEASURE FIRST |
 | H-306 | PRODUCTION A/B REQUIRED |
 
-## v1.0.9 candidate — F-501 only
-
-F-501 is a confirmed conntrack cleanup result-classification bug. A command
-that exits non-zero with explicit `0 flow entry`/`0 flow entries` output is a
-benign no-op, so cleanup continues from `-s` to `-d`; other command failures
-remain errors. Timeout classification now uses the saved context error before
-the per-command cancel and only treats `context.DeadlineExceeded` as timeout.
-This removes one confirmed source of incomplete cleanup. F-404 remains
-`REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING` and still concerns genuine
-cleanup failure/restart/reuse behavior, not this fixed result-classification
-bug.
-
 F-301's effective CONNECT-UDP admission identity is explicit `Credential.Name`
 when non-empty, otherwise `Username`; both usernames and effective identities
 must be unique. F-303 consumes wrapped `connectip.CloseError` values with
@@ -310,6 +301,20 @@ and is not part of the v1.0.8 tag.
 | F-406 | FIXED |
 | H-305 | MEASURE FIRST |
 | H-306 | PRODUCTION A/B REQUIRED |
+
+## v1.0.9 release preparation — F-501 only
+
+F-501 is a confirmed conntrack cleanup result-classification bug. A command
+that exits non-zero with explicit `0 flow entry`/`0 flow entries` output is a
+benign no-op, so cleanup continues from `-s` to `-d`; other command failures
+remain errors. Timeout classification now uses the saved context error before
+the per-command cancel and only treats `context.DeadlineExceeded` as timeout.
+This removes one confirmed source of incomplete cleanup. F-404 remains
+`REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING` and still concerns genuine
+cleanup failure/restart/reuse behavior, not this fixed result-classification
+bug. F-501 is the only runtime change in this release. F-502 adds a tag-only
+consistency gate requiring README, maintenance, and release-note versions to
+match the tag; the historical v1.0.8 self-description remains immutable.
 
 ## v1.0.4 candidate — maintenance batch 1
 

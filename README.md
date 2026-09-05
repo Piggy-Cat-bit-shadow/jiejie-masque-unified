@@ -5,8 +5,8 @@ Unified single-binary MASQUE server with two independent modes:
 - `connect-ip`: MetaCubeX CONNECT-IP, P-256 mTLS authentication, Linux TUN, session NAT, watchdog and host-network supervision.
 - `connect-udp`: RFC 9298 CONNECT-UDP, HTTP Datagrams (Context ID 0), UDP relay, HTTP Basic authentication, plain HTTP/3 CONNECT, and graceful shutdown.
 
-The current maintenance release is `v1.0.8`. See
-[`docs/architecture.md`](docs/architecture.md) for the canonical data paths,
+The current maintenance release is `v1.0.9`.
+See [`docs/architecture.md`](docs/architecture.md) for the canonical data paths,
 ownership rules, limits, and frozen performance boundary; see
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for deployment validation and
 [`docs/maintenance.md`](docs/maintenance.md) for release gates.
