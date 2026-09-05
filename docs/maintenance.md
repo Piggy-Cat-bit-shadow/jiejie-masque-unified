@@ -1,11 +1,6 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.4`
-
-v1.0.4 networking/runtime behavior baseline:
-`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
-
-The v1.0.4 tag is the authoritative final release commit reference.
+Current released version: `v1.0.3`
 
 v1.0.3 runtime baseline:
 `5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`
@@ -52,7 +47,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.4
+current released version:           v1.0.3
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
@@ -222,12 +217,13 @@ This is a release provenance gap, not a claim that the historical binary was
 corrupt. The v1.0.4 candidate workflow closes this gap through tag-derived
 metadata and same-artifact release upload; v1.0.3 tags and assets are unchanged.
 
-## v1.0.4 final release closure
+## v1.0.4 tag-only failed release attempt
 
-The v1.0.4 release is a post-v1.0.3 correctness, deployment, and release-
-provenance maintenance release. It does not redesign the CONNECT-IP or
-CONNECT-UDP dataplanes. The final tag target is authoritative; it is not
-duplicated here to avoid a self-referential release-preparation commit.
+The v1.0.4 annotated tag was created successfully, but its release workflow
+stopped before tests and build because the local tag-ref validation was
+incompatible with `actions/checkout` tag checkout behavior. No GitHub Release
+was created, no artifact was manually substituted, and the tag remains
+immutable. v1.0.4 is not a released version.
 
 | Finding | Final pre-tag status |
 | --- | --- |
@@ -235,20 +231,19 @@ duplicated here to avoid a self-referential release-preparation commit.
 | F-402 | FIXED |
 | F-403 | FIXED |
 | F-404 | REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING |
-| F-405 | IMPLEMENTED / REAL TAG-PATH VALIDATION PENDING |
+| F-405 | WORKFLOW BUG CONFIRMED; VALIDATION HOTFIX IN `983e283` |
 | F-406 | FIXED |
 | H-305 | MEASURE FIRST |
 | H-306 | PRODUCTION A/B REQUIRED |
 
-The v1.0.4 release notes record the CONNECT-TCP half-close correctness fix,
-CONNECT-IP configuration and interface-precedence fixes, tag-derived
-single-build provenance, the v1.0.3 provenance gap, and the documentation
-alignment. The CONNECT-IP packet dataplane, CONNECT-UDP DATAGRAM path,
+The v1.0.4 release notes contain the intended maintenance scope. The
+CONNECT-IP packet dataplane, CONNECT-UDP DATAGRAM path,
 PacketPool, owned buffers, queues, retained receive budget, final
 serialization copy, GSO, TargetPolicy, DNS Gateway, Session-NAT cleanup
 lifecycle, Mihomo performance profile, SNI Router, and fork dependency SHAs
 are unchanged. F-404 remains deferred pending real Linux/VPS conntrack
-reproduction.
+reproduction. The corrected remote-object validator is being carried into the
+v1.0.5 release attempt.
 
 ## v1.0.4 candidate — maintenance batch 1
 
