@@ -35,6 +35,17 @@ func testReadTCPMessage(t *testing.T, conn net.Conn) []byte {
 	return message
 }
 
+func waitForQueries(t *testing.T, g *Gateway, want uint64) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for g.Queries() != want && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if g.Queries() != want || g.Errors() != 0 {
+		t.Fatalf("queries=%d errors=%d, want %d/0", g.Queries(), g.Errors(), want)
+	}
+}
+
 func gatewayTCPAddress(port int) string { return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) }
 
 func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
@@ -273,9 +284,7 @@ func TestGatewayTCPPersistentSequentialQueries(t *testing.T) {
 			t.Fatalf("response = %x, want %x", got, message)
 		}
 	}
-	if g.Queries() != 3 || g.Errors() != 0 {
-		t.Fatalf("queries=%d errors=%d, want 3/0", g.Queries(), g.Errors())
-	}
+	waitForQueries(t, g, 3)
 }
 
 func TestGatewayTCPPipelinedQueries(t *testing.T) {
@@ -309,9 +318,7 @@ func TestGatewayTCPPipelinedQueries(t *testing.T) {
 			t.Fatalf("response = %x, want %x", got, want)
 		}
 	}
-	if g.Queries() != 3 || g.Errors() != 0 {
-		t.Fatalf("queries=%d errors=%d, want 3/0", g.Queries(), g.Errors())
-	}
+	waitForQueries(t, g, 3)
 }
 
 func TestGatewayTCPMalformedSecondQuery(t *testing.T) {
