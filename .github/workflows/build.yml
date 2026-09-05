@@ -35,12 +35,9 @@ jobs:
           set -euo pipefail
           build_commit=$(git rev-parse HEAD)
           if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
-            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-              echo "invalid release tag: $GITHUB_REF_NAME" >&2
-              exit 1
-            }
-            test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-            test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$build_commit"
+            test "$build_commit" = "$GITHUB_SHA"
+            tag_validation=$(scripts/verify-release-tag.sh "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_SHA")
+            printf '%s\n' "$tag_validation" >> "$GITHUB_STEP_SUMMARY"
             build_version=${GITHUB_REF_NAME#v}
             notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
             test -f "$notes"
@@ -93,6 +90,10 @@ jobs:
           bash -n scripts/verify-deps.sh
           bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/build-release.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
+          bash -n scripts/verify-release-tag.sh scripts/verify-release-tag-selftest.sh
+
+      - name: Release tag validator self-test
+        run: bash scripts/verify-release-tag-selftest.sh
 
       - name: Build Linux amd64
         env:
@@ -167,8 +168,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          scripts/verify-release-tag.sh "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_SHA"
           notes="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
           test -f "$notes"
           grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
