@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
 	"go.yaml.in/yaml/v3"
@@ -60,8 +61,26 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+		path := fs.String("config", "", "configuration file")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		if *path == "" {
+			log.Fatal("--config is required")
+		}
+		c, err := config.Load(*path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if runDoctor(os.Stdout, c, defaultDoctorRuntime()) {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 2 {
-		log.Fatal("usage: jiejie-masque serve|check-config|mihomo-config|network-prepare-info --config PATH")
+		log.Fatal("usage: jiejie-masque serve|check-config|doctor|mihomo-config|network-prepare-info --config PATH")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	path := fs.String("config", "", "configuration file")

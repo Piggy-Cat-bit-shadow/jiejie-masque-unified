@@ -79,6 +79,17 @@ jiejie-masque keygen
 jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
 ```
 
+在 network prepare 和启动服务前，使用下面的只读检查确认运行条件：
+
+```sh
+jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
+```
+
+`doctor` 会检查配置、IPv4 forwarding、`masque0`、external interface、NAT
+MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset key。
+它只执行查询；缺失 reset key 是 WARN（服务首次启动会创建它），UFW 未安装或未启用
+是 SKIP。任何运行必需项失败时会以非零状态退出并输出 `doctor: FAIL`。
+
 ### network prepare
 
 CONNECT-IP network prepare helper 的 external interface 优先级是：

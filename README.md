@@ -122,6 +122,13 @@ jiejie-masque mihomo-config \
 jiejie-masque serve --config /etc/jiejie-masque/connect-udp.yaml
 ```
 
+CONNECT-IP 在启动前可运行只读主机检查；它不会创建 TUN、写 sysctl、变更 nft/UFW
+规则或生成 reset key：
+
+```sh
+jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
+```
+
 生产部署建议使用仓库中的 `contrib/jiejie-masque-connect-ip.service` 或 `contrib/jiejie-masque-connect-udp.service`，并先阅读 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
 ## 客户端与配置提示
