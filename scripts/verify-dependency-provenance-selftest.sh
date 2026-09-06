@@ -8,8 +8,8 @@ fake_go="$root/go"
 cat > "$fake_go" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  *connect-ip-go*) printf '%s\n' 'v0.0.0-20260906025925-bc8c4a81f79f' ;;
-  *metacubex/quic-go*) printf '%s\n' 'v0.61.1-0.20260906020448-5dd41cf92b47' ;;
+  *connect-ip-go*) printf '%s\n' 'v0.0.0-20260906032034-0bb1cc7fc724' ;;
+  *metacubex/quic-go*) printf '%s\n' 'v0.61.1-0.20260906031434-26f04c632d35' ;;
   *) exit 2 ;;
 esac
 EOF
@@ -17,8 +17,8 @@ chmod +x "$fake_go"
 
 write_docs() {
   cat > "$root/docs/maintenance.md" <<'EOF'
-current connect-ip-go version: v0.0.0-20260906025925-bc8c4a81f79f
-current quic-go replacement version: v0.61.1-0.20260906020448-5dd41cf92b47
+current connect-ip-go version: v0.0.0-20260906032034-0bb1cc7fc724
+current quic-go replacement version: v0.61.1-0.20260906031434-26f04c632d35
 historical quic-go SHA: 6d5c3eafe61b
 EOF
 }

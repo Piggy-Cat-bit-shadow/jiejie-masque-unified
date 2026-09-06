@@ -229,14 +229,14 @@ manually; runtime and CI do not fetch IANA.
 current released version:           v1.0.12
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
-connect-ip-go:                     bc8c4a81f79f24710ee1b38380a2cfccb7d477ce
-  pseudo-version:                  v0.0.0-20260906025925-bc8c4a81f79f
-quic-go:                           5dd41cf92b470ba2f8d9daf7be4c9785713bd87c
-  pseudo-version:                  v0.61.1-0.20260906020448-5dd41cf92b47
+connect-ip-go:                     0bb1cc7fc72405d9e0f1bcdab8707f83feca5ff4
+  pseudo-version:                  v0.0.0-20260906032034-0bb1cc7fc724
+quic-go:                           26f04c632d35496e4ca6dd0e6086980559553142
+  pseudo-version:                  v0.61.1-0.20260906031434-26f04c632d35
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
-current connect-ip-go version: v0.0.0-20260906025925-bc8c4a81f79f
-current quic-go replacement version: v0.61.1-0.20260906020448-5dd41cf92b47
+current connect-ip-go version: v0.0.0-20260906032034-0bb1cc7fc724
+current quic-go replacement version: v0.61.1-0.20260906031434-26f04c632d35
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module
@@ -539,5 +539,23 @@ candidate only:
 | F-901 | CONNECT-IP TX-GRO owned nonblocking drain capability gate | FIXED / CANDIDATE VERIFIED |
 | F-902 | IPv4 options full-header checksum migration regression | FIXED / CANDIDATE VERIFIED / WAS RELEASE BLOCKER |
 | F-903 | Legacy H3 prepared-DATAGRAM fallback double processing | FIXED / CANDIDATE VERIFIED |
+
+The v1.0.13 tag and release remain uncreated; production remains untouched.
+
+## PRE-v1.0.13 migration regression repair batch 2
+
+| Finding | Description | Candidate status |
+| --- | --- | --- |
+| F-904 | CONNECT-IP terminal transport close normalization | FIXED / CANDIDATE VERIFIED |
+| F-905 | CONNECT-IP local filesystem replace / clean-clone reproducibility | FIXED / RELEASE BLOCKER CLEARED |
+| F-906 | Dependency-fork public CI source-of-truth correction | VERIFIED / CURRENT FORK CI CLASSIFIED |
+
+The historical fork failures remain recorded: CONNECT-IP runs `34005919904`,
+`34005919763`, and `34005919912` failed at the old `84e7723` candidate; QUIC
+unit `34005926287` and cross-compile `34005926282` passed, while integration
+`34005926280` failed only in the Ubuntu Go 1.26 ECN-disabled MTU assertion and
+lint `34005926330` failed on project-owned formatting/staticcheck issues. The
+current QUIC and CONNECT-IP workflow results are recorded separately from
+MAIN CI and are not collapsed into a single “all forks green” claim.
 
 The v1.0.13 tag and release remain uncreated; production remains untouched.
