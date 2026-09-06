@@ -242,7 +242,7 @@ quic-go:                           b6c72f4e72efb1a668cfa3dd29cf594350d59348
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
 current connect-ip-go version: v0.0.0-20260906041020-e645a82498ea
-current quic-go replacement version: v0.61.1-0.20260906040817-b6c72f4e72ef
+current quic-go replacement version: v0.61.1-0.20260906100346-3f6a4de47295
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module
@@ -547,6 +547,35 @@ candidate only:
 | F-903 | Legacy H3 prepared-DATAGRAM fallback double processing | FIXED / CANDIDATE VERIFIED |
 
 The v1.0.13 tag and release remain uncreated; production remains untouched.
+
+## Final maintenance closure v4 candidate
+
+This post-v1.0.13 candidate does not alter the `v1.0.13` tag, publish a
+release, or deploy a server.
+
+| Finding | Result |
+| --- | --- |
+| H-307 | CONFIRMED / FIXED in the project QUIC fork. A request DATAGRAM arriving before `TrackStream` is retained once per stream for at most one second, with a global bound of 32; registration atomically drains it into the normal stream queue. |
+| F-404 | CONFIRMED / FIXED. A failed shadow-IP conntrack cleanup now permanently quarantines that address for the remaining process lifetime. `CleanupStats.Quarantined` exposes the count. |
+| F-302 | REPRODUCED AS A RESTART-BOUND KERNEL-STATE RISK / DEFERRED. The process-local quarantine deliberately cannot survive a daemon restart; solving it requires a separately designed durable startup/quarantine policy. |
+
+`scripts/reproduce-conntrack-session-reuse.sh f404` and `... f302` build an
+isolated three-namespace topology with veth, nft MASQUERADE, real UDP traffic,
+and conntrack inspection. They require Linux root/CAP_NET_ADMIN and print
+`SKIP` without those prerequisites; they are not part of ordinary Go tests.
+
+The H-307 fork checkpoint is
+`3f6a4de4729516b534a7ae84beeebb5b6f96cc11`
+(`v0.61.1-0.20260906100346-3f6a4de47295`). Its focused deterministic and race
+tests, full fork tests, and main-module module verification are required before
+promotion. `jiejie-masque doctor --config CONFIG` is an explicit read-only
+CONNECT-IP preflight command; it reports PASS/WARN/FAIL/SKIP and never creates
+or changes host state.
+
+Future commits are additionally gated by `scripts/verify-git-metadata.sh` over
+an explicit newly-added revision range (`v1.0.13..HEAD` in CI). Historical Git
+metadata is not scanned or rewritten; both author and committer addresses for
+new commits must use GitHub noreply identities.
 
 ## v3 final dataplane candidate
 
