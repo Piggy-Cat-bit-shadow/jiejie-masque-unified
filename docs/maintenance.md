@@ -1,6 +1,6 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.13`
+Current released version: `v1.0.14`
 
 ## Maintenance candidate ledger — post-v1.0.11
 

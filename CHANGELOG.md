@@ -3,6 +3,30 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
+## v1.0.14
+
+这是一次已验证 userspace dataplane efficiency 与 maintenance/correctness
+closure release；不改变 congestion、MTU、TUN/GRO、DATAGRAM queue 或 retained-RX
+默认值。
+
+- CONNECT-UDP 增加 Linux 有界 `recvmmsg` target→client 读取与 ready-drain /
+  `sendmmsg` client→target 发送，保留 ownership、release 与最终 serialization
+  copy 边界。
+- CONNECT-IP session writer 增加 block-first、有界 ready FIFO drain、capability
+  caching 与低开销 burst bookkeeping；仍逐 packet 调用下层
+  `WritePacketBufferOwned`。
+- 新增严格只读的 CONNECT-IP `doctor`，以及 H-307 early DATAGRAM race 修复：
+  每 stream 一个、每 connection 32 个、最多一秒、duplicate release、atomic
+  `TrackStream` claim 与 close cleanup。
+- F-404 cleanup failure shadow-IP process-lifetime quarantine 与统计、Linux
+  conntrack lifecycle harness、future Git metadata privacy gate 已纳入。
+
+特定跨境高 RTT 生产链路的 field observation 显示：CUBIC 加更充足的 Session
+outbound burst buffer 可缓解 Reno/default + 256 深度下的 overflow feedback loop；
+这不是通用 benchmark 或默认配置变更。F-302 harness 仍是 partial kernel-state
+reproducer，真实 privileged Linux/Surge/production-host validation 未在 release
+automation 中完成。
+
 ## v1.0.13
 
 这是一次 dependency / upstream synchronization 与 migration correctness
