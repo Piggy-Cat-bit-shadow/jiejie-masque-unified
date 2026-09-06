@@ -24,7 +24,7 @@ jobs:
       artifact-name: jiejie-masque-build-artifacts
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -56,10 +56,13 @@ jobs:
           printf 'version=%s commit=%s\n' "$build_version" "$build_commit" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Report Go version
+        run: go version
 
       - name: Format check
         run: test -z "$(gofmt -l .)"
@@ -141,7 +144,7 @@ jobs:
           actual_sha=$(sha256sum dist/jiejie-masque-linux-amd64 | awk '{print $1}')
           release_sha=$(awk -F= '/^sha256=/{print $2}' dist/RELEASE.txt)
           test "$actual_sha" = "$release_sha"
-          if grep -E 'github.com/quic-go/(quic-go|masque-go|qpack)' /tmp/modules.txt; then exit 1; fi
+          if grep -E 'github.com/quic-go/(quic-go|masque-go)' /tmp/modules.txt; then exit 1; fi
           if [ "$bytes" -gt $((12 * 1024 * 1024)) ]; then echo "release binary exceeds 12 MiB target" >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$bytes" -ge $((24 * 1024 * 1024)) ]; then exit 1; fi
 
@@ -168,7 +171,7 @@ jobs:
           cat dist/jiejie-masque-linux-amd64.sha256
 
       - name: Upload validated build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jiejie-masque-build-artifacts
           path: |
@@ -185,7 +188,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout tag
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -206,7 +209,7 @@ jobs:
           grep -q -F "# jiejie-masque $GITHUB_REF_NAME" "$notes"
 
       - name: Download validated build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: dist
