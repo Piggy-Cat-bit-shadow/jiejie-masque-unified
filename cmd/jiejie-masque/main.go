@@ -515,36 +515,115 @@ func tunDispatcherReadLoop(tun tunPacketReader, mgr *session.Manager, packetPool
 		dispatchTUNPacket(pkt, mgr, packetPool)
 	}
 }
+
+const sessionWriterDrainMax = 32
+
+type packetBufferOwnedWriter interface {
+	WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error)
+}
+
+type packetBufferWriter interface {
+	WritePacketBuffer([]byte, int, int) ([]byte, error)
+}
+
+type sessionPacketWriter struct {
+	conn   session.PacketConn
+	owned  packetBufferOwnedWriter
+	buffer packetBufferWriter
+}
+
+func newSessionPacketWriter(conn session.PacketConn) sessionPacketWriter {
+	w := sessionPacketWriter{conn: conn}
+	w.owned, _ = conn.(packetBufferOwnedWriter)
+	if w.owned == nil {
+		w.buffer, _ = conn.(packetBufferWriter)
+	}
+	return w
+}
+
+// write sends one packet and follows the owned-send contract: a nil error
+// transfers ownership; an error leaves it with this writer. connect-ip-go
+// already releases synchronous rejected paths, and PacketBuffer.Release is
+// deliberately idempotent, so releasing here also makes the generic optional
+// interface safe for implementations that leave rejected ownership to us.
+func (w sessionPacketWriter) write(s *session.Session, pkt *session.PacketBuffer) ([]byte, error) {
+	if w.owned != nil {
+		icmp, err := w.owned.WritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
+		if err != nil {
+			s.ReleasePacket(pkt)
+		}
+		return icmp, err
+	}
+	if w.buffer != nil {
+		icmp, err := w.buffer.WritePacketBuffer(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data))
+		s.ReleasePacket(pkt)
+		return icmp, err
+	}
+	icmp, err := w.conn.WritePacket(pkt.Data)
+	s.ReleasePacket(pkt)
+	return icmp, err
+}
+
+type tunPacketWriter interface {
+	Write([]byte) (int, error)
+}
+
+func releaseSessionPackets(s *session.Session, packets []*session.PacketBuffer) {
+	for _, pkt := range packets {
+		s.ReleasePacket(pkt)
+	}
+}
+
+// drainSessionWriterReady appends only packets already queued at the time of
+// the drain. It never waits for future work, keeps FIFO order, and keeps the
+// locally owned burst small enough that cancellation cleanup is bounded.
+func drainSessionWriterReady(first *session.PacketBuffer, outbound <-chan *session.PacketBuffer, batch []*session.PacketBuffer) []*session.PacketBuffer {
+	batch = append(batch[:0], first)
+	for len(batch) < sessionWriterDrainMax {
+		select {
+		case pkt := <-outbound:
+			batch = append(batch, pkt)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
 func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
+	sessionWriterWithTUNWriter(s, tun, mtu)
+}
+
+func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int) {
+	writer := newSessionPacketWriter(s.Conn)
+	batch := make([]*session.PacketBuffer, 0, sessionWriterDrainMax)
 	for {
 		select {
 		case <-s.Ctx.Done():
 			return
 		case pkt := <-s.Outbound:
-			s.RecordDequeued()
-			var icmp []byte
-			var err error
-			owned := false
-			if fast, ok := s.Conn.(interface {
-				WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error)
-			}); ok {
-				icmp, err = fast.WritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
-				owned = true
-			} else if fast, ok := s.Conn.(interface {
-				WritePacketBuffer([]byte, int, int) ([]byte, error)
-			}); ok {
-				icmp, err = fast.WritePacketBuffer(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data))
-			} else {
-				icmp, err = s.Conn.WritePacket(pkt.Data)
+			batch = drainSessionWriterReady(pkt, s.Outbound, batch)
+		}
+		s.RecordDequeuedN(len(batch))
+		successful := 0
+		for i, pkt := range batch {
+			if s.Ctx.Err() != nil {
+				if successful > 0 {
+					s.Touch(time.Now())
+				}
+				releaseSessionPackets(s, batch[i:])
+				return
 			}
-			if !owned {
-				s.ReleasePacket(pkt)
-			}
+			icmp, err := writer.write(s, pkt)
 			if len(icmp) > 0 {
 				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
-					continue
-				}
-				if _, werr := tun.Write(icmp); werr != nil {
+					// Do not let an untranslated response skip error handling for
+					// this packet or disrupt the rest of the burst.
+				} else if _, werr := tun.Write(icmp); werr != nil {
+					if successful > 0 {
+						s.Touch(time.Now())
+					}
+					releaseSessionPackets(s, batch[i+1:])
 					s.SetCloseReason("tun-write-error")
 					log.Printf("session=%d ICMP write failed: %v", s.ID, werr)
 					s.Close()
@@ -552,6 +631,10 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 				}
 			}
 			if err != nil {
+				if successful > 0 {
+					s.Touch(time.Now())
+				}
+				releaseSessionPackets(s, batch[i+1:])
 				if normalSessionError(err, s.Ctx) {
 					return
 				}
@@ -560,8 +643,11 @@ func sessionWriter(s *session.Session, tun *tunnel.Device, mtu int) {
 				s.Close()
 				return
 			}
-			s.Touch(time.Now())
+			successful++
 		}
+		// A drained burst is already-ready work. Its tail timestamp is the
+		// most recent successful activity and avoids a clock read per packet.
+		s.Touch(time.Now())
 	}
 }
 func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) {

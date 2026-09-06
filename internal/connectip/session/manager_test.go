@@ -39,6 +39,17 @@ func TestManagerConcurrentIPsAndTakeover(t *testing.T) {
 	b.Close()
 }
 
+func TestRecordDequeuedNPreservesQueueStatistics(t *testing.T) {
+	s := New(netip.MustParseAddr("10.200.0.2"), "stats", &fakeConn{}, nil)
+	s.RecordDequeued()
+	s.RecordDequeuedN(3)
+	s.RecordDequeuedN(0)
+	if got := s.QueueStats().Dequeued; got != 4 {
+		t.Fatalf("dequeued = %d, want 4", got)
+	}
+	s.Close()
+}
+
 func TestPerClientReservationCapAndRelease(t *testing.T) {
 	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 4, nil)
 	m.SetMaxSessionsPerClient(2)

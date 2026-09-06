@@ -88,6 +88,25 @@ func BenchmarkQueueBurstRecovery(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkRecordDequeued(b *testing.B) {
+	s := New(netip.MustParseAddr("10.0.0.2"), "benchmark", &fakeConn{}, nil)
+	b.Run("per-packet-add", func(b *testing.B) {
+		for b.Loop() {
+			for range 32 {
+				s.RecordDequeued()
+			}
+		}
+		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*32), "ns/packet")
+	})
+	b.Run("add-32", func(b *testing.B) {
+		for b.Loop() {
+			s.RecordDequeuedN(32)
+		}
+		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*32), "ns/packet")
+	})
+	s.Close()
+}
 func itoa(v int) string {
 	if v == 32 {
 		return "32"

@@ -11,6 +11,8 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -95,6 +97,323 @@ type testPacketConn struct{}
 func (testPacketConn) ReadPacket() ([]byte, error)        { return nil, nil }
 func (testPacketConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
 func (testPacketConn) Close() error                       { return nil }
+
+type writerTestConn struct {
+	mu       sync.Mutex
+	writes   [][]byte
+	owners   []connectip.PacketPayloadOwner
+	failAt   int
+	icmpAt   int
+	blockAt  int
+	entered  chan struct{}
+	unblock  chan struct{}
+	closed   atomic.Int32
+	callNext int
+}
+
+func (c *writerTestConn) ReadPacket() ([]byte, error) { return nil, context.Canceled }
+func (c *writerTestConn) Close() error {
+	c.closed.Add(1)
+	return nil
+}
+func (c *writerTestConn) WritePacket(p []byte) ([]byte, error) {
+	return c.write(p, nil)
+}
+func (c *writerTestConn) WritePacketBufferOwned(buf []byte, offset, length int, owner connectip.PacketPayloadOwner) ([]byte, error) {
+	return c.write(buf[offset:offset+length], owner)
+}
+func (c *writerTestConn) write(p []byte, owner connectip.PacketPayloadOwner) ([]byte, error) {
+	c.mu.Lock()
+	c.callNext++
+	call := c.callNext
+	c.writes = append(c.writes, append([]byte(nil), p...))
+	if owner != nil && call != c.failAt {
+		c.owners = append(c.owners, owner)
+	}
+	block := call == c.blockAt
+	entered, unblock := c.entered, c.unblock
+	icmpAt, failAt := c.icmpAt, c.failAt
+	c.mu.Unlock()
+	if block {
+		close(entered)
+		<-unblock
+	}
+	if call == failAt {
+		return nil, errors.New("writer failure")
+	}
+	if call == icmpAt {
+		return []byte{1, 2, 3, 4}, nil
+	}
+	return nil, nil
+}
+func (c *writerTestConn) snapshot() (writes [][]byte, calls int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([][]byte(nil), c.writes...), c.callNext
+}
+func (c *writerTestConn) releaseTransferred() {
+	c.mu.Lock()
+	owners := c.owners
+	c.owners = nil
+	c.mu.Unlock()
+	for _, owner := range owners {
+		owner.Release()
+	}
+}
+
+type writerTestTUN struct {
+	mu     sync.Mutex
+	writes [][]byte
+	err    error
+}
+
+func (t *writerTestTUN) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.writes = append(t.writes, append([]byte(nil), p...))
+	err := t.err
+	t.mu.Unlock()
+	return len(p), err
+}
+
+func writerTestPacket(n byte) *session.PacketBuffer {
+	buf := make([]byte, session.PacketPoolHeadroom+1)
+	buf[session.PacketPoolHeadroom] = n
+	return &session.PacketBuffer{Buffer: buf, Data: buf[session.PacketPoolHeadroom:]}
+}
+
+func newWriterTestSession(ctx context.Context, conn session.PacketConn) *session.Session {
+	return session.NewWithContextAndPacketPoolAndQueue(ctx, netip.MustParseAddr("10.200.0.2"), "writer-test", conn, nil, 256, nil)
+}
+
+func waitWriterCalls(t *testing.T, conn *writerTestConn, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, calls := conn.snapshot(); calls >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_, calls := conn.snapshot()
+	t.Fatalf("writer calls = %d, want at least %d", calls, want)
+}
+
+func TestSessionWriterSinglePacket(t *testing.T) {
+	conn := &writerTestConn{}
+	s := newWriterTestSession(context.Background(), conn)
+	if !s.TryEnqueue(writerTestPacket(1)) {
+		t.Fatal("enqueue failed")
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	waitWriterCalls(t, conn, 1)
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+	if got := s.QueueStats(); got.Enqueued != 1 || got.Dequeued != 1 || got.Depth != 0 {
+		t.Fatalf("queue stats = %+v", got)
+	}
+}
+
+func TestSessionWriterOwnedOwnershipTransfers(t *testing.T) {
+	conn := &writerTestConn{}
+	s := newWriterTestSession(context.Background(), conn)
+	if !s.TryEnqueue(writerTestPacket(1)) {
+		t.Fatal("enqueue failed")
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	waitWriterCalls(t, conn, 1)
+	conn.mu.Lock()
+	owners := len(conn.owners)
+	conn.mu.Unlock()
+	if owners != 1 {
+		t.Fatalf("transferred owners = %d, want 1", owners)
+	}
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+}
+
+func TestSessionWriterDrainsReadyBurstPreservesOrder(t *testing.T) {
+	conn := &writerTestConn{}
+	s := newWriterTestSession(context.Background(), conn)
+	for i := byte(0); i < 16; i++ {
+		if !s.TryEnqueue(writerTestPacket(i)) {
+			t.Fatalf("enqueue %d failed", i)
+		}
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	waitWriterCalls(t, conn, 16)
+	s.Close()
+	<-done
+	writes, _ := conn.snapshot()
+	conn.releaseTransferred()
+	if len(writes) != 16 {
+		t.Fatalf("writes = %d, want 16", len(writes))
+	}
+	for i, p := range writes {
+		if len(p) != 1 || p[0] != byte(i) {
+			t.Fatalf("write %d = %v, want %d", i, p, i)
+		}
+	}
+}
+
+func TestSessionWriterDoesNotWaitForFuturePacket(t *testing.T) {
+	first := writerTestPacket(1)
+	queued := make(chan *session.PacketBuffer, 1)
+	drained := make(chan []*session.PacketBuffer, 1)
+	go func() { drained <- drainSessionWriterReady(first, queued, nil) }()
+	select {
+	case batch := <-drained:
+		if len(batch) != 1 || batch[0] != first {
+			t.Fatalf("initial drain = %#v", batch)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ready drain waited for a future packet")
+	}
+
+	conn := &writerTestConn{}
+	s := newWriterTestSession(context.Background(), conn)
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	if !s.TryEnqueue(writerTestPacket(1)) {
+		t.Fatal("first enqueue failed")
+	}
+	waitWriterCalls(t, conn, 1)
+	if !s.TryEnqueue(writerTestPacket(2)) {
+		t.Fatal("future enqueue failed")
+	}
+	waitWriterCalls(t, conn, 2)
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+}
+
+func TestSessionWriterDrainBound(t *testing.T) {
+	conn := &writerTestConn{blockAt: 1, entered: make(chan struct{}), unblock: make(chan struct{})}
+	s := newWriterTestSession(context.Background(), conn)
+	for i := 0; i < sessionWriterDrainMax*2; i++ {
+		if !s.TryEnqueue(writerTestPacket(byte(i))) {
+			t.Fatalf("enqueue %d failed", i)
+		}
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	<-conn.entered
+	if got := len(s.Outbound); got != sessionWriterDrainMax {
+		t.Fatalf("remaining queue depth = %d, want %d", got, sessionWriterDrainMax)
+	}
+	close(conn.unblock)
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+}
+
+func TestSessionWriterErrorReleasesRemaining(t *testing.T) {
+	for _, failAt := range []int{1, 4, 8} {
+		t.Run(fmt.Sprintf("at-%d", failAt), func(t *testing.T) {
+			conn := &writerTestConn{failAt: failAt}
+			s := newWriterTestSession(context.Background(), conn)
+			before := time.Unix(1, 0)
+			s.Touch(before)
+			for i := 0; i < 8; i++ {
+				if !s.TryEnqueue(writerTestPacket(byte(i))) {
+					t.Fatalf("enqueue %d failed", i)
+				}
+			}
+			done := make(chan struct{})
+			go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+			<-done
+			_, calls := conn.snapshot()
+			conn.releaseTransferred()
+			if calls != failAt {
+				t.Fatalf("write calls = %d, want %d", calls, failAt)
+			}
+			if got := s.QueueStats(); got.Depth != 0 || got.Dequeued != 8 {
+				t.Fatalf("queue stats = %+v", got)
+			}
+			if failAt == 1 && !s.LastActivity().Equal(before) {
+				t.Fatalf("first-packet failure touched session: %v", s.LastActivity())
+			}
+			if failAt > 1 && !s.LastActivity().After(before) {
+				t.Fatalf("successful packets before failure did not refresh activity: %v", s.LastActivity())
+			}
+		})
+	}
+}
+
+func TestSessionWriterICMPResponseAndFailure(t *testing.T) {
+	conn := &writerTestConn{icmpAt: 1}
+	tun := &writerTestTUN{}
+	s := newWriterTestSession(context.Background(), conn)
+	if !s.TryEnqueue(writerTestPacket(1)) || !s.TryEnqueue(writerTestPacket(2)) {
+		t.Fatal("enqueue failed")
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, tun, 1280); close(done) }()
+	waitWriterCalls(t, conn, 2)
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+	if len(tun.writes) != 1 {
+		t.Fatalf("ICMP writes = %d, want 1", len(tun.writes))
+	}
+
+	conn = &writerTestConn{icmpAt: 1}
+	tun = &writerTestTUN{err: errors.New("tun failure")}
+	s = newWriterTestSession(context.Background(), conn)
+	for i := 0; i < 4; i++ {
+		if !s.TryEnqueue(writerTestPacket(byte(i))) {
+			t.Fatal("enqueue failed")
+		}
+	}
+	done = make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, tun, 1280); close(done) }()
+	<-done
+	conn.releaseTransferred()
+	if got := s.CloseReason(); got != "tun-write-error" {
+		t.Fatalf("close reason = %q", got)
+	}
+	if got := s.QueueStats(); got.Depth != 0 || got.Dequeued != 4 {
+		t.Fatalf("queue stats = %+v", got)
+	}
+}
+
+func TestSessionWriterCloseRaceAndContextCancel(t *testing.T) {
+	conn := &writerTestConn{blockAt: 1, entered: make(chan struct{}), unblock: make(chan struct{})}
+	s := newWriterTestSession(context.Background(), conn)
+	for i := 0; i < sessionWriterDrainMax; i++ {
+		if !s.TryEnqueue(writerTestPacket(byte(i))) {
+			t.Fatal("enqueue failed")
+		}
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	<-conn.entered
+	closeDone := make(chan struct{})
+	go func() { s.Close(); close(closeDone) }()
+	<-closeDone
+	close(conn.unblock)
+	<-done
+	conn.releaseTransferred()
+	if _, calls := conn.snapshot(); calls != 1 {
+		t.Fatalf("writes after Close = %d, want 1", calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	conn = &writerTestConn{}
+	s = newWriterTestSession(ctx, conn)
+	done = make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not stop after context cancellation")
+	}
+}
 
 func TestReapIdleSessions(t *testing.T) {
 	m := session.NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 2, nil)

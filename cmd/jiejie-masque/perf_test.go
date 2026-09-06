@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"net/netip"
 	"testing"
+	"time"
 
+	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 )
 
@@ -79,4 +83,79 @@ func BenchmarkTUNBatchSlotRefill(b *testing.B) {
 			}
 		})
 	}
+}
+
+type sessionWriterBenchmarkConn struct{}
+
+func (sessionWriterBenchmarkConn) ReadPacket() ([]byte, error)        { return nil, context.Canceled }
+func (sessionWriterBenchmarkConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
+func (sessionWriterBenchmarkConn) Close() error                       { return nil }
+
+type sessionWriterOwnedBenchmarkConn struct{ sessionWriterBenchmarkConn }
+
+func (sessionWriterOwnedBenchmarkConn) WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error) {
+	return nil, nil
+}
+
+// BenchmarkSessionWriterBurst isolates writer channel/select, queue stats,
+// cached capability selection, and activity clock work for a ready 32-packet burst.
+func BenchmarkSessionWriterBurst(b *testing.B) {
+	const burst = sessionWriterDrainMax
+	for _, mode := range []struct {
+		name  string
+		burst bool
+	}{{name: "per-packet"}, {name: "ready-drain-32", burst: true}} {
+		b.Run(mode.name, func(b *testing.B) {
+			s := session.NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "benchmark", sessionWriterBenchmarkConn{}, nil, burst, nil)
+			packets := make([]*session.PacketBuffer, burst)
+			for i := range packets {
+				packets[i] = writerTestPacket(byte(i))
+			}
+			writer := newSessionPacketWriter(s.Conn)
+			batch := make([]*session.PacketBuffer, 0, burst)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				for _, pkt := range packets {
+					s.Outbound <- pkt
+				}
+				if !mode.burst {
+					for range packets {
+						pkt := <-s.Outbound
+						s.RecordDequeued()
+						_, _ = writer.write(s, pkt)
+						s.Touch(time.Now())
+					}
+				} else {
+					batch = drainSessionWriterReady(<-s.Outbound, s.Outbound, batch)
+					s.RecordDequeuedN(len(batch))
+					for _, pkt := range batch {
+						_, _ = writer.write(s, pkt)
+					}
+					s.Touch(time.Now())
+				}
+			}
+			b.StopTimer()
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*burst), "ns/packet")
+			s.Close()
+		})
+	}
+}
+
+func BenchmarkSessionWriterCapability(b *testing.B) {
+	conn := sessionWriterOwnedBenchmarkConn{}
+	packet := writerTestPacket(1)
+	b.Run("per-packet-assertion", func(b *testing.B) {
+		for b.Loop() {
+			if writer, ok := interface{}(conn).(packetBufferOwnedWriter); ok {
+				_, _ = writer.WritePacketBufferOwned(packet.Buffer, session.PacketPoolHeadroom, len(packet.Data), packet)
+			}
+		}
+	})
+	b.Run("cached", func(b *testing.B) {
+		writer := newSessionPacketWriter(conn)
+		for b.Loop() {
+			_, _ = writer.owned.WritePacketBufferOwned(packet.Buffer, session.PacketPoolHeadroom, len(packet.Data), packet)
+		}
+	})
 }

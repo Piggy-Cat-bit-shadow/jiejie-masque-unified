@@ -117,6 +117,15 @@ func (s *Session) TryEnqueue(packet *PacketBuffer) bool {
 func (s *Session) QueueHighWater() uint64 { return s.queueHigh.Load() }
 func (s *Session) QueueDropped() uint64   { return s.queueDropped.Load() }
 func (s *Session) RecordDequeued()        { s.queueDequeued.Add(1) }
+
+// RecordDequeuedN records packets removed from Outbound in one bounded drain.
+// The queue statistics retain their per-packet meaning while avoiding one
+// atomic operation per packet in a writer burst.
+func (s *Session) RecordDequeuedN(n int) {
+	if n > 0 {
+		s.queueDequeued.Add(uint64(n))
+	}
+}
 func (s *Session) QueueStats() QueueStats {
 	return QueueStats{
 		Capacity: uint64(cap(s.Outbound)), Depth: uint64(len(s.Outbound)),
