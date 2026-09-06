@@ -4,6 +4,7 @@ package connectudp
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -170,5 +171,44 @@ func benchmarkUDPReadBatchLoopback(b *testing.B, retained bool) {
 		if n != 1 {
 			b.Fatalf("received %d datagrams, want 1", n)
 		}
+	}
+}
+
+func BenchmarkUDPWriteBatchLoopback(b *testing.B) {
+	for _, batchSize := range []int{1, udpReadBatchSize} {
+		b.Run(fmt.Sprintf("%d-datagrams", batchSize), func(b *testing.B) {
+			receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = receiver.Close() })
+			sender, err := net.DialUDP("udp4", nil, receiver.LocalAddr().(*net.UDPAddr))
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = sender.Close() })
+			payloads := make([][]byte, batchSize)
+			for i := range payloads {
+				payloads[i] = bytes.Repeat([]byte{byte(i)}, 1200)
+			}
+			buf := make([]byte, 1201)
+			writer := newUDPWriteBatch(sender)
+			b.ReportAllocs()
+			b.SetBytes(int64(batchSize * len(payloads[0])))
+			for b.Loop() {
+				if batchSize == 1 {
+					if _, err := sender.Write(payloads[0]); err != nil {
+						b.Fatal(err)
+					}
+				} else if n, err := writer.Write(payloads); err != nil || n != batchSize {
+					b.Fatalf("batch write = %d, %v", n, err)
+				}
+				for range payloads {
+					if n, _, err := receiver.ReadFromUDP(buf); err != nil || n != len(payloads[0]) {
+						b.Fatalf("read = %d, %v", n, err)
+					}
+				}
+			}
+		})
 	}
 }

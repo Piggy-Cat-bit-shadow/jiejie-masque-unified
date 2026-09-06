@@ -75,7 +75,7 @@ jobs:
 
       - name: Linux dataplane benchmarks
         run: |
-          go test ./internal/connectudp -run '^$' -bench 'BenchmarkUDP(ReadBatchLoopback|ReadSingleLoopback)' -benchtime=250ms -count=3
+          go test ./internal/connectudp -run '^$' -bench 'BenchmarkUDP(ReadBatchLoopback|ReadSingleLoopback|WriteBatchLoopback)' -benchtime=250ms -count=3
           go test ./cmd/jiejie-masque -run '^$' -bench BenchmarkTUNBatchSlotRefill -benchtime=250ms -count=3
 
       - name: TX GRO targeted stress
