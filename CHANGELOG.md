@@ -3,6 +3,29 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
+## v1.0.13
+
+这是一次 dependency / upstream synchronization 与 migration correctness
+closure release，不是性能重写或新的传输架构。
+
+- QUIC foundation 同步到 canonical quic-go 0.62 generation；CONNECT-IP
+  同步到 0.62-compatible generation。
+- Go toolchain 更新到 1.26.8，YAML module 迁移到 `go.yaml.in/yaml/v3 v3.0.5`。
+- GitHub Actions refresh 继续使用完整 SHA pin，并完成 dependency-fork CI
+  validation closure。
+- 保持现有 owned DATAGRAM、retained RX、PacketBuffer、bounded queue 与
+  final serialization architecture。
+- 关闭 F-901 至 F-908 migration findings：TX-GRO capability gate、IPv4
+  full-IHL checksum、prepared-DATAGRAM fallback、terminal close normalization、
+  clean-clone provenance、fork CI attribution、owned DATAGRAM discard release
+  以及 plain CONNECT-IP packet API normalization。
+- QUIC/HTTP3 DATAGRAM、CONNECT-IP、CONNECT-UDP、CONNECT-TCP、Session NAT、DNS
+  Gateway、UFW/network-prepare 与 congestion defaults 的既有行为保持不变。
+
+Real Mihomo 与 Surge client E2E 未在本次 release-validation environment
+执行；early-DATAGRAM pre-track behavior 仍是 test/compatibility gap，未确认
+为 runtime defect。生产未部署。
+
 ## v1.0.12
 
 - F-803 串行化共享 TX-GRO scratch buffer，并增加并发 `WriteBatch` 回归测试。
