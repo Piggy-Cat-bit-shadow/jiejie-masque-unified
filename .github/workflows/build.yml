@@ -28,6 +28,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install release verifier dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Resolve build metadata
         id: metadata
         shell: bash
@@ -88,9 +91,6 @@ jobs:
 
       - name: Dependency provenance
         run: bash scripts/verify-dependency-provenance.sh
-
-      - name: Install privacy scanner
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
