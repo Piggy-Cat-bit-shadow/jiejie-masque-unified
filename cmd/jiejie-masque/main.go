@@ -379,6 +379,10 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 	log.Printf("session=%d closed reason=%s", s.ID, reason)
 }
 
+func txGRODrainEnabled(tunTXGRO, canTryOwned, canTryLegacy bool) bool {
+	return tunTXGRO && (canTryOwned || canTryLegacy)
+}
+
 // legacyPacketConn adapts the v0.62 connect-ip-go ReadPacket buffer API to
 // the session layer's established packet-ownership contract.
 type legacyPacketConn struct{ *connectip.Conn }
@@ -567,7 +571,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 		}
 		batch := [][]byte{pkt}
 		releases := []func(){release}
-		if tun.TXGROEnabled() && canTry {
+		if txGRODrainEnabled(tun.TXGROEnabled(), canTryOwned, canTry) {
 			for len(batch) < tunnel.MaxTXGROBatch {
 				var next []byte
 				var nextRelease func()

@@ -15,7 +15,7 @@ congestion-control support used by this project; it contains no BBR code. See
 
 The CONNECT-IP library is pinned to the MIT-licensed project fork
 `github.com/Piggy-Cat-bit-shadow/connect-ip-go` commit
-`84e772318e92704dbd1f6339a4b2c02e14b2d8c0`, based on upstream
+`bc8c4a81f79f24710ee1b38380a2cfccb7d477ce`, based on upstream
 `github.com/quic-go/connect-ip-go` commit
 `d3a7d1e00045eff63224417142ffeff50c999680`.
 

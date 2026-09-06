@@ -229,13 +229,13 @@ manually; runtime and CI do not fetch IANA.
 current released version:           v1.0.12
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
-connect-ip-go:                     84e772318e92704dbd1f6339a4b2c02e14b2d8c0
-  pseudo-version:                  v0.0.0-20260906020949-84e772318e92
+connect-ip-go:                     bc8c4a81f79f24710ee1b38380a2cfccb7d477ce
+  pseudo-version:                  v0.0.0-20260906025925-bc8c4a81f79f
 quic-go:                           5dd41cf92b470ba2f8d9daf7be4c9785713bd87c
   pseudo-version:                  v0.61.1-0.20260906020448-5dd41cf92b47
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
-current connect-ip-go version: v0.0.0-20260906020949-84e772318e92
+current connect-ip-go version: v0.0.0-20260906025925-bc8c4a81f79f
 current quic-go replacement version: v0.61.1-0.20260906020448-5dd41cf92b47
 ```
 
@@ -527,3 +527,17 @@ supports fixed `tunnel-prefix` and `external-interface` field queries while
 retaining the legacy no-field tunnel-prefix output and the CLI/env/YAML/route
 interface precedence. F-404, release provenance, README drift, H-305, and H-306
 are intentionally outside this batch.
+
+## PRE-v1.0.13 migration regression repair batch 1
+
+These findings were introduced by the post-v1.0.12 dependency migration and
+were not defects in the v1.0.12 release. They are fixed in the unreleased
+candidate only:
+
+| Finding | Description | Candidate status |
+| --- | --- | --- |
+| F-901 | CONNECT-IP TX-GRO owned nonblocking drain capability gate | FIXED / CANDIDATE VERIFIED |
+| F-902 | IPv4 options full-header checksum migration regression | FIXED / CANDIDATE VERIFIED / WAS RELEASE BLOCKER |
+| F-903 | Legacy H3 prepared-DATAGRAM fallback double processing | FIXED / CANDIDATE VERIFIED |
+
+The v1.0.13 tag and release remain uncreated; production remains untouched.

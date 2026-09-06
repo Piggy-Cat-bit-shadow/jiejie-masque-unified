@@ -20,6 +20,26 @@ type scriptedTunReader struct {
 	reads   [][]byte
 }
 
+func TestTXGRODrainCapabilityGate(t *testing.T) {
+	tests := []struct {
+		name                   string
+		enabled, owned, legacy bool
+		want                   bool
+	}{
+		{name: "owned_only", enabled: true, owned: true, want: true},
+		{name: "legacy_only", enabled: true, legacy: true, want: true},
+		{name: "no_capability", enabled: true, want: false},
+		{name: "disabled", owned: true, legacy: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := txGRODrainEnabled(tt.enabled, tt.owned, tt.legacy); got != tt.want {
+				t.Fatalf("txGRODrainEnabled(%t, %t, %t) = %t, want %t", tt.enabled, tt.owned, tt.legacy, got, tt.want)
+			}
+		})
+	}
+}
+
 func (r *scriptedTunReader) Read(dst []byte) (int, error) {
 	r.reads = append(r.reads, dst)
 	if len(r.packets) == 0 {
