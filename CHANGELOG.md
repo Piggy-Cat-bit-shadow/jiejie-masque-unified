@@ -13,6 +13,13 @@ release provenance，不在这里覆盖重写。
 
 本节是维护候选，不是发布；不会创建 v1.0.12 tag 或 release。
 
+- F-807 对齐 CONNECT-IP stateless reset key 默认路径与 packaged systemd
+  `StateDirectory`。
+- F-808 将 F-701 network-prepare fake-command regression 纳入正式 build/tag gate。
+- F-809 拒绝与 runtime 固定 `masque0` 不一致的 TUN interface override。
+- DNS 分片 contract 明确为 MTU-safe UDP、EDNS 约 1232 bytes 与 TCP fallback；不实现
+  fragment tracker。
+
 ## v1.0.11
 
 ### 修复

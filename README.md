@@ -185,7 +185,7 @@ UDP GSO 保留；TUN offload 与 TCP TX GRO 默认关闭：`tun_offload: false`�
 <details>
 <summary><strong>点击展开：DNS gateway 与 TargetPolicy</strong></summary>
 
-CONNECT-IP DNS gateway 同时支持 UDP/TCP，监听 tunnel address 的 5353 端口并转发到 `127.0.0.1:53`。UDP payload 上限为 4096 bytes；DNS-over-TCP 支持 sequential 与 pipelined query，并按顺序返回。CONNECT-UDP/CONNECT-TCP 默认只允许 globally reachable unicast，IPv4-mapped IPv6 会先 unmap，DNS 与 dial 共用默认 10 秒 establishment deadline。
+CONNECT-IP DNS gateway 同时支持 UDP/TCP，监听 tunnel address 的 5353 端口并转发到 `127.0.0.1:53`。gateway 在 IP reassembly 后可接受最大 4096 bytes 的 UDP request，但 tunnel-local UDP admission 以 MTU-safe 报文为准，分片 DNS 不保证可用；客户端应使用约 1232 bytes 的 EDNS UDP payload，较大响应回退 TCP。DNS-over-TCP 支持 sequential 与 pipelined query，并按顺序返回。CONNECT-UDP/CONNECT-TCP 默认只允许 globally reachable unicast，IPv4-mapped IPv6 会先 unmap，DNS 与 dial 共用默认 10 秒 establishment deadline。
 
 </details>
 

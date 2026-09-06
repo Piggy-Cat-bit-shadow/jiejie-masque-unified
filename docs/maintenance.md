@@ -12,10 +12,17 @@ Current released version: `v1.0.11`
 | F-804 | TX GRO IPv4 FRAGMENT MASK | FIXED / CANDIDATE VERIFIED |
 | F-805 | SESSION-NAT ICMP QUOTE CLASSIFICATION | FIXED / CANDIDATE VERIFIED |
 | F-806 | SESSION-NAT FRAGMENTED ICMP SAFETY | FIXED / CANDIDATE VERIFIED |
+| F-807 | CONFIG DEFAULT / SYSTEMD STATE DIRECTORY DRIFT | FIXED / CANDIDATE VERIFIED |
+| F-808 | F-701 REGRESSION CI COVERAGE GAP | FIXED / CANDIDATE VERIFIED |
+| F-809 | UNSUPPORTED TUN INTERFACE ENVIRONMENT OVERRIDE | FIXED / CANDIDATE VERIFIED |
 | CI-02 | DEFAULT-BRANCH / ACTION PIN / PROVENANCE DRIFT | FIXED / CANDIDATE VERIFIED |
 | DOC-01 | DOCUMENTATION SELF-DESCRIPTION DRIFT | FIXED ON CURRENT BRANCH / FUTURE GATE HARDENED |
 | H-311 | OBSERVABILITY GAP | DEFERRED |
 | H-312 | OPTIONAL IPv6 GSO HYPOTHESIS | DEFERRED / NO CODE CHANGE |
+| N-06 | LARGE UDP DNS FRAGMENTATION CONTRACT GAP | DOCUMENTED / DEFERRED |
+| N-09 | RUNTIME UFW DRIFT OBSERVABILITY | OBSERVABILITY GAP / DEFERRED |
+| N-12 | FUTURE GIT METADATA PRIVACY HARDENING | DEFERRED / CURRENT COMMITS NOREPLY |
+| C-01 | VARIABLE SEGMENT-SIZE GRO | TEST FIRST / NO CODE CHANGE |
 | S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
 
 F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
@@ -30,7 +37,17 @@ checksums opaque while translating only the outer address and checksum. DNS
 fragmentation tracking remains deferred; deployments should use EDNS around
 1232 bytes and TCP fallback. CI-02 aligns pull requests with the repository
 default branch, pins official actions, and checks current module provenance.
-H-311, H-312, and broader S-801 hardening remain deferred.
+F-807 aligns the omitted stateless-reset key default with the packaged
+StateDirectory. F-808 runs the fake-command F-701 regression as a build and
+release gate. F-809 rejects non-`masque0` helper overrides before any host
+mutation because runtime creation and probing remain fixed at `masque0`.
+N-06 documents the MTU-safe DNS contract: the gateway may accept up to 4096
+bytes after IP reassembly, but fragmented tunnel-local UDP DNS is not
+guaranteed; use EDNS around 1232 bytes and TCP fallback. No fragment tracker
+is implemented. N-09 remains deferred without runtime UFW supervision. N-12
+is deferred because historical metadata is retained and current commits use
+GitHub noreply identity; no history scan is made a release blocker. H-311,
+H-312, C-01, and broader S-801 hardening remain deferred.
 
 ## v1.0.11 final release provenance
 
@@ -133,8 +150,11 @@ parser contract: client `private-key` is SEC1 EC DER Base64, while the server
 endpoint `public-key` is PKIX/SubjectPublicKeyInfo DER Base64. Client
 authentication `public_key` values remain raw uncompressed P-256 point Base64.
 
-The CONNECT-IP DNS gateway accepts UDP requests up to 4096 bytes and drops
-larger datagrams before upstream relay. The privileged network-prepare helper
+The CONNECT-IP DNS gateway can accept UDP requests up to 4096 bytes after IP
+reassembly and drops larger datagrams before upstream relay. The CONNECT-IP
+local-service admission path is MTU-safe UDP; fragmented tunnel-local UDP DNS
+is not guaranteed. Clients should use EDNS UDP payloads around 1232 bytes and
+TCP fallback for larger DNS messages. The privileged network-prepare helper
 must obtain `server.tunnel_ipv4` through `network-prepare-info`; it must not
 parse YAML itself. Public-repository checks scan all tracked files for
 high-confidence private-key material and scan public documentation/configuration

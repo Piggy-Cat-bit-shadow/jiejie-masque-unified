@@ -150,9 +150,11 @@ jiejie-masque mihomo-config \
 ## 7. DNS gateway
 
 CONNECT-IP DNS gateway 同时提供 UDP 与 TCP，监听 server tunnel address 的
-5353 端口，向本机 `127.0.0.1:53` 转发。UDP request 最大 4096 bytes；DNS-over-TCP
-保持 downstream connection，可处理 sequential 和 pipelined length-prefixed query，
-并按顺序返回结果。它不会监听公网地址，也不会回退到公共 DNS resolver。
+5353 端口，向本机 `127.0.0.1:53` 转发。gateway 在 IP reassembly 后可接受最大 4096
+bytes；但 tunnel-local UDP admission 以 MTU-safe 报文为准，分片 DNS 不保证可用。
+客户端应使用约 1232 bytes 的 EDNS UDP payload，较大响应回退 TCP。DNS-over-TCP
+保持 downstream connection，可处理 sequential 和 pipelined length-prefixed query，并按
+顺序返回结果。它不会监听公网地址，也不会回退到公共 DNS resolver。
 
 部署前确认本机 resolver（例如 AdGuard Home）确实监听 `127.0.0.1:53`：
 
