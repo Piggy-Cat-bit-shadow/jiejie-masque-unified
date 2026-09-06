@@ -14,9 +14,10 @@ import (
 const udpReadBatchSize = 16
 
 type udpReadBatch struct {
-	conn     *ipv4.PacketConn
-	buffers  [udpReadBatchSize]*udpOwnedDatagram
-	messages [udpReadBatchSize]ipv4.Message
+	conn          *ipv4.PacketConn
+	buffers       [udpReadBatchSize]*udpOwnedDatagram
+	messages      [udpReadBatchSize]ipv4.Message
+	messageBuffer [udpReadBatchSize][1][]byte
 }
 
 func newUDPReadBatch(conn *net.UDPConn) *udpReadBatch {
@@ -32,7 +33,8 @@ func (b *udpReadBatch) Read(pool *udpOwnedDatagramPool) (int, error) {
 			b.buffers[i] = pool.Acquire()
 		}
 		buffer := b.buffers[i]
-		b.messages[i].Buffers = [][]byte{buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1]}
+		b.messageBuffer[i][0] = buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1]
+		b.messages[i].Buffers = b.messageBuffer[i][:]
 		b.messages[i].N = 0
 	}
 	return b.conn.ReadBatch(b.messages[:], 0)

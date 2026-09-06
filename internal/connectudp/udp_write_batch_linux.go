@@ -10,9 +10,10 @@ import (
 )
 
 type udpWriteBatch struct {
-	conn     *net.UDPConn
-	packet   *ipv4.PacketConn
-	messages [udpReadBatchSize]ipv4.Message
+	conn          *net.UDPConn
+	packet        *ipv4.PacketConn
+	messages      [udpReadBatchSize]ipv4.Message
+	messageBuffer [udpReadBatchSize][1][]byte
 }
 
 func newUDPWriteBatch(conn *net.UDPConn) *udpWriteBatch {
@@ -38,7 +39,8 @@ func (b *udpWriteBatch) Write(payloads [][]byte) (int, error) {
 		}
 	}
 	for i, payload := range payloads {
-		b.messages[i].Buffers = [][]byte{payload}
+		b.messageBuffer[i][0] = payload
+		b.messages[i].Buffers = b.messageBuffer[i][:]
 	}
 	n, err := b.packet.WriteBatch(b.messages[:len(payloads)], 0)
 	if err == nil && n != len(payloads) {
