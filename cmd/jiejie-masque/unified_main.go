@@ -12,7 +12,7 @@ import (
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type modeEnvelope struct {

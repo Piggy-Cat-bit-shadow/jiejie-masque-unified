@@ -13,7 +13,7 @@ import (
 	"strconv"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func mihomoConfig(args []string) error {

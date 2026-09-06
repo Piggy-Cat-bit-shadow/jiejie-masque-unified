@@ -229,12 +229,14 @@ manually; runtime and CI do not fetch IANA.
 current released version:           v1.0.12
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
-connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
-  pseudo-version:                  v0.0.0-20260905040753-57381910bb5f
-quic-go:                           ac11e929d6decc0eb5f8235259ef82671dad3bca
-  pseudo-version:                  v0.0.0-20260905040559-ac11e929d6de
-current connect-ip-go version: v0.0.0-20260905040753-57381910bb5f
-current quic-go replacement version: v0.0.0-20260905040559-ac11e929d6de
+connect-ip-go:                     84e772318e92704dbd1f6339a4b2c02e14b2d8c0
+  pseudo-version:                  v0.0.0-20260906020949-84e772318e92
+quic-go:                           5dd41cf92b470ba2f8d9daf7be4c9785713bd87c
+  pseudo-version:                  v0.61.1-0.20260906020448-5dd41cf92b47
+canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
+connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
+current connect-ip-go version: v0.0.0-20260906020949-84e772318e92
+current quic-go replacement version: v0.61.1-0.20260906020448-5dd41cf92b47
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module

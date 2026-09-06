@@ -6,11 +6,18 @@ See `go.mod` and `NOTICE` for dependency and license notices. Runtime dependenci
 
 The CONNECT-IP congestion-control selector uses the MIT-licensed
 `github.com/Piggy-Cat-bit-shadow/quic-go` fork at commit
-`ac11e929d6decc0eb5f8235259ef82671dad3bca`, based on MIT-licensed
-`github.com/metacubex/quic-go` commit `2548683b76f4`. The fork exposes only
+`5dd41cf92b470ba2f8d9daf7be4c9785713bd87c`, based on canonical MIT-licensed
+`github.com/quic-go/quic-go` v0.62.0 commit
+`793f74d8e03368c5aded128af6f48d21dbb47f73`. The fork exposes only
 the project-maintained DATAGRAM and ownership integration plus selected
 congestion-control support used by this project; it contains no BBR code. See
 `docs/CONNECT_IP_QUIC_CONGESTION.md` for the upstream and license provenance.
+
+The CONNECT-IP library is pinned to the MIT-licensed project fork
+`github.com/Piggy-Cat-bit-shadow/connect-ip-go` commit
+`84e772318e92704dbd1f6339a4b2c02e14b2d8c0`, based on upstream
+`github.com/quic-go/connect-ip-go` commit
+`d3a7d1e00045eff63224417142ffeff50c999680`.
 
 CONNECT-UDP server-side relay behavior was adapted from the MIT-licensed `github.com/quic-go/masque-go` v0.4.0 reference implementation. The final binary does not depend on that module or on upstream quic-go; it uses the MetaCubeX forked QUIC/HTTP/3 substrate.
 

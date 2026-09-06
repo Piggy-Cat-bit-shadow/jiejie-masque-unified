@@ -12,7 +12,7 @@ import (
 
 	"github.com/metacubex/quic-go"
 	metatls "github.com/metacubex/tls"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
