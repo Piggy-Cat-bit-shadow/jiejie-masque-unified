@@ -241,24 +241,23 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) 
 			}
 			return err
 		}
-		buffers := bufferSlots[:1]
+		buffers := bufferSlots[:0]
 		payloads := payloadSlots[:0]
-		buffers[0] = buffer
 		var pendingErr error
-		for len(buffers) <= udpReadBatchSize {
-			payload, ok, parseErr := parseContextDatagram(buffers[len(buffers)-1].Data)
+		for received := 0; received < udpReadBatchSize; received++ {
+			payload, ok, parseErr := parseContextDatagram(buffer.Data)
 			if parseErr != nil {
+				buffer.Release()
 				pendingErr = parseErr
 				break
 			}
 			if ok {
+				buffers = append(buffers, buffer)
 				payloads = append(payloads, payload)
 			} else {
-				buffers[len(buffers)-1].Release()
-				buffers[len(buffers)-1] = nil
-				buffers = buffers[:len(buffers)-1]
+				buffer.Release()
 			}
-			if len(buffers) == 0 || len(buffers) >= udpReadBatchSize {
+			if received+1 == udpReadBatchSize {
 				break
 			}
 			next, recvErr := str.TryReceiveDatagramBuffer()
@@ -269,7 +268,7 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) 
 				pendingErr = recvErr
 				break
 			}
-			buffers = append(buffers, next)
+			buffer = next
 		}
 		if len(payloads) > 0 {
 			sent, writeErr := writer.Write(payloads)
