@@ -55,6 +55,21 @@ larger segment cannot follow the established size. `tun_tx_gro` remains
 disabled by default, so the default production path is unaffected. C-01 is
 resolved into this finding.
 
+## v1.0.12 aborted pre-release tag attempt
+
+The first pre-release `v1.0.12` annotated tag attempt was intentionally
+aborted before formal artifact generation. The old annotated tag object was
+`f413cd5629eaa340a794681bf72c31f67ef65de8`, targeting
+`237c8be17c9bd7dc313db87cf23561ad68aadf7f`; its tag workflow was
+`34002923431`.
+
+The tag-only metadata validation called `scripts/verify-release-docs.sh`
+before the later privacy-scanner installation step, so the runner did not yet
+have `rg`. The build failed before artifact generation, the release job was
+skipped, no formal artifact was published, and no GitHub Release exists for
+this aborted attempt. The old tag object is retained here as an aborted
+pre-release tag object and is not the formal `v1.0.12` release tag object.
+
 ## v1.0.11 final release provenance
 
 The v1.0.11 annotated tag object is
