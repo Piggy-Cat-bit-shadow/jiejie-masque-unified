@@ -24,6 +24,8 @@ esac
 EOF
 cat >"$tmp/bin/nft" <<'EOF'
 #!/bin/sh
+: "${NFT_LOG:=/dev/null}"
+printf '%s\n' "$*" >> "$NFT_LOG"
 exit 0
 EOF
 cat >"$tmp/bin/ufw" <<'EOF'
@@ -51,7 +53,7 @@ fi
 EOF
 chmod +x "$tmp/bin"/*
 printf '0\n' >"$tmp/ip_forward"
-UFW_LOG="$tmp/ufw.log" \
+UFW_LOG="$tmp/ufw.log" NFT_LOG="$tmp/nft.log" \
 JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" \
 JIEJIE_MASQUE_NFT="$tmp/bin/nft" \
 JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
@@ -68,6 +70,34 @@ if grep -F "delete allow 22/tcp" "$tmp/ufw.log"; then
   exit 1
 fi
 [ "$(cat "$tmp/ip_forward")" = 1 ]
+
+: >"$tmp/ufw-masque0.log"
+printf '1\n' >"$tmp/ip_forward-masque0"
+UFW_LOG="$tmp/ufw-masque0.log" NFT_LOG="$tmp/nft-masque0.log" JIEJIE_MASQUE_TUN_INTERFACE=masque0 \
+JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" \
+JIEJIE_MASQUE_NFT="$tmp/bin/nft" \
+JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-masque0" \
+  "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null
+
+: >"$tmp/ufw-invalid.log"
+: >"$tmp/nft-invalid.log"
+printf '1\n' >"$tmp/ip_forward-invalid"
+if UFW_LOG="$tmp/ufw-invalid.log" NFT_LOG="$tmp/nft-invalid.log" JIEJIE_MASQUE_TUN_INTERFACE=foo0 \
+  JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" \
+  JIEJIE_MASQUE_NFT="$tmp/bin/nft" \
+  JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+  JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-invalid" \
+    "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null 2>"$tmp/invalid.stderr"; then
+  echo 'invalid TUN interface override was accepted' >&2
+  exit 1
+fi
+grep -F 'unsupported CONNECT-IP TUN interface override: runtime uses masque0' "$tmp/invalid.stderr"
+if grep -Eq 'add|allow|delete' "$tmp/ufw-invalid.log" || [ -s "$tmp/nft-invalid.log" ]; then
+  echo 'invalid TUN interface override mutated firewall state' >&2
+  exit 1
+fi
+[ "$(cat "$tmp/ip_forward-invalid")" = 1 ]
 
 : >"$tmp/ufw-inactive.log"
 printf '1\n' >"$tmp/ip_forward-inactive"

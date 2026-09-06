@@ -23,7 +23,12 @@ while [ "$#" -gt 0 ]; do
 		--binary) masque_bin=$2; shift 2 ;;
 		*) echo "usage: $0 [--config PATH] [--interface IFACE] [--binary PATH]" >&2; exit 2 ;;
 	esac
-done
+	done
+
+if [ "$tunnel_interface" != "masque0" ]; then
+	echo "jiejie-masque-connect-ip-network-prepare: unsupported CONNECT-IP TUN interface override: runtime uses masque0" >&2
+	exit 1
+fi
 
 if [ "$external_interface_override" -eq 0 ]; then
 	external_interface=$("$masque_bin" network-prepare-info --config "$config" --field external-interface)
