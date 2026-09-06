@@ -137,6 +137,9 @@ func assertTXGROAggregateDetails(t *testing.T, packet []byte, ipLen, gsoSize, pa
 
 func assertPlainTCPPacket(t *testing.T, packet []byte, ipLen, payloadLen int, firstSeq uint32, v6 bool) {
 	t.Helper()
+	if len(packet) >= virtioNetHdrLen && packet[0] == 0 && packet[1] == 0 {
+		packet = packet[virtioNetHdrLen:]
+	}
 	p := packet
 	if len(p) != ipLen+20+payloadLen || binary.BigEndian.Uint32(p[ipLen+4:]) != firstSeq {
 		t.Fatalf("plain packet length/sequence = %d/%d", len(p), binary.BigEndian.Uint32(p[ipLen+4:]))
