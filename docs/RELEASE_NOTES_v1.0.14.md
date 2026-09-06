@@ -34,7 +34,7 @@ offload/GRO、DATAGRAM queue 或 retained-RX 默认值。
 ## Field observation, not a general benchmark
 
 一次跨境高 RTT 生产链路 A/B 观察到：Reno/default 与 Session outbound queue 256
-时，Mihomo CONNECT-IP 手机 Fast.com 约为 33 Mbps，并出现大量 CONNECT-IP
+时，Mihomo CONNECT-IP 手机上的测速约为 33 Mbps，并出现大量 CONNECT-IP
 outbound queue overflow。切换为 CUBIC 且将该部署的 outbound queue 调至 1024 后，
 观察到约 45 Mbps（约 36%）；CUBIC 但仍为 256 时再次出现严重 overflow，一次日志
 记录 `aggregate_drops=1403`。
