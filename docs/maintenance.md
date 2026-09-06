@@ -15,6 +15,7 @@ Current released version: `v1.0.11`
 | F-807 | CONFIG DEFAULT / SYSTEMD STATE DIRECTORY DRIFT | FIXED / CANDIDATE VERIFIED |
 | F-808 | F-701 REGRESSION CI COVERAGE GAP | FIXED / CANDIDATE VERIFIED |
 | F-809 | UNSUPPORTED TUN INTERFACE ENVIRONMENT OVERRIDE | FIXED / CANDIDATE VERIFIED |
+| F-810 | TCP TX GRO SEGMENT-SIZE ORDERING | FIXED / CANDIDATE VERIFIED |
 | CI-02 | DEFAULT-BRANCH / ACTION PIN / PROVENANCE DRIFT | FIXED / CANDIDATE VERIFIED |
 | DOC-01 | DOCUMENTATION SELF-DESCRIPTION DRIFT | FIXED ON CURRENT BRANCH / FUTURE GATE HARDENED |
 | H-311 | OBSERVABILITY GAP | DEFERRED |
@@ -22,7 +23,7 @@ Current released version: `v1.0.11`
 | N-06 | LARGE UDP DNS FRAGMENTATION CONTRACT GAP | DOCUMENTED / DEFERRED |
 | N-09 | RUNTIME UFW DRIFT OBSERVABILITY | OBSERVABILITY GAP / DEFERRED |
 | N-12 | FUTURE GIT METADATA PRIVACY HARDENING | DEFERRED / CURRENT COMMITS NOREPLY |
-| C-01 | VARIABLE SEGMENT-SIZE GRO | TEST FIRST / NO CODE CHANGE |
+| C-01 | VARIABLE SEGMENT-SIZE GRO | RESOLVED INTO F-810 |
 | S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
 
 F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
@@ -47,7 +48,12 @@ guaranteed; use EDNS around 1232 bytes and TCP fallback. No fragment tracker
 is implemented. N-09 remains deferred without runtime UFW supervision. N-12
 is deferred because historical metadata is retained and current commits use
 GitHub noreply identity; no history scan is made a release blocker. H-311,
-H-312, C-01, and broader S-801 hardening remain deferred.
+H-312, and broader S-801 hardening remain deferred. F-810 closes the confirmed
+optional TX-GRO ordering bug: the first segment establishes `gso_size`, a final
+segment may be shorter, a short segment ends the current ordered group, and a
+larger segment cannot follow the established size. `tun_tx_gro` remains
+disabled by default, so the default production path is unaffected. C-01 is
+resolved into this finding.
 
 ## v1.0.11 final release provenance
 

@@ -19,6 +19,8 @@ release provenance，不在这里覆盖重写。
 - F-809 拒绝与 runtime 固定 `masque0` 不一致的 TUN interface override。
 - DNS 分片 contract 明确为 MTU-safe UDP、EDNS 约 1232 bytes 与 TCP fallback；不实现
   fragment tracker。
+- F-810 修复可选 TCP TX-GRO 的 segment-size ordering：首段确定 `gso_size`，最后一段
+  可为 short segment，但 short 后不再继续聚合更大 segment。
 
 ## v1.0.11
 
