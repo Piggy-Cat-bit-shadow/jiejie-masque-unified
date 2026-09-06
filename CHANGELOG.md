@@ -25,6 +25,8 @@ release provenance，不在这里覆盖重写。
   CONNECT-UDP、CONNECT-TCP、ownership model、retained RX model、final serialization
   copy、dependency pins 与 congestion control 未改变。
 - N-06、N-09 继续 deferred；本版本不包含 DNS fragment tracker 或 runtime UFW supervisor。
+- v1.0.12 已通过 annotated tag workflow 正式发布；CI artifact 与 GitHub Release asset
+  已完成大小、SHA256 与 byte-for-byte 校验。
 
 ## v1.0.11
 

@@ -77,6 +77,30 @@ the build job but failed in the release job because that independent job also
 needed `rg`. No draft or formal release was created. This superseded tag
 object is likewise retained only as aborted pre-release provenance.
 
+## v1.0.12 final release provenance
+
+The formal `v1.0.12` annotated tag object is
+`e4c7e31c6d639c56d80893686e5b32713e945aee` and targets
+`37a5b061a07be8536ec7cc78f85cb4bfa2bd8571`. Tag workflow
+`34003638527` passed both the build and release jobs:
+https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/actions/runs/34003638527
+
+The published release is
+https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.12
+with `draft=false`, `prerelease=false`, and it is the latest release. The
+Linux amd64 artifact is 8,954,004 bytes with SHA256
+`5ef9f124246914b4e634a41dc8e872d93da52ef38b1b6007882ebf6b5d0be232`.
+`RELEASE.txt` records version `1.0.12`, the exact target commit above,
+`GOOS=linux`, `GOARCH=amd64`, and matching size/digest metadata. The CI
+artifact and published Release asset passed byte-for-byte `cmp` and checksum
+verification; the embedded Linux CI `--version` gate also passed.
+
+F-801 through F-810 are FIXED / RELEASED in v1.0.12. Production remains NOT
+DEPLOYED. N-06 and N-09 remain deferred. The aborted tag objects
+`f413cd5629eaa340a794681bf72c31f67ef65de8` and
+`b70fde83abcbd9379237698e8aa170b921e4558b` remain documented as failed
+pre-release attempts and are not the formal release tag object.
+
 ## v1.0.11 final release provenance
 
 The v1.0.11 annotated tag object is
