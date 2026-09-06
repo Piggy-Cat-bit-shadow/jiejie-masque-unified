@@ -13,16 +13,21 @@ need '        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # 
 need '        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5'
 need '        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4'
 need '        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4'
-release_deps_line=$(grep -n -F '      - name: Install release verifier dependencies' "$workflow" | cut -d: -f1)
+release_deps_count=$(grep -c -F '      - name: Install release verifier dependencies' "$workflow" || true)
+release_deps_line_1=$(grep -n -F '      - name: Install release verifier dependencies' "$workflow" | sed -n '1p' | cut -d: -f1)
+release_deps_line_2=$(grep -n -F '      - name: Install release verifier dependencies' "$workflow" | sed -n '2p' | cut -d: -f1)
 metadata_line=$(grep -n -F '      - name: Resolve build metadata' "$workflow" | cut -d: -f1)
-if [[ -z "$release_deps_line" || -z "$metadata_line" || "$release_deps_line" -ge "$metadata_line" ]]; then
+release_validate_line=$(grep -n -F '      - name: Validate tag and release notes' "$workflow" | cut -d: -f1)
+if [[ "$release_deps_count" -ne 2 || -z "$metadata_line" || -z "$release_validate_line" || -z "$release_deps_line_1" || -z "$release_deps_line_2" || "$release_deps_line_1" -ge "$metadata_line" || "$release_deps_line_2" -ge "$release_validate_line" ]]; then
 	echo 'release verifier dependencies must be installed before build metadata resolution' >&2
 	exit 1
 fi
-grep -Fqx -- '        run: sudo apt-get update && sudo apt-get install -y ripgrep' <(sed -n "${release_deps_line},${metadata_line}p" "$workflow") || {
+for release_deps_line in "$release_deps_line_1" "$release_deps_line_2"; do
+  grep -Fqx -- '        run: sudo apt-get update && sudo apt-get install -y ripgrep' <(sed -n "${release_deps_line},$((release_deps_line + 1))p" "$workflow") || {
 	echo 'release verifier dependency installation is not ripgrep-based' >&2
 	exit 1
-}
+  }
+done
 if grep -Eq 'uses: actions/(checkout|setup-go|upload-artifact|download-artifact)@v[0-9]' "$workflow"; then
 	echo 'unpinned GitHub Action remains' >&2
 	exit 1
