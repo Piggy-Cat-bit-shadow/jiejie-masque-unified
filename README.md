@@ -4,8 +4,8 @@
 > CONNECT-IP、CONNECT-UDP 与 CONNECT-TCP，重点关注协议正确性、可控内存、
 > 生命周期安全和长期可维护性。
 
-The current maintenance release is `v1.0.11`.
-当前正式维护版本：v1.0.11。
+The current maintenance release is `v1.0.12`.
+当前正式维护版本：v1.0.12。
 
 ## 项目简介
 

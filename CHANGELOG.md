@@ -3,7 +3,7 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
-## v1.0.11 之后维护候选
+## v1.0.12
 
 - F-803 串行化共享 TX-GRO scratch buffer，并增加并发 `WriteBatch` 回归测试。
 - F-804 校验完整 IPv4 fragment field，同时保留仅设置 DF 的正常报文。
@@ -11,7 +11,7 @@ release provenance，不在这里覆盖重写。
 - F-806 对分片 ICMP 只转换外层地址并重算外层校验和，保留 payload 与 ICMP 校验和。
 - CI 对齐仓库默认分支、固定官方 Actions 完整 SHA，并校验当前依赖 provenance。
 
-本节是维护候选，不是发布；不会创建 v1.0.12 tag 或 release。
+这是 maintenance / correctness release；默认 `tun_tx_gro=false` 的生产路径保持不变。
 
 - F-807 对齐 CONNECT-IP stateless reset key 默认路径与 packaged systemd
   `StateDirectory`。
@@ -21,6 +21,10 @@ release provenance，不在这里覆盖重写。
   fragment tracker。
 - F-810 修复可选 TCP TX-GRO 的 segment-size ordering：首段确定 `gso_size`，最后一段
   可为 short segment，但 short 后不再继续聚合更大 segment。
+- F-801～F-810 均已在本版本 release candidate 中验证并发布；核心 QUIC/H3、
+  CONNECT-UDP、CONNECT-TCP、ownership model、retained RX model、final serialization
+  copy、dependency pins 与 congestion control 未改变。
+- N-06、N-09 继续 deferred；本版本不包含 DNS fragment tracker 或 runtime UFW supervisor。
 
 ## v1.0.11
 

@@ -1,6 +1,6 @@
 # Maintenance and release guide
 
-Current released version: `v1.0.11`
+Current released version: `v1.0.12`
 
 ## Maintenance candidate ledger — post-v1.0.11
 
@@ -60,9 +60,9 @@ resolved into this finding.
 The v1.0.11 annotated tag object is
 `61b3e31c33b680828e4762c0cf32cd37f0647185` and targets
 `34b22e20112a0f5acf7b65d1e4df99524e798fbd`. Tag workflow `33978955171`
-passed both the build and release jobs. The published release is
+passed both the build and release jobs. The published v1.0.11 release was
 https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.11
-with `draft=false` and `prerelease=false`; it is the current latest release.
+with `draft=false` and `prerelease=false`; v1.0.12 supersedes it as latest.
 
 The formal binary is `jiejie-masque-linux-amd64`, with 8,954,004 bytes and
 SHA256 `0162110e753d892da7225073844e1d1a8255414a588309b6fcb8bc5c410357ef`.
@@ -180,7 +180,7 @@ manually; runtime and CI do not fetch IANA.
 ## Exact dependency provenance
 
 ```text
-current released version:           v1.0.11
+current released version:           v1.0.12
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
 connect-ip-go:                     57381910bb5fca61b4d3d03fe098929bc294ad11
