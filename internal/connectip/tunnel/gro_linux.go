@@ -144,13 +144,19 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			if !good || !tcpCanAppend(m, n, packets[i], packets[j]) {
 				break
 			}
+			if n.payload > gsoSize {
+				// A larger segment cannot follow the aggregate's established
+				// gso_size. A short segment is allowed, but must terminate the
+				// current ordered group below.
+				break
+			}
 			if total+len(packets[j])-m.ipLen-m.tcpLen > 65535-virtioNetHdrLen {
 				break
 			}
 			total += len(packets[j]) - m.ipLen - m.tcpLen
 			m.payload += n.payload
 			j++
-			if n.psh {
+			if n.psh || n.payload < gsoSize {
 				break
 			}
 		}

@@ -97,6 +97,133 @@ func assertTXGROAggregate(t *testing.T, packet []byte, ipLen, payloadLen int, ps
 	}
 }
 
+func assertTXGROAggregateDetails(t *testing.T, packet []byte, ipLen, gsoSize, payloadLen int, firstSeq uint32, psh bool, v6 bool) {
+	t.Helper()
+	var h virtioNetHdr
+	if err := h.decode(packet); err != nil {
+		t.Fatal(err)
+	}
+	wantType := uint8(unix.VIRTIO_NET_HDR_GSO_TCPV4)
+	if v6 {
+		wantType = unix.VIRTIO_NET_HDR_GSO_TCPV6
+	}
+	if h.flags != unix.VIRTIO_NET_HDR_F_NEEDS_CSUM || h.gsoType != wantType || h.gsoSize != uint16(gsoSize) || h.hdrLen != uint16(ipLen+20) || h.csumStart != uint16(ipLen) || h.csumOffset != 16 {
+		t.Fatalf("GSO header = %+v, want type=%d size=%d hdr=%d start=%d offset=16", h, wantType, gsoSize, ipLen+20, ipLen)
+	}
+	p := packet[virtioNetHdrLen:]
+	if len(p) != ipLen+20+payloadLen || binary.BigEndian.Uint32(p[ipLen+4:]) != firstSeq {
+		t.Fatalf("aggregate length/sequence = %d/%d, want %d/%d", len(p), binary.BigEndian.Uint32(p[ipLen+4:]), ipLen+20+payloadLen, firstSeq)
+	}
+	if v6 {
+		if binary.BigEndian.Uint16(p[4:]) != uint16(len(p)-40) {
+			t.Fatalf("IPv6 payload length = %d, want %d", binary.BigEndian.Uint16(p[4:]), len(p)-40)
+		}
+	} else if binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || ^checksum(p[:20], 0) != 0 {
+		t.Fatalf("IPv4 aggregate length/checksum invalid: length=%d checksum=%#x", binary.BigEndian.Uint16(p[2:]), checksum(p[:20], 0))
+	}
+	gotPSH := p[ipLen+13]&tcpFlagPSH != 0
+	if gotPSH != psh {
+		t.Fatalf("aggregate PSH = %t, want %t", gotPSH, psh)
+	}
+	addrLen, addrAt := 4, 12
+	if v6 {
+		addrLen, addrAt = 16, 8
+	}
+	wantPseudo := uint16(pseudoChecksum(unix.IPPROTO_TCP, p[addrAt:addrAt+addrLen], p[addrAt+addrLen:addrAt+2*addrLen], uint16(len(p)-ipLen)))
+	if got := binary.BigEndian.Uint16(p[ipLen+16:]); got != wantPseudo {
+		t.Fatalf("TCP checksum seed = %#x, want %#x", got, wantPseudo)
+	}
+}
+
+func assertPlainTCPPacket(t *testing.T, packet []byte, ipLen, payloadLen int, firstSeq uint32, v6 bool) {
+	t.Helper()
+	p := packet
+	if len(p) != ipLen+20+payloadLen || binary.BigEndian.Uint32(p[ipLen+4:]) != firstSeq {
+		t.Fatalf("plain packet length/sequence = %d/%d", len(p), binary.BigEndian.Uint32(p[ipLen+4:]))
+	}
+	if p[0]>>4 != 4 && p[0]>>4 != 6 {
+		t.Fatalf("plain packet version = %#x", p[0]>>4)
+	}
+	if v6 {
+		if binary.BigEndian.Uint16(p[4:]) != uint16(len(p)-40) {
+			t.Fatalf("plain IPv6 payload length = %d", binary.BigEndian.Uint16(p[4:]))
+		}
+	} else if binary.BigEndian.Uint16(p[2:]) != uint16(len(p)) || ^checksum(p[:20], 0) != 0 {
+		t.Fatalf("plain IPv4 length/checksum invalid")
+	}
+}
+
+func TestTXGROSegmentSizeOrderingIPv4(t *testing.T) {
+	type testCase struct {
+		name       string
+		payloads   []int
+		psh        []bool
+		wantGroups int
+		firstLen   int
+		firstGSO   int
+		firstPSH   bool
+	}
+	for _, tc := range []testCase{
+		{name: "equal", payloads: []int{1200, 1200, 1200}, psh: []bool{false, false, false}, wantGroups: 1, firstLen: 3600, firstGSO: 1200},
+		{name: "final-short", payloads: []int{1200, 1200, 600}, psh: []bool{false, false, false}, wantGroups: 1, firstLen: 3000, firstGSO: 1200},
+		{name: "two-segment-final-short", payloads: []int{1200, 600}, psh: []bool{false, false}, wantGroups: 1, firstLen: 1800, firstGSO: 1200},
+		{name: "middle-short", payloads: []int{1200, 600, 1200}, psh: []bool{false, false, false}, wantGroups: 2, firstLen: 1800, firstGSO: 1200},
+		{name: "larger-after-smaller-initial", payloads: []int{600, 1200}, psh: []bool{false, false}, wantGroups: 2, firstLen: 0, firstGSO: 0},
+		{name: "larger-later", payloads: []int{1200, 1300}, psh: []bool{false, false}, wantGroups: 2, firstLen: 0, firstGSO: 0},
+		{name: "psh-short", payloads: []int{1200, 600}, psh: []bool{false, true}, wantGroups: 1, firstLen: 1800, firstGSO: 1200, firstPSH: true},
+		{name: "short-then-psh-full", payloads: []int{1200, 600, 1200}, psh: []bool{false, false, true}, wantGroups: 2, firstLen: 1800, firstGSO: 1200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			packets := make([][]byte, len(tc.payloads))
+			seq := uint32(1000)
+			for i, payloadLen := range tc.payloads {
+				packets[i] = makeTCPv4Segment(seq, payloadLen, tc.psh[i])
+				seq += uint32(payloadLen)
+			}
+			outputs := readTXGROPackets(t, packets, tc.wantGroups)
+			if tc.firstGSO != 0 {
+				assertTXGROAggregateDetails(t, outputs[0], 20, tc.firstGSO, tc.firstLen, 1000, tc.firstPSH, false)
+			} else {
+				assertPlainTCPPacket(t, outputs[0], 20, tc.payloads[0], 1000, false)
+			}
+			if tc.wantGroups == 2 {
+				if tc.firstGSO != 0 {
+					assertPlainTCPPacket(t, outputs[1], 20, tc.payloads[2], 1000+uint32(tc.payloads[0]+tc.payloads[1]), false)
+				} else {
+					assertPlainTCPPacket(t, outputs[1], 20, tc.payloads[1], 1000+uint32(tc.payloads[0]), false)
+				}
+			}
+		})
+	}
+}
+
+func TestTXGROSegmentSizeOrderingIPv6(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		payloads []int
+		groups   int
+		firstLen int
+	}{
+		{name: "equal", payloads: []int{1200, 1200, 1200}, groups: 1, firstLen: 3600},
+		{name: "final-short", payloads: []int{1200, 600}, groups: 1, firstLen: 1800},
+		{name: "middle-short", payloads: []int{1200, 600, 1200}, groups: 2, firstLen: 1800},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			packets := make([][]byte, len(tc.payloads))
+			seq := uint32(1000)
+			for i, payloadLen := range tc.payloads {
+				packets[i] = makeTCPv6Segment(seq, payloadLen, false)
+				seq += uint32(payloadLen)
+			}
+			outputs := readTXGROPackets(t, packets, tc.groups)
+			assertTXGROAggregateDetails(t, outputs[0], 40, 1200, tc.firstLen, 1000, false, true)
+			if tc.groups == 2 {
+				assertPlainTCPPacket(t, outputs[1], 40, 1200, 2800, true)
+			}
+		})
+	}
+}
+
 func TestTXGROStopsAfterPSHIPv4AndIPv6(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
