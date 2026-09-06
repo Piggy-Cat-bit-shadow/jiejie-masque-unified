@@ -105,6 +105,9 @@ jobs:
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
 
+      - name: Future Git metadata privacy policy
+        run: bash scripts/verify-git-metadata.sh v1.0.13..HEAD
+
       - name: Public repository privacy self-test
         run: bash scripts/verify-public-repo-selftest.sh
 
@@ -119,7 +122,7 @@ jobs:
 
       - name: Shell check
         run: |
-          bash -n scripts/verify-deps.sh
+          bash -n scripts/verify-deps.sh scripts/verify-git-metadata.sh scripts/verify-git-metadata-selftest.sh scripts/reproduce-conntrack-session-reuse.sh
           bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/test-connect-ip-network-prepare.sh scripts/build-release.sh scripts/verify-release-docs.sh scripts/verify-release-docs-selftest.sh scripts/verify-workflow-contract.sh scripts/verify-dependency-provenance.sh scripts/verify-dependency-provenance-selftest.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
           bash -n scripts/verify-release-tag.sh scripts/verify-release-tag-selftest.sh
@@ -129,6 +132,9 @@ jobs:
 
       - name: Dependency provenance self-test
         run: bash scripts/verify-dependency-provenance-selftest.sh
+
+      - name: Git metadata privacy self-test
+        run: bash scripts/verify-git-metadata-selftest.sh
 
       - name: Build Linux amd64
         env:
