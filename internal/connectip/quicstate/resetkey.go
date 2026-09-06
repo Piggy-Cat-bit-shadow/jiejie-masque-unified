@@ -14,6 +14,18 @@ import (
 
 const ResetKeySize = len(quic.StatelessResetKey{})
 
+const (
+	resetKeyIncompleteReadRetries = 100
+	resetKeyIncompleteReadDelay   = time.Millisecond
+)
+
+// The hooks make the narrow create-before-write window controllable in tests.
+// They are no-ops in production.
+var (
+	resetKeyAfterCreateHook    = func() {}
+	resetKeyIncompleteReadHook = func() {}
+)
+
 func ValidatePath(path string) error {
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return fmt.Errorf("stateless reset key path must be absolute and clean")
@@ -26,16 +38,10 @@ func LoadOrCreate(path string) (quic.StatelessResetKey, error) {
 	if err := ValidatePath(path); err != nil {
 		return key, err
 	}
-	b, err := os.ReadFile(path)
-	if err == nil {
-		if len(b) != ResetKeySize {
-			return key, fmt.Errorf("stateless reset key has length %d, want %d", len(b), ResetKeySize)
-		}
-		copy(key[:], b)
-		return key, nil
-	}
-	if !os.IsNotExist(err) {
-		return key, fmt.Errorf("read stateless reset key: %w", err)
+	if existing, found, err := loadExistingResetKey(path); err != nil {
+		return key, err
+	} else if found {
+		return existing, nil
 	}
 	if _, err := rand.Read(key[:]); err != nil {
 		return key, fmt.Errorf("generate stateless reset key: %w", err)
@@ -46,18 +52,19 @@ func LoadOrCreate(path string) (quic.StatelessResetKey, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			for i := 0; i < 100; i++ {
-				if b, readErr := os.ReadFile(path); readErr == nil && len(b) == ResetKeySize {
-					copy(key[:], b)
-					return key, nil
-				}
-				time.Sleep(time.Millisecond)
+			existing, found, readErr := loadExistingResetKey(path)
+			if readErr != nil {
+				return key, readErr
 			}
-			return key, fmt.Errorf("stateless reset key remained incomplete after concurrent creation")
+			if found {
+				return existing, nil
+			}
+			return key, fmt.Errorf("stateless reset key disappeared during concurrent creation")
 		}
 		return key, fmt.Errorf("create stateless reset key: %w", err)
 	}
 	cleanup := func() { _ = f.Close(); _ = os.Remove(path) }
+	resetKeyAfterCreateHook()
 	n, err := f.Write(key[:])
 	if err != nil || n != len(key) {
 		cleanup()
@@ -81,6 +88,31 @@ func LoadOrCreate(path string) (quic.StatelessResetKey, error) {
 	}
 	copy(key[:], confirmed)
 	return key, nil
+}
+
+// loadExistingResetKey waits briefly for a concurrent O_EXCL creator to finish
+// writing its newly-created file. A file that remains incomplete is malformed
+// and is never replaced.
+func loadExistingResetKey(path string) (quic.StatelessResetKey, bool, error) {
+	var key quic.StatelessResetKey
+	for attempt := 0; ; attempt++ {
+		b, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return key, false, nil
+		}
+		if err != nil {
+			return key, false, fmt.Errorf("read stateless reset key: %w", err)
+		}
+		if len(b) == ResetKeySize {
+			copy(key[:], b)
+			return key, true, nil
+		}
+		if attempt == resetKeyIncompleteReadRetries {
+			return key, false, fmt.Errorf("stateless reset key has length %d, want %d", len(b), ResetKeySize)
+		}
+		resetKeyIncompleteReadHook()
+		time.Sleep(resetKeyIncompleteReadDelay)
+	}
 }
 
 func ValidateExisting(path string) error {
