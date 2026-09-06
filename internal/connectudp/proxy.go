@@ -257,31 +257,37 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) 
 }
 
 func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flow, ownedPool *udpOwnedDatagramPool) error {
+	batch := newUDPReadBatch(conn)
 	for {
-		buffer := ownedPool.Acquire()
-		// Read maxUDPPayloadSize+1 bytes: UDP Read reports the truncated
-		// length, so the extra byte is the sentinel that distinguishes an
-		// oversized packet without requiring ReadMsgUDP.
-		n, err := conn.Read(buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1])
+		n, err := batch.Read(ownedPool)
 		if err != nil {
-			buffer.Release()
+			batch.releaseFrom(0)
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
-		if n > maxUDPPayloadSize {
-			buffer.Release()
-			if count, ok := s.oversized.Record(time.Now()); ok {
-				log.Printf("CONNECT-UDP dropped oversized UDP datagrams: count=%d", count)
+		for i := 0; i < n; i++ {
+			buffer := batch.buffers[i]
+			packetLen := batch.packetLen(i)
+			if packetLen > maxUDPPayloadSize {
+				buffer.Release()
+				batch.buffers[i] = nil
+				if count, ok := s.oversized.Record(time.Now()); ok {
+					log.Printf("CONNECT-UDP dropped oversized UDP datagrams: count=%d", count)
+				}
+				continue
 			}
-			continue
+			buffer.data[udpContextIDOffset] = 0
+			if err := sendDatagramBufferOwnedOrDrop(str, buffer.data, udpContextIDOffset, len(contextIDZero)+packetLen, buffer); err != nil {
+				batch.buffers[i] = nil // sendDatagramBufferOwnedOrDrop released it on error
+				batch.releaseFrom(i + 1)
+				return err
+			}
+			batch.buffers[i] = nil // ownership transferred to QUIC
+			flow.Touch()
 		}
-		buffer.data[udpContextIDOffset] = 0
-		if err := sendDatagramBufferOwnedOrDrop(str, buffer.data, udpContextIDOffset, len(contextIDZero)+n, buffer); err != nil {
-			return err
-		}
-		flow.Touch()
+		batch.releaseFrom(n)
 	}
 }
 

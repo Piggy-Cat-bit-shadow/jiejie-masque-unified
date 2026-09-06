@@ -443,16 +443,10 @@ func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool
 	bufs := make([][]byte, tunnel.MaxGSOBatch)
 	sizes := make([]int, tunnel.MaxGSOBatch)
 	for {
-		for i := range packets {
-			packets[i] = packetPool.Get(packetPool.PayloadSize())
-			bufs[i] = packets[i].Buffer
-			sizes[i] = 0
-		}
+		fillTUNBatchSlots(packets, bufs, sizes, packetPool)
 		n, err := tun.ReadBatch(bufs, sizes, session.PacketPoolHeadroom)
 		if err != nil {
-			for _, pkt := range packets {
-				packetPool.Put(pkt)
-			}
+			releaseTUNBatchSlots(packets, packetPool)
 			if errors.Is(err, tunnel.ErrMalformedGSO) {
 				continue
 			}
@@ -460,11 +454,39 @@ func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool
 			return
 		}
 		for i, pkt := range packets {
-			if i >= n || !packetPool.CommitRead(pkt, sizes[i]) {
-				packetPool.Put(pkt)
+			if i >= n {
 				continue
 			}
+			if !packetPool.CommitRead(pkt, sizes[i]) {
+				packetPool.Put(pkt)
+				packets[i] = nil
+				continue
+			}
+			packets[i] = nil // dispatchTUNPacket transfers or releases ownership.
 			dispatchTUNPacket(pkt, mgr, packetPool)
+		}
+	}
+}
+
+// fillTUNBatchSlots only replaces buffers whose ownership left the dispatcher
+// in the preceding iteration. A normal VNET_HDR record produces one packet,
+// so retaining the remaining slots avoids pool churn while preserving room for
+// a maximum-size GSO split on the next read.
+func fillTUNBatchSlots(packets []*session.PacketBuffer, bufs [][]byte, sizes []int, packetPool *session.PacketPool) {
+	for i := range packets {
+		if packets[i] == nil {
+			packets[i] = packetPool.Get(packetPool.PayloadSize())
+		}
+		bufs[i] = packets[i].Buffer
+		sizes[i] = 0
+	}
+}
+
+func releaseTUNBatchSlots(packets []*session.PacketBuffer, packetPool *session.PacketPool) {
+	for i, pkt := range packets {
+		if pkt != nil {
+			packetPool.Put(pkt)
+			packets[i] = nil
 		}
 	}
 }

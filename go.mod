@@ -12,6 +12,7 @@ require (
 	github.com/metacubex/tls v0.1.8
 	github.com/yosida95/uritemplate/v3 v3.0.2
 	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.47.0
 )
 
@@ -28,6 +29,5 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e // indirect
-	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )

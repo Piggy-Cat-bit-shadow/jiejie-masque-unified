@@ -51,3 +51,32 @@ func benchmarkOutboundPacketPool(b *testing.B, size int) {
 		pool.Put(packet)
 	}
 }
+
+// BenchmarkTUNBatchSlotRefill models the common RX-offload case where a TUN
+// read produces one logical packet. The old loop refilled all MaxGSOBatch
+// slots; the retained-slot path refills only the transferred slot.
+func BenchmarkTUNBatchSlotRefill(b *testing.B) {
+	for _, retained := range []bool{false, true} {
+		name := "full-refill"
+		if retained {
+			name = "retained-slots"
+		}
+		b.Run(name, func(b *testing.B) {
+			pool := session.NewPacketPool(1280)
+			packets := make([]*session.PacketBuffer, 128)
+			bufs := make([][]byte, 128)
+			sizes := make([]int, 128)
+			fillTUNBatchSlots(packets, bufs, sizes, pool)
+			defer releaseTUNBatchSlots(packets, pool)
+			b.ReportAllocs()
+			for b.Loop() {
+				pool.Put(packets[0])
+				packets[0] = nil
+				if !retained {
+					releaseTUNBatchSlots(packets, pool)
+				}
+				fillTUNBatchSlots(packets, bufs, sizes, pool)
+			}
+		})
+	}
+}

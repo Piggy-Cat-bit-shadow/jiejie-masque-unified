@@ -144,6 +144,31 @@ func TestTUNDispatcherReadsDirectlyIntoQueuedPacket(t *testing.T) {
 	}
 }
 
+func TestTUNBatchSlotsOnlyReplaceTransferredBuffers(t *testing.T) {
+	pool := session.NewPacketPool(1280)
+	packets := make([]*session.PacketBuffer, 3)
+	bufs := make([][]byte, 3)
+	sizes := []int{7, 8, 9}
+	fillTUNBatchSlots(packets, bufs, sizes, pool)
+	first := append([]*session.PacketBuffer(nil), packets...)
+	packets[0] = nil   // simulate handing the first split packet to a session.
+	pool.Put(first[0]) // the receiving session eventually releases it.
+	fillTUNBatchSlots(packets, bufs, sizes, pool)
+	defer releaseTUNBatchSlots(packets, pool)
+
+	if packets[1] != first[1] || packets[2] != first[2] {
+		t.Fatal("idle TUN batch slots were needlessly replaced")
+	}
+	if sizes[0] != 0 || sizes[1] != 0 || sizes[2] != 0 {
+		t.Fatalf("batch sizes were not reset: %v", sizes)
+	}
+	for i := range bufs {
+		if bufs[i] == nil || &bufs[i][0] != &packets[i].Buffer[0] {
+			t.Fatalf("slot %d does not point at its packet buffer", i)
+		}
+	}
+}
+
 func TestNormalSessionErrorConsumesWrappedTerminalErrors(t *testing.T) {
 	active := context.Background()
 	canceled, cancel := context.WithCancel(context.Background())
