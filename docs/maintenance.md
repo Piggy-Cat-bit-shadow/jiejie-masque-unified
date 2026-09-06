@@ -542,6 +542,45 @@ candidate only:
 
 The v1.0.13 tag and release remain uncreated; production remains untouched.
 
+## v1.0.13 formal release provenance
+
+v1.0.13 was released from the exact release-preparation commit after the
+successful tag workflow. The v1.0.13 annotated tag is immutable in this
+repository's Git provenance: it must not be moved, deleted, force-pushed, or
+recreated.
+
+```text
+pre-release baseline:       bd8f58e3a6c5ab0680da3d6d20d047bcd9e19489
+release prep commit/target: adf9223a390ccbb16e3350ddd154582ed26207d9
+annotated tag object:       40c75127464ae3ab5aad960259e8f30d7149a249
+tag message:                jiejie-masque v1.0.13
+tag workflow:               34011569170
+release id:                 383464177
+release url:                https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.13
+published_at:               2026-09-06T04:30:53Z
+artifact:                  jiejie-masque-linux-amd64
+artifact bytes:             9293950
+artifact sha256:            16bf3e0012dbc9a32d1044615ccca703594dbb5755cb9e17a1073ad36a6f5ef9
+checksum asset:             present
+RELEASE.txt:                PASS
+embedded version:           1.0.13
+embedded commit:            adf9223a390ccbb16e3350ddd154582ed26207d9
+Go:                         1.26.8
+QUIC:                       b6c72f4e72efb1a668cfa3dd29cf594350d59348
+CONNECT-IP:                 e645a82498ea70e3411b99e7a338ac740629abdd
+```
+
+The CI artifact and GitHub Release asset are byte-identical: `cmp PASS`,
+SHA256 MATCH, and size MATCH. The release API reports `draft=false`,
+`prerelease=false`, and `immutable=false`; the latter means platform-level
+immutability is not enforced by the API and is not a release provenance
+failure. Build-once provenance is closed: the release job downloaded and
+published the validated artifact without rebuilding the binary.
+
+v1.0.12 is unchanged. v1.0.13 is formally released. Production remains NOT
+DEPLOYED. Real Mihomo and Surge E2E remain NOT EXECUTED; H-307 remains
+TEST GAP / NOT CONFIRMED DEFECT.
+
 ## PRE-v1.0.13 migration regression repair batch 3
 
 | Finding | Description | Candidate status |
