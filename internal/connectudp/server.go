@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
-	metatls "github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
 	"io"
 	"net"
+	stdhttp "net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -112,7 +113,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 	if err != nil {
 		return err
 	}
-	cert, e := metatls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key)
+	cert, e := tls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key)
 	if e != nil {
 		return e
 	}
@@ -132,7 +133,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 	qt := &quic.Transport{Conn: t, StatelessResetKey: rk}
 	defer qt.Close()
 	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, KeepAlivePeriod: c.KeepAlive(), MaxIdleTimeout: c.IdleTimeout(), MaxIncomingStreams: 64}
-	ql, e := qt.Listen(http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), qc)
+	ql, e := qt.Listen(http3.ConfigureTLSConfig(&tls.Config{Certificates: []tls.Certificate{cert}}), qc)
 	if e != nil {
 		return e
 	}
@@ -188,7 +189,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 			w.WriteHeader(501)
 		}
 	})
-	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&metatls.Config{Certificates: []metatls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, MaxHeaderBytes: 64 * 1024, Handler: WithCredentials(h, creds)}
+	srv := &http3.Server{TLSConfig: http3.ConfigureTLSConfig(&tls.Config{Certificates: []tls.Certificate{cert}}), QUICConfig: qc, EnableDatagrams: true, MaxHeaderBytes: 64 * 1024, Handler: http3HandlerAdapter{handler: WithCredentials(h, creds)}}
 	if ready != nil {
 		ready <- t.LocalAddr().String()
 	}
@@ -213,7 +214,7 @@ func serveContextWithState(ctx context.Context, c Config, ready chan<- string, r
 		case <-shutdown.Done():
 			e = nil
 		}
-		if e != nil && !errors.Is(e, net.ErrClosed) && !errors.Is(e, mh.ErrServerClosed) {
+		if e != nil && !errors.Is(e, net.ErrClosed) && !errors.Is(e, stdhttp.ErrServerClosed) {
 			return e
 		}
 		return nil

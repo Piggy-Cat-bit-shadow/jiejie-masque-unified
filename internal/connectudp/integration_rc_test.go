@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	stdhttp "net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go/http3"
 )
 
@@ -75,7 +75,7 @@ func openRCUDPStatus(t *testing.T, cc *http3.ClientConn, target, user, password 
 		return 0, nil, err
 	}
 	port := target[strings.LastIndex(target, ":")+1:]
-	req := &mh.Request{Method: "CONNECT", Proto: "connect-udp", Host: "proxy.test", URL: &url.URL{Scheme: "https", Host: "proxy.test", Path: "/.well-known/masque/udp/127.0.0.1/" + port + "/"}, Header: make(mh.Header)}
+	req := &stdhttp.Request{Method: "CONNECT", Proto: "connect-udp", Host: "proxy.test", URL: &url.URL{Scheme: "https", Host: "proxy.test", Path: "/.well-known/masque/udp/127.0.0.1/" + port + "/"}, Header: make(stdhttp.Header)}
 	req.Header.Set(http3.CapsuleProtocolHeader, "?1")
 	if user != "" || password != "" {
 		req.Header.Set("Authorization", authHeader(user, password))
@@ -108,7 +108,7 @@ func openRCTCPStatus(t *testing.T, cc *http3.ClientConn, target, user, password 
 	if err != nil {
 		return 0, nil, err
 	}
-	req := &mh.Request{Method: "CONNECT", Host: target, URL: &url.URL{Host: target}, Header: make(mh.Header)}
+	req := &stdhttp.Request{Method: "CONNECT", Host: target, URL: &url.URL{Host: target}, Header: make(stdhttp.Header)}
 	if user != "" || password != "" {
 		req.Header.Set("Authorization", authHeader(user, password))
 	}

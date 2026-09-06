@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	stdhttp "net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,10 +22,8 @@ import (
 	"testing"
 	"time"
 
-	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
-	metatls "github.com/metacubex/tls"
 )
 
 func integrationConfig(t *testing.T) Config {
@@ -112,7 +112,7 @@ func dialH3(t *testing.T, addr string) *http3.ClientConn {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := quic.Dial(ctx, local, remote, &metatls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}, &quic.Config{EnableDatagrams: true})
+	conn, err := quic.Dial(ctx, local, remote, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestHTTP3ConnectUDPLoopback(t *testing.T) {
 	}
 	target := echo.LocalAddr().String()
 	u := &url.URL{Scheme: "https", Host: "proxy.test", Path: "/.well-known/masque/udp/127.0.0.1/" + target[strings.LastIndex(target, ":")+1:] + "/"}
-	req := &mh.Request{Method: "CONNECT", Proto: "connect-udp", Host: "proxy.test", URL: u, Header: make(mh.Header)}
+	req := &stdhttp.Request{Method: "CONNECT", Proto: "connect-udp", Host: "proxy.test", URL: u, Header: make(stdhttp.Header)}
 	req.Header.Set(http3.CapsuleProtocolHeader, "?1")
 	if err = str.SendRequestHeader(req); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestHTTP3TCPConnectLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := echo.Addr().String()
-	req := &mh.Request{Method: "CONNECT", Host: target, URL: &url.URL{Host: target}}
+	req := &stdhttp.Request{Method: "CONNECT", Host: target, URL: &url.URL{Host: target}}
 	if err := str.SendRequestHeader(req); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestHTTP3TCPClientHalfCloseReceivesTrailingResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+	if err := stream.SendRequestHeader(&stdhttp.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := stream.ReadResponse()
@@ -308,7 +308,7 @@ func TestHTTP3TCPTargetHalfCloseKeepsClientDirection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+	if err := stream.SendRequestHeader(&stdhttp.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := stream.ReadResponse()
@@ -354,7 +354,7 @@ func TestHTTP3TCPTargetResetTearsDownRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+	if err := stream.SendRequestHeader(&stdhttp.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := stream.ReadResponse()
@@ -396,7 +396,7 @@ func TestHTTP3TCPClientResetTearsDownRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+	if err := stream.SendRequestHeader(&stdhttp.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := stream.ReadResponse()
@@ -443,7 +443,7 @@ func TestHTTP3TCPHalfClosedShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.SendRequestHeader(&mh.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
+	if err := stream.SendRequestHeader(&stdhttp.Request{Method: "CONNECT", Host: target.Addr().String(), URL: &url.URL{Host: target.Addr().String()}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := stream.ReadResponse()

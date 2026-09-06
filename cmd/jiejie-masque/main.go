@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,10 +28,8 @@ import (
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
-	mh "github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
-	"github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
 )
 
@@ -187,7 +186,9 @@ func serveConnectIP() error {
 		return fmt.Errorf("data-plane unhealthy: %w", err)
 	}
 	log.Printf("CONNECT-IP QUIC congestion controller: %s", c.QUIC.CongestionController)
-	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: mh.HandlerFunc(func(w mh.ResponseWriter, r *mh.Request) { handleRequest(w, r, c, byKey, mgr, tun, packetPool) })}
+	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		handleRequest(w, r, c, byKey, mgr, tun, packetPool)
+	})}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopReaper := context.WithCancel(context.Background())
@@ -290,44 +291,44 @@ func reapIdle(mgr *session.Manager, now time.Time, timeout time.Duration) int {
 	return closed
 }
 
-func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
+func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
 	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
 	parseProtocol, ok := protocolForParse(r.Proto)
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unsupported protocol %q", r.Proto)
-		mh.Error(w, "only CONNECT-IP is supported", mh.StatusNotImplemented)
+		stdhttp.Error(w, "only CONNECT-IP is supported", stdhttp.StatusNotImplemented)
 		return
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) != 1 {
 		log.Printf("CONNECT-IP rejected: missing client certificate")
-		mh.Error(w, "client certificate required", mh.StatusUnauthorized)
+		stdhttp.Error(w, "client certificate required", stdhttp.StatusUnauthorized)
 		return
 	}
 	client, ok := byKey[auth.PublicKeyBytes(r.TLS.PeerCertificates[0])]
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unauthorized client")
-		mh.Error(w, "client certificate not authorized", mh.StatusUnauthorized)
+		stdhttp.Error(w, "client certificate not authorized", stdhttp.StatusUnauthorized)
 		return
 	}
 	release, err := mgr.TryReserveFor(client.Name)
 	if err != nil {
 		log.Printf("CONNECT-IP rejected: session admission: %v", err)
-		mh.Error(w, "session capacity unavailable", mh.StatusServiceUnavailable)
+		stdhttp.Error(w, "session capacity unavailable", stdhttp.StatusServiceUnavailable)
 		return
 	}
 	defer release()
 	template, err := requestTemplate(r.Host)
 	if err != nil {
 		log.Printf("CONNECT-IP rejected: invalid authority: %v", err)
-		mh.Error(w, "invalid authority", mh.StatusBadRequest)
+		stdhttp.Error(w, "invalid authority", stdhttp.StatusBadRequest)
 		return
 	}
-	copyReq := *r
+	copyReq := r.Clone(r.Context())
 	copyReq.Proto = parseProtocol
-	req, err := connectip.ParseRequest(&copyReq, template)
+	req, err := connectip.ParseProxyRequest(copyReq, template)
 	if err != nil {
 		log.Printf("CONNECT-IP request parse failed: %v", err)
-		mh.Error(w, err.Error(), mh.StatusBadRequest)
+		stdhttp.Error(w, err.Error(), stdhttp.StatusBadRequest)
 		return
 	}
 	conn, err := (&connectip.Proxy{}).Proxy(w, req)
@@ -335,22 +336,22 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 		log.Printf("CONNECT-IP tunnel establishment failed: %v", err)
 		return
 	}
-	if err = conn.AssignAddresses(r.Context(), []netip.Prefix{client.TunnelIPv4}); err != nil {
+	if err = conn.AssignAddresses([]netip.Prefix{client.TunnelIPv4}); err != nil {
 		log.Printf("AssignAddresses failed: %v", err)
 		conn.Close()
 		return
 	}
-	if err = conn.AdvertiseRoute(r.Context(), []connectip.IPRoute{{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")}}); err != nil {
+	if err = conn.AdvertiseRoute([]connectip.IPRoute{{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")}}); err != nil {
 		log.Printf("AdvertiseRoute failed: %v", err)
 		conn.Close()
 		return
 	}
-	s := session.NewWithContextAndPacketPoolAndQueue(r.Context(), client.TunnelIPv4.Addr(), client.Name, conn, packetPool, c.Server.OutboundQueueSize, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
+	s := session.NewWithContextAndPacketPoolAndQueue(r.Context(), client.TunnelIPv4.Addr(), client.Name, legacyPacketConn{conn}, packetPool, c.Server.OutboundQueueSize, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
 	if mgr.IsShadow() {
 		if err := mgr.Register(s); err != nil {
 			log.Printf("session registration failed: %v", err)
 			s.Close()
-			mh.Error(w, "session capacity unavailable", mh.StatusServiceUnavailable)
+			stdhttp.Error(w, "session capacity unavailable", stdhttp.StatusServiceUnavailable)
 			return
 		}
 	} else {
@@ -376,6 +377,16 @@ func handleRequest(w mh.ResponseWriter, r *mh.Request, c config.Config, byKey ma
 		reason = "context"
 	}
 	log.Printf("session=%d closed reason=%s", s.ID, reason)
+}
+
+// legacyPacketConn adapts the v0.62 connect-ip-go ReadPacket buffer API to
+// the session layer's established packet-ownership contract.
+type legacyPacketConn struct{ *connectip.Conn }
+
+func (c legacyPacketConn) ReadPacket() ([]byte, error) {
+	buf := make([]byte, 64*1024)
+	n, err := c.Conn.ReadPacket(buf)
+	return buf[:n], err
 }
 
 type tunPacketReader interface {
