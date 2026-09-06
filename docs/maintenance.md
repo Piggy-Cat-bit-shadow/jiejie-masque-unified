@@ -25,6 +25,8 @@ Current released version: `v1.0.13`
 | N-12 | FUTURE GIT METADATA PRIVACY HARDENING | DEFERRED / CURRENT COMMITS NOREPLY |
 | C-01 | VARIABLE SEGMENT-SIZE GRO | RESOLVED INTO F-810 |
 | S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
+| P-001 | LINUX CONNECT-UDP BOUNDED UDP BATCHING | FIXED / PERFORMANCE CANDIDATE |
+| P-002 | CONNECT-IP READY-PACKET DRAIN | FIXED / PERFORMANCE CANDIDATE |
 
 F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
 `tun_tx_gro: false` path is unaffected. F-801 removes the stale root example,
@@ -53,7 +55,11 @@ optional TX-GRO ordering bug: the first segment establishes `gso_size`, a final
 segment may be shorter, a short segment ends the current ordered group, and a
 larger segment cannot follow the established size. `tun_tx_gro` remains
 disabled by default, so the default production path is unaffected. C-01 is
-resolved into this finding.
+resolved into this finding. P-001 adds bounded Linux `recvmmsg` receive and
+`sendmmsg` target writes with non-Linux fallbacks, descriptor reuse, and
+datagram-boundary regression coverage. P-002 drains only already-queued
+CONNECT-IP packets (maximum 32) and leaves queue capacity, TUN offload, and
+TX-GRO defaults unchanged.
 
 ## v1.0.12 aborted pre-release tag attempt
 

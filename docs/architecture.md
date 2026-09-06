@@ -186,8 +186,11 @@ CONNECT-UDP owned pool steady state                        0 allocs/op
 
 The current Flow.Touch benchmark is in the low-nanosecond range with zero
 allocations, and the shared owned pool remains zero-allocation in steady state.
-The final serialization copy, public DatagramBuffer pooling, sendmmsg,
-recvmmsg, MSG_ZEROCOPY, io_uring, custom crypto, incremental checksum, new
-congestion controllers, and UDP batching are deferred. `sendmmsg`/`recvmmsg`
-are explicitly deferred, not release blockers: reopen them only with Linux
-production profiling or reproducible syscall/CPU/latency evidence.
+Linux CONNECT-UDP target relay now uses bounded `recvmmsg` and `sendmmsg`
+adapters with portable one-datagram fallbacks; batch descriptors are reused
+and never wait for future traffic. CONNECT-IP session readers drain only a
+bounded set of already-ready packets even when TUN offload is disabled. Target
+UDP GSO remains deferred because the current relay has no safe aggregation
+queue with a measured benefit. The final serialization copy, public
+DatagramBuffer pooling, MSG_ZEROCOPY, io_uring, custom crypto, incremental
+checksum, and new congestion controllers remain deferred pending evidence.
