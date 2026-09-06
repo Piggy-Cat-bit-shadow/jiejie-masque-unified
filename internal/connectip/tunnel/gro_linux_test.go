@@ -114,6 +114,11 @@ func assertTXGROAggregateDetails(t *testing.T, packet []byte, ipLen, gsoSize, pa
 	if len(p) != ipLen+20+payloadLen || binary.BigEndian.Uint32(p[ipLen+4:]) != firstSeq {
 		t.Fatalf("aggregate length/sequence = %d/%d, want %d/%d", len(p), binary.BigEndian.Uint32(p[ipLen+4:]), ipLen+20+payloadLen, firstSeq)
 	}
+	for i, got := range p[ipLen+20:] {
+		if got != byte(firstSeq+uint32(i)) {
+			t.Fatalf("aggregate payload byte %d = %#x, want %#x", i, got, byte(firstSeq+uint32(i)))
+		}
+	}
 	if v6 {
 		if binary.BigEndian.Uint16(p[4:]) != uint16(len(p)-40) {
 			t.Fatalf("IPv6 payload length = %d, want %d", binary.BigEndian.Uint16(p[4:]), len(p)-40)
