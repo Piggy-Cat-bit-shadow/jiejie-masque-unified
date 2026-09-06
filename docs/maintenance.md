@@ -247,7 +247,7 @@ quic-go:                           b6c72f4e72efb1a668cfa3dd29cf594350d59348
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
 current connect-ip-go version: v0.0.0-20260906041020-e645a82498ea
-current quic-go replacement version: v0.61.1-0.20260906100346-3f6a4de47295
+current quic-go replacement version: v0.61.1-0.20260906101854-509e22e92ae0
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module
@@ -569,15 +569,18 @@ isolated three-namespace topology with veth, nft MASQUERADE, real UDP traffic,
 and conntrack inspection. They require Linux root/CAP_NET_ADMIN and print
 `SKIP` without those prerequisites; they are not part of ordinary Go tests.
 Privileged execution is still required before either kernel finding can be
-claimed as independently reproduced.
+claimed as independently reproduced. The F-302 mode is explicitly a partial
+kernel-state reproducer, not a daemon-restart proof.
 
 The H-307 fork checkpoint is
-`3f6a4de4729516b534a7ae84beeebb5b6f96cc11`
-(`v0.61.1-0.20260906100346-3f6a4de47295`). Its focused deterministic and race
+`509e22e92ae01477de7088738910f77da2631897`
+(`v0.61.1-0.20260906101854-509e22e92ae0`). Its focused deterministic and race
 tests, full fork tests, and main-module module verification are required before
 promotion. `jiejie-masque doctor --config CONFIG` is an explicit read-only
 CONNECT-IP preflight command; it reports PASS/WARN/FAIL/SKIP and never creates
-or changes host state.
+or changes host state. Doctor is unit-validated; production Linux/UFW-host
+validation remains pending. H-307 is deterministic-unit and race validated,
+but real Surge E2E remains pending.
 
 Future commits are additionally gated by `scripts/verify-git-metadata.sh` over
 an explicit newly-added revision range (`v1.0.13..HEAD` in CI). Historical Git

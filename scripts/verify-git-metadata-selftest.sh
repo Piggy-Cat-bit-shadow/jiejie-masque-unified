@@ -19,6 +19,12 @@ base=$(git -C "$root" rev-parse HEAD)
 commit '2+bot@users.noreply.github.com' good
 "$(dirname "$0")/verify-git-metadata.sh" "$base..HEAD" "$root"
 
+head=$(git -C "$root" rev-parse HEAD)
+"$(dirname "$0")/verify-git-metadata.sh" "$head..HEAD" "$root"
+
+commit 'plain@users.noreply.github.com' plain-noreply
+"$(dirname "$0")/verify-git-metadata.sh" "$head..HEAD" "$root"
+
 commit 'private@example.net' bad
 if "$(dirname "$0")/verify-git-metadata.sh" "$base..HEAD" "$root"; then
   echo 'non-noreply identity unexpectedly passed' >&2

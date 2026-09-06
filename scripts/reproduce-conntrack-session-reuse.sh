@@ -8,7 +8,8 @@ mode=${1:-f404}
 case "$mode" in f404|f302) ;; *) echo "usage: $0 [f404|f302]" >&2; exit 2 ;; esac
 
 [[ $(uname -s) == Linux ]] || { echo 'SKIP: Linux is required'; exit 0; }
-[[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'SKIP: root or CAP_NET_ADMIN is required'; exit 0; }
+cap_eff=$(awk '/^CapEff:/ { print $2 }' /proc/self/status)
+(( (16#$cap_eff & (1 << 12)) != 0 )) || { echo 'SKIP: CAP_NET_ADMIN is required'; exit 0; }
 for tool in ip nft conntrack python3; do
   command -v "$tool" >/dev/null || { echo "SKIP: $tool is required"; exit 0; }
 done
@@ -84,9 +85,10 @@ ip netns exec "$router" conntrack -L -p udp | grep -F "$flow" >/dev/null || {
 echo "created NAT flow for first session owner ($mode)"
 
 if [[ $mode == f302 ]]; then
-  # Simulate the daemon restart: client sockets are gone, router conntrack is
-  # intentionally retained, then a new owner obtains the same shadow address.
-  echo 'simulating process restart while kernel conntrack state survives'
+  # This is a partial restart reproducer: a fresh client process obtains the
+  # same tuple while router conntrack deliberately survives. It does not claim
+  # to persist or restart the MASQUE daemon itself.
+  echo 'PARTIAL F-302: simulating fresh client process while kernel conntrack survives'
 else
   # Simulate a cleanup command that failed: deliberately leave the entry in
   # place before handing the exact same address/tuple to the next owner.
@@ -99,4 +101,4 @@ ip netns exec "$router" conntrack -L -p udp | grep -F "$flow" >/dev/null || {
 }
 echo 'REPRODUCED: a new owner can share an extant kernel conntrack tuple after reuse.'
 echo 'F-404 mitigation: the running manager quarantines any address whose cleanup callback fails.'
-echo 'F-302 remains a restart-bound finding: process-local quarantine cannot survive a daemon restart.'
+echo 'F-302 remains deferred: this is a partial kernel-state reproducer, not a daemon-restart proof.'

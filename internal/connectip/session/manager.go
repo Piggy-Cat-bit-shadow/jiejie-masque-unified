@@ -254,7 +254,8 @@ func (e *cleanupExecutor) worker() {
 			select {
 			case <-e.stop:
 				e.dropped.Add(1)
-				job.manager.finishCleanup(job.ip, nil)
+				e.failed.Add(1)
+				job.manager.finishCleanup(job.ip, fmt.Errorf("cleanup executor stopped"))
 				return
 			default:
 			}
@@ -322,7 +323,16 @@ func (e *cleanupExecutor) close() {
 		close(e.stop)
 		e.mu.Unlock()
 		e.workers.Wait()
-		e.dropped.Add(uint64(len(e.jobs)))
+		for {
+			select {
+			case job := <-e.jobs:
+				e.dropped.Add(1)
+				e.failed.Add(1)
+				job.manager.finishCleanup(job.ip, fmt.Errorf("cleanup executor stopped"))
+			default:
+				return
+			}
+		}
 	})
 }
 

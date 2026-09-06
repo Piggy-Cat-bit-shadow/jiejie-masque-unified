@@ -495,7 +495,7 @@ func TestShadowCleanupShutdownDropsQueuedWork(t *testing.T) {
 		t.Fatal("shutdown did not wait for running cleanup callbacks")
 	}
 	stats := m.CleanupStats()
-	if stats.Started != shadowCleanupWorkers || stats.Completed != shadowCleanupWorkers || stats.Dropped != n-shadowCleanupWorkers {
+	if stats.Started != shadowCleanupWorkers || stats.Completed != shadowCleanupWorkers || stats.Dropped != n-shadowCleanupWorkers || stats.Quarantined != n-shadowCleanupWorkers {
 		t.Fatalf("shutdown drained queued cleanup unexpectedly: %+v", stats)
 	}
 }
@@ -545,4 +545,36 @@ func TestShadowCleanupFailureQuarantinesAddress(t *testing.T) {
 	if got := m.CleanupStats().Quarantined; got != 1 {
 		t.Fatalf("quarantined addresses = %d, want 1", got)
 	}
+}
+
+func TestShadowCleanupSuccessDoesNotQuarantineAddress(t *testing.T) {
+	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, []netip.Addr{netip.MustParseAddr("10.200.0.130")}, 0, time.Now, func(uint32) uint32 { return 0 })
+	defer m.CloseCleanup()
+	m.SetShadowCleanup(func(netip.Addr) error { return nil }) // conntrack no-match is also normalized to nil.
+	s := New(netip.MustParseAddr("10.200.0.2"), "first", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
+	if err := m.Register(s); err != nil {
+		t.Fatal(err)
+	}
+	shadow := s.ShadowIP
+	s.Close()
+	deadline := time.After(time.Second)
+	for m.CleanupStats().Completed != 1 {
+		select {
+		case <-deadline:
+			t.Fatal("cleanup did not complete")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if got := m.CleanupStats().Quarantined; got != 0 {
+		t.Fatalf("successful cleanup quarantined %d addresses", got)
+	}
+	next := New(netip.MustParseAddr("10.200.0.2"), "second", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
+	if err := m.Register(next); err != nil {
+		t.Fatal(err)
+	}
+	if next.ShadowIP != shadow {
+		t.Fatalf("successful cleanup reused %s, want %s", next.ShadowIP, shadow)
+	}
+	next.Close()
 }

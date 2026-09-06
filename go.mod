@@ -19,7 +19,7 @@ require (
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior. The replacement is
 // a project-maintained fork carrying required DATAGRAM/ownership integration
 // plus selected congestion-control support for the CONNECT-IP server.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260906100346-3f6a4de47295
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260906101854-509e22e92ae0
 
 require (
 	github.com/metacubex/cpu v0.1.0 // indirect
