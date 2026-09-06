@@ -229,14 +229,14 @@ manually; runtime and CI do not fetch IANA.
 current released version:           v1.0.12
 v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
 v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
-connect-ip-go:                     0bb1cc7fc72405d9e0f1bcdab8707f83feca5ff4
-  pseudo-version:                  v0.0.0-20260906032034-0bb1cc7fc724
-quic-go:                           26f04c632d35496e4ca6dd0e6086980559553142
-  pseudo-version:                  v0.61.1-0.20260906031434-26f04c632d35
+connect-ip-go:                     e645a82498ea70e3411b99e7a338ac740629abdd
+  pseudo-version:                  v0.0.0-20260906041020-e645a82498ea
+quic-go:                           b6c72f4e72efb1a668cfa3dd29cf594350d59348
+  pseudo-version:                  v0.61.1-0.20260906040817-b6c72f4e72ef
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
-current connect-ip-go version: v0.0.0-20260906032034-0bb1cc7fc724
-current quic-go replacement version: v0.61.1-0.20260906031434-26f04c632d35
+current connect-ip-go version: v0.0.0-20260906041020-e645a82498ea
+current quic-go replacement version: v0.61.1-0.20260906040817-b6c72f4e72ef
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module
@@ -539,6 +539,34 @@ candidate only:
 | F-901 | CONNECT-IP TX-GRO owned nonblocking drain capability gate | FIXED / CANDIDATE VERIFIED |
 | F-902 | IPv4 options full-header checksum migration regression | FIXED / CANDIDATE VERIFIED / WAS RELEASE BLOCKER |
 | F-903 | Legacy H3 prepared-DATAGRAM fallback double processing | FIXED / CANDIDATE VERIFIED |
+
+The v1.0.13 tag and release remain uncreated; production remains untouched.
+
+## PRE-v1.0.13 migration regression repair batch 3
+
+| Finding | Description | Candidate status |
+| --- | --- | --- |
+| F-907 | QUIC owned DATAGRAM permanent-discard SendOwner leak | FIXED / CANDIDATE VERIFIED |
+| F-908 | CONNECT-IP plain ReadPacket/WritePacket terminal-error normalization seam | FIXED / CANDIDATE VERIFIED |
+| H-307 | Early DATAGRAM before TrackStream deterministic ownership/barrier coverage | TEST GAP / NOT CONFIRMED; no runtime change |
+
+F-907 is fixed only in the QUIC permanent-discard path: successful packing
+still transfers ownership, ACK-constrained packing retains the frame for retry,
+and permanent discard uses `Drop` to release the SendOwner exactly once.
+F-908 routes both plain packet APIs through the existing terminal-error
+normalization while retaining the DatagramTooLarge ICMP behavior. The early
+DATAGRAM review found existing pre-track drop coverage but no deterministic
+barrier reproducing loss of a valid early datagram; it remains a bounded test
+gap and does not justify a buffering/runtime redesign in this batch.
+
+Batch 3 source checkpoints:
+
+```text
+quic-go:      b6c72f4e72efb1a668cfa3dd29cf594350d59348
+  pseudo:     v0.61.1-0.20260906040817-b6c72f4e72ef
+connect-ip:   e645a82498ea70e3411b99e7a338ac740629abdd
+  pseudo:     v0.0.0-20260906041020-e645a82498ea
+```
 
 The v1.0.13 tag and release remain uncreated; production remains untouched.
 
