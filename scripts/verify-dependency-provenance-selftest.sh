@@ -26,7 +26,7 @@ EOF
 write_docs
 GO_BIN="$fake_go" "$(dirname "$0")/verify-dependency-provenance.sh" "$root"
 
-perl -pi -e 's/20260906025925/20000101000000/' "$root/docs/maintenance.md"
+perl -pi -e 's/20260906032034/20000101000000/' "$root/docs/maintenance.md"
 if GO_BIN="$fake_go" "$(dirname "$0")/verify-dependency-provenance.sh" "$root"; then
   echo 'stale provenance marker unexpectedly passed' >&2
   exit 1
