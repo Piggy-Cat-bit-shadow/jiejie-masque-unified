@@ -557,7 +557,7 @@ tag message:                jiejie-masque v1.0.13
 tag workflow:               34011569170
 release id:                 383464177
 release url:                https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.13
-published_at:               2026-09-06T04:30:53Z
+published_at:               2026-09-06 04h30m53s UTC
 artifact:                  jiejie-masque-linux-amd64
 artifact bytes:             9293950
 artifact sha256:            16bf3e0012dbc9a32d1044615ccca703594dbb5755cb9e17a1073ad36a6f5ef9
