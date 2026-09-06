@@ -70,6 +70,13 @@ skipped, no formal artifact was published, and no GitHub Release exists for
 this aborted attempt. The old tag object is retained here as an aborted
 pre-release tag object and is not the formal `v1.0.12` release tag object.
 
+The first controlled retag then produced annotated tag object
+`b70fde83abcbd9379237698e8aa170b921e4558b`, targeting
+`7ba3e77d8141cf305b2adfeef1275444a9bc84e8`; workflow `34003319620` passed
+the build job but failed in the release job because that independent job also
+needed `rg`. No draft or formal release was created. This superseded tag
+object is likewise retained only as aborted pre-release provenance.
+
 ## v1.0.11 final release provenance
 
 The v1.0.11 annotated tag object is
