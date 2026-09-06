@@ -509,9 +509,9 @@ func TestSessionActivity(t *testing.T) {
 	}
 }
 
-func TestShadowCleanupFailureStillCoolsAddress(t *testing.T) {
+func TestShadowCleanupFailureQuarantinesAddress(t *testing.T) {
 	now := time.Unix(100, 0)
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, nil, time.Hour, func() time.Time { return now }, func(uint32) uint32 { return 0 })
+	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, []netip.Addr{netip.MustParseAddr("10.200.0.130")}, time.Hour, func() time.Time { return now }, func(uint32) uint32 { return 0 })
 	defer m.CloseCleanup()
 	called := make(chan netip.Addr, 1)
 	m.SetShadowCleanup(func(ip netip.Addr) error { called <- ip; return errors.New("cleanup failed") })
@@ -539,11 +539,10 @@ func TestShadowCleanupFailureStillCoolsAddress(t *testing.T) {
 		}
 	}
 	next := New(netip.MustParseAddr("10.200.0.2"), "next", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(next); err != nil {
-		t.Fatal(err)
+	if err := m.Register(next); err == nil {
+		t.Fatalf("quarantined address %s was reused after cleanup failure", shadow)
 	}
-	if next.ShadowIP == shadow {
-		t.Fatal("cooling address was reused after cleanup failure")
+	if got := m.CleanupStats().Quarantined; got != 1 {
+		t.Fatalf("quarantined addresses = %d, want 1", got)
 	}
-	next.Close()
 }

@@ -174,6 +174,7 @@ type Manager struct {
 	max                int
 	excluded           map[netip.Addr]bool
 	cooling            map[netip.Addr]time.Time
+	cleanupQuarantined map[netip.Addr]struct{}
 	reserved           int
 	maxPerIdentity     int
 	reservedByIdentity map[string]int
@@ -204,6 +205,7 @@ type CleanupStats struct {
 	Active         uint64
 	MaxActive      uint64
 	QueueHighWater uint64
+	Quarantined    uint64
 }
 
 type cleanupExecutor struct {
@@ -252,7 +254,7 @@ func (e *cleanupExecutor) worker() {
 			select {
 			case <-e.stop:
 				e.dropped.Add(1)
-				job.manager.finishCleanup(job.ip)
+				job.manager.finishCleanup(job.ip, nil)
 				return
 			default:
 			}
@@ -271,7 +273,7 @@ func (e *cleanupExecutor) worker() {
 			} else {
 				e.completed.Add(1)
 			}
-			job.manager.finishCleanup(job.ip)
+			job.manager.finishCleanup(job.ip, err)
 		}
 	}
 }
@@ -350,6 +352,7 @@ func NewShadowManagerWithClock(pool netip.Prefix, max int, excluded []netip.Addr
 	m.sessionsByID = map[uint64]*Session{}
 	m.excluded = map[netip.Addr]bool{}
 	m.cooling = map[netip.Addr]time.Time{}
+	m.cleanupQuarantined = map[netip.Addr]struct{}{}
 	m.cleanupPending = map[netip.Addr]struct{}{}
 	m.reuseDelay = reuseDelay
 	m.now = now
@@ -461,6 +464,9 @@ func (m *Manager) allocateLocked() (netip.Addr, bool) {
 		if _, pending := m.cleanupPending[ip]; pending {
 			continue
 		}
+		if _, quarantined := m.cleanupQuarantined[ip]; quarantined {
+			continue
+		}
 		if until, ok := m.cooling[ip]; ok {
 			if !m.now().Before(until) {
 				delete(m.cooling, ip)
@@ -511,7 +517,7 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		}
 		m.mu.Unlock()
 		if pending && !executor.enqueue(cleanupJob{manager: m, ip: shadowIP, cleanup: cleanup}) {
-			m.finishCleanup(shadowIP)
+			m.finishCleanup(shadowIP, fmt.Errorf("cleanup executor unavailable"))
 		}
 		return true
 	}
@@ -574,13 +580,19 @@ func (m *Manager) SetShadowCleanup(cleanup func(netip.Addr) error) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) finishCleanup(ip netip.Addr) {
+func (m *Manager) finishCleanup(ip netip.Addr, cleanupErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, pending := m.cleanupPending[ip]; !pending {
 		return
 	}
 	delete(m.cleanupPending, ip)
+	if cleanupErr != nil {
+		// A stale conntrack entry can no longer be attributed to its original
+		// session after this address is reused. Keep it unavailable until restart.
+		m.cleanupQuarantined[ip] = struct{}{}
+		return
+	}
 	if m.reuseDelay > 0 {
 		m.cooling[ip] = m.now().Add(m.reuseDelay)
 	}
@@ -589,11 +601,14 @@ func (m *Manager) finishCleanup(ip netip.Addr) {
 func (m *Manager) CleanupStats() CleanupStats {
 	m.mu.RLock()
 	executor := m.cleanupExecutor
+	quarantined := uint64(len(m.cleanupQuarantined))
 	m.mu.RUnlock()
 	if executor == nil {
-		return CleanupStats{}
+		return CleanupStats{Quarantined: quarantined}
 	}
-	return executor.stats()
+	stats := executor.stats()
+	stats.Quarantined = quarantined
+	return stats
 }
 
 func (m *Manager) CloseCleanup() {
