@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +50,9 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.QUIC.CongestionController != "default" {
 		t.Fatalf("default congestion controller = %q", c.QUIC.CongestionController)
 	}
+	if c.QUIC.StatelessResetKeyFile != DefaultStatelessResetKeyFile {
+		t.Fatalf("default stateless reset key = %q, want %q", c.QUIC.StatelessResetKeyFile, DefaultStatelessResetKeyFile)
+	}
 	if err := os.WriteFile(path, []byte(base+"  session_idle_timeout: 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +65,51 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	}
 	if c.HostNetwork.CheckInterval != "30s" {
 		t.Fatalf("default check interval = %q", c.HostNetwork.CheckInterval)
+	}
+}
+
+func TestLoadPreservesExplicitStatelessResetKeyFile(t *testing.T) {
+	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nquic:\n  stateless_reset_key_file: /custom/example/reset.key\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/30\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.QUIC.StatelessResetKeyFile != "/custom/example/reset.key" {
+		t.Fatalf("explicit stateless reset key = %q", c.QUIC.StatelessResetKeyFile)
+	}
+}
+
+func TestDefaultStatelessResetKeyMatchesPackagedStateDirectory(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	unit, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../contrib/jiejie-masque-connect-ip.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "StateDirectory="
+	var stateDirectory string
+	for _, line := range strings.Split(string(unit), "\n") {
+		if strings.HasPrefix(line, marker) {
+			stateDirectory = strings.TrimSpace(strings.TrimPrefix(line, marker))
+			break
+		}
+	}
+	if stateDirectory == "" {
+		t.Fatal("packaged CONNECT-IP unit has no StateDirectory")
+	}
+	if stateDirectory != ConnectIPStateDirectory {
+		t.Fatalf("StateDirectory = %q, want %q", stateDirectory, ConnectIPStateDirectory)
+	}
+	want := filepath.Join("/var/lib", stateDirectory, "stateless-reset.key")
+	if DefaultStatelessResetKeyFile != want {
+		t.Fatalf("default stateless reset key = %q, want %q", DefaultStatelessResetKeyFile, want)
 	}
 }
 

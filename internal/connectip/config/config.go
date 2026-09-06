@@ -12,6 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	ConnectIPStateDirectory      = "jiejie-masque-connect-ip"
+	DefaultStatelessResetKeyFile = "/var/lib/" + ConnectIPStateDirectory + "/stateless-reset.key"
+)
+
 type Config struct {
 	Mode        string      `yaml:"mode"`
 	Listen      string      `yaml:"listen"`
@@ -95,7 +100,7 @@ func Load(path string) (Config, error) {
 		c.Server.MTU = 1280
 	}
 	if c.QUIC.StatelessResetKeyFile == "" {
-		c.QUIC.StatelessResetKeyFile = "/var/lib/masque-lite/stateless-reset.key"
+		c.QUIC.StatelessResetKeyFile = DefaultStatelessResetKeyFile
 	}
 	if c.QUIC.CongestionController == "" {
 		c.QUIC.CongestionController = "default"
