@@ -194,3 +194,16 @@ UDP GSO remains deferred because the current relay has no safe aggregation
 queue with a measured benefit. The final serialization copy, public
 DatagramBuffer pooling, MSG_ZEROCOPY, io_uring, custom crypto, incremental
 checksum, and new congestion controllers remain deferred pending evidence.
+
+The CONNECT-IP WAN-to-client writer applies the same bounded-ready rule: it
+blocks for one outbound packet, then processes up to 32 packets already in the
+session queue in FIFO order. It caches the connection's owned/buffered/legacy
+writer capability for the session lifetime, records dequeue statistics once per
+burst, and updates activity once after a successful burst. It never waits to
+assemble a batch. A locally drained remainder is released explicitly on
+cancellation, write failure, or ICMP-to-TUN failure; `Session.Close` remains
+responsible only for packets still in the channel. CONNECT-IP writer sends are
+still one `WritePacketBufferOwned` call per packet: the lower layers queue
+owned HTTP/3 DATAGRAMs and QUIC serializes, coalesces, or drops them while
+releasing ownership exactly once, so a new cross-fork batch API is not
+justified without production profiling evidence.

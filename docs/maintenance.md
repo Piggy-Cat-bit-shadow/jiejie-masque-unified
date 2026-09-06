@@ -548,6 +548,22 @@ candidate only:
 
 The v1.0.13 tag and release remain uncreated; production remains untouched.
 
+## v3 final dataplane candidate
+
+The v3 pre-production candidate keeps the v2 queue capacities, MTU, TUN
+offload defaults, and QUIC behavior unchanged. CONNECT-IP WAN-to-client
+`sessionWriter` now drains at most 32 already-ready outbound packets per
+blocking receive, keeps FIFO ordering, caches writer capability, coalesces
+dequeue statistics and activity bookkeeping, and explicitly releases every
+locally drained unprocessed packet on cancellation or terminal failure.
+
+During the associated CONNECT-UDP audit, the client-to-target ready drain was
+corrected to bound *received datagrams*, not merely retained valid payloads.
+Datagrams without a Context ID are now released immediately and cannot extend
+one readiness round beyond 16 receives; retained payloads and owners remain
+one-to-one. No fork, configuration, release, or deployment change is part of
+this candidate.
+
 ## v1.0.13 formal release provenance
 
 v1.0.13 was released from the exact release-preparation commit after the
