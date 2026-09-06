@@ -21,8 +21,11 @@ Current released version: `v1.0.13`
 | H-311 | OBSERVABILITY GAP | DEFERRED |
 | H-312 | OPTIONAL IPv6 GSO HYPOTHESIS | DEFERRED / NO CODE CHANGE |
 | N-06 | LARGE UDP DNS FRAGMENTATION CONTRACT GAP | DOCUMENTED / DEFERRED |
-| N-09 | RUNTIME UFW DRIFT OBSERVABILITY | OBSERVABILITY GAP / DEFERRED |
-| N-12 | FUTURE GIT METADATA PRIVACY HARDENING | DEFERRED / CURRENT COMMITS NOREPLY |
+| N-09 | RUNTIME UFW DRIFT OBSERVABILITY | CLOSED BY EXPLICIT READ-ONLY DOCTOR |
+| N-12 | FUTURE GIT METADATA PRIVACY HARDENING | FIXED / NEW-COMMIT RANGE GATE |
+| H-307 | EARLY CONNECT-UDP REQUEST DATAGRAM | CONFIRMED / FIXED IN QUIC FORK |
+| F-404 | FAILED CONNTRACK CLEANUP SHADOW-IP REUSE | CONFIRMED / FIXED WITH PROCESS-LIFETIME QUARANTINE |
+| F-302 | RESTART-BOUND CONNTRACK LIFECYCLE | ROOT REPRODUCTION HARNESS PROVIDED / DEFERRED |
 | C-01 | VARIABLE SEGMENT-SIZE GRO | RESOLVED INTO F-810 |
 | S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
 | P-001 | LINUX CONNECT-UDP BOUNDED UDP BATCHING | FIXED / PERFORMANCE CANDIDATE |
@@ -48,8 +51,10 @@ N-06 documents the MTU-safe DNS contract: the gateway may accept up to 4096
 bytes after IP reassembly, but fragmented tunnel-local UDP DNS is not
 guaranteed; use EDNS around 1232 bytes and TCP fallback. No fragment tracker
 is implemented. N-09 remains deferred without runtime UFW supervision. N-12
-is deferred because historical metadata is retained and current commits use
-GitHub noreply identity; no history scan is made a release blocker. H-311,
+is now guarded over the explicit new-commit range from `v1.0.13` to `HEAD`;
+historical metadata is retained and never makes the release permanently fail.
+N-09 is covered by the explicit, read-only `doctor` command rather than a
+background firewall supervisor. H-311,
 H-312, and broader S-801 hardening remain deferred. F-810 closes the confirmed
 optional TX-GRO ordering bug: the first segment establishes `gso_size`, a final
 segment may be shorter, a short segment ends the current ordered group, and a
@@ -556,13 +561,15 @@ release, or deploy a server.
 | Finding | Result |
 | --- | --- |
 | H-307 | CONFIRMED / FIXED in the project QUIC fork. A request DATAGRAM arriving before `TrackStream` is retained once per stream for at most one second, with a global bound of 32; registration atomically drains it into the normal stream queue. |
-| F-404 | CONFIRMED / FIXED. A failed shadow-IP conntrack cleanup now permanently quarantines that address for the remaining process lifetime. `CleanupStats.Quarantined` exposes the count. |
-| F-302 | REPRODUCED AS A RESTART-BOUND KERNEL-STATE RISK / DEFERRED. The process-local quarantine deliberately cannot survive a daemon restart; solving it requires a separately designed durable startup/quarantine policy. |
+| F-404 | CONFIRMED / FIXED. A deterministic cleanup-error test proved the previous reuse path; a failed shadow-IP conntrack cleanup now permanently quarantines that address for the remaining process lifetime. `CleanupStats.Quarantined` exposes the count. |
+| F-302 | ROOT REPRODUCTION HARNESS PROVIDED / DEFERRED. The process-local quarantine deliberately cannot survive a daemon restart; solving a confirmed restart case requires a separately designed durable startup/quarantine policy. |
 
 `scripts/reproduce-conntrack-session-reuse.sh f404` and `... f302` build an
 isolated three-namespace topology with veth, nft MASQUERADE, real UDP traffic,
 and conntrack inspection. They require Linux root/CAP_NET_ADMIN and print
 `SKIP` without those prerequisites; they are not part of ordinary Go tests.
+Privileged execution is still required before either kernel finding can be
+claimed as independently reproduced.
 
 The H-307 fork checkpoint is
 `3f6a4de4729516b534a7ae84beeebb5b6f96cc11`
