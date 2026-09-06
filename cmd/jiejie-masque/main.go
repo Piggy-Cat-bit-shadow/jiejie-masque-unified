@@ -383,6 +383,14 @@ func txGRODrainEnabled(tunTXGRO, canTryOwned, canTryLegacy bool) bool {
 	return tunTXGRO && (canTryOwned || canTryLegacy)
 }
 
+// sessionDrainEnabled is independent of TX GRO. A connected-IP stream can
+// expose a nonblocking receive API even when TUN offload is disabled; draining
+// a bounded ready burst still amortizes stream/channel wakeups, while
+// WriteBatch safely falls back to individual TUN writes on the plain path.
+func sessionDrainEnabled(canTryOwned, canTryLegacy bool) bool {
+	return canTryOwned || canTryLegacy
+}
+
 // legacyPacketConn adapts the v0.62 connect-ip-go ReadPacket buffer API to
 // the session layer's established packet-ownership contract.
 type legacyPacketConn struct{ *connectip.Conn }
@@ -593,7 +601,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 		}
 		batch := [][]byte{pkt}
 		releases := []func(){release}
-		if txGRODrainEnabled(tun.TXGROEnabled(), canTryOwned, canTry) {
+		if sessionDrainEnabled(canTryOwned, canTry) {
 			for len(batch) < tunnel.MaxTXGROBatch {
 				var next []byte
 				var nextRelease func()

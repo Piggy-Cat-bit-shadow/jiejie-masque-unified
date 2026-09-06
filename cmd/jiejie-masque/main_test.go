@@ -40,6 +40,21 @@ func TestTXGRODrainCapabilityGate(t *testing.T) {
 	}
 }
 
+func TestSessionDrainCapabilityGate(t *testing.T) {
+	for _, tt := range []struct {
+		owned, legacy bool
+		want          bool
+	}{
+		{owned: true, want: true},
+		{legacy: true, want: true},
+		{want: false},
+	} {
+		if got := sessionDrainEnabled(tt.owned, tt.legacy); got != tt.want {
+			t.Fatalf("sessionDrainEnabled(%t, %t) = %t, want %t", tt.owned, tt.legacy, got, tt.want)
+		}
+	}
+}
+
 func (r *scriptedTunReader) Read(dst []byte) (int, error) {
 	r.reads = append(r.reads, dst)
 	if len(r.packets) == 0 {

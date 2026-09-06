@@ -230,6 +230,9 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 }
 
 func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) error {
+	writer := newUDPWriteBatch(conn)
+	var bufferSlots [udpReadBatchSize]*quic.DatagramBuffer
+	var payloadSlots [udpReadBatchSize][]byte
 	for {
 		buffer, err := str.ReceiveDatagramBuffer(context.Background())
 		if err != nil {
@@ -238,21 +241,55 @@ func (s *Proxy) proxyConnSend(conn *net.UDPConn, str *http3.Stream, flow *Flow) 
 			}
 			return err
 		}
-		payload, ok, err := parseContextDatagram(buffer.Data)
-		if err != nil {
-			buffer.Release()
-			return err
+		buffers := bufferSlots[:1]
+		payloads := payloadSlots[:0]
+		buffers[0] = buffer
+		var pendingErr error
+		for len(buffers) <= udpReadBatchSize {
+			payload, ok, parseErr := parseContextDatagram(buffers[len(buffers)-1].Data)
+			if parseErr != nil {
+				pendingErr = parseErr
+				break
+			}
+			if ok {
+				payloads = append(payloads, payload)
+			} else {
+				buffers[len(buffers)-1].Release()
+				buffers[len(buffers)-1] = nil
+				buffers = buffers[:len(buffers)-1]
+			}
+			if len(buffers) == 0 || len(buffers) >= udpReadBatchSize {
+				break
+			}
+			next, recvErr := str.TryReceiveDatagramBuffer()
+			if errors.Is(recvErr, context.Canceled) {
+				break
+			}
+			if recvErr != nil {
+				pendingErr = recvErr
+				break
+			}
+			buffers = append(buffers, next)
 		}
-		if !ok {
-			buffer.Release()
-			continue
+		if len(payloads) > 0 {
+			sent, writeErr := writer.Write(payloads)
+			for i, b := range buffers {
+				if i < sent {
+					flow.Touch()
+				}
+				b.Release()
+			}
+			if writeErr != nil {
+				return writeErr
+			}
+		} else {
+			for _, b := range buffers {
+				b.Release()
+			}
 		}
-		if _, err := conn.Write(payload); err != nil {
-			buffer.Release()
-			return err
+		if pendingErr != nil {
+			return pendingErr
 		}
-		buffer.Release()
-		flow.Touch()
 	}
 }
 
@@ -261,7 +298,7 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flo
 	for {
 		n, err := batch.Read(ownedPool)
 		if err != nil {
-			batch.releaseFrom(0)
+			batch.releaseAll()
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -287,7 +324,6 @@ func (s *Proxy) proxyConnReceive(conn *net.UDPConn, str *http3.Stream, flow *Flo
 			batch.buffers[i] = nil // ownership transferred to QUIC
 			flow.Touch()
 		}
-		batch.releaseFrom(n)
 	}
 }
 

@@ -17,7 +17,11 @@ type udpReadBatch struct {
 func newUDPReadBatch(conn *net.UDPConn) *udpReadBatch { return &udpReadBatch{conn: conn} }
 
 func (b *udpReadBatch) Read(pool *udpOwnedDatagramPool) (int, error) {
-	buffer := pool.Acquire()
+	buffer := b.buffers[0]
+	if buffer == nil {
+		buffer = pool.Acquire()
+		b.buffers[0] = buffer
+	}
 	b.buffers[0] = buffer
 	n, err := b.conn.Read(buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1])
 	b.sizes[0] = n
@@ -40,3 +44,5 @@ func (b *udpReadBatch) releaseFrom(n int) {
 		}
 	}
 }
+
+func (b *udpReadBatch) releaseAll() { b.releaseFrom(0) }

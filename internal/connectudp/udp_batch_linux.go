@@ -23,13 +23,15 @@ func newUDPReadBatch(conn *net.UDPConn) *udpReadBatch {
 	return &udpReadBatch{conn: ipv4.NewPacketConn(conn)}
 }
 
-// Read acquires the complete bounded batch before entering recvmmsg. The
-// caller owns every acquired entry and must release entries at and beyond n,
-// as well as entries it does not hand to QUIC.
+// Read retains unused slots between readiness rounds. A slot handed to QUIC is
+// set to nil by the caller and receives a fresh ownership generation next
+// round; retained slots are never released while the socket remains active.
 func (b *udpReadBatch) Read(pool *udpOwnedDatagramPool) (int, error) {
 	for i := range b.buffers {
-		buffer := pool.Acquire()
-		b.buffers[i] = buffer
+		if b.buffers[i] == nil {
+			b.buffers[i] = pool.Acquire()
+		}
+		buffer := b.buffers[i]
 		b.messages[i].Buffers = [][]byte{buffer.data[udpPayloadOffset : udpPayloadOffset+maxUDPPayloadSize+1]}
 		b.messages[i].N = 0
 	}
@@ -49,3 +51,5 @@ func (b *udpReadBatch) releaseFrom(n int) {
 		}
 	}
 }
+
+func (b *udpReadBatch) releaseAll() { b.releaseFrom(0) }

@@ -73,6 +73,11 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Linux dataplane benchmarks
+        run: |
+          go test ./internal/connectudp -run '^$' -bench 'BenchmarkUDP(ReadBatchLoopback|ReadSingleLoopback)' -benchtime=250ms -count=3
+          go test ./cmd/jiejie-masque -run '^$' -bench BenchmarkTUNBatchSlotRefill -benchtime=250ms -count=3
+
       - name: TX GRO targeted stress
         run: |
           go test -count=300 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
