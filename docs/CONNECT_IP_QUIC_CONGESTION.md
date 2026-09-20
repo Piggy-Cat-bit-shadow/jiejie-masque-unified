@@ -57,7 +57,11 @@ concept against an older, incompatible quic-go API. It requires porting its
 private congestion package and lifecycle wiring, so it is neither a maintained
 drop-in dependency nor a permissible "minimal native factory" patch. It is not
 included. `bbr` fails config validation explicitly rather than silently falling
-back to CUBIC; there is no BBR profile setting in this build.
+back to CUBIC; there is no BBR profile setting in this build. The IETF CCWG
+now has an Experimental BBRv3 draft (`draft-ietf-ccwg-bbr-06`, July 2026), but
+that does not make an unvalidated QUIC port production-ready. This project
+therefore keeps BBR out of the production build until pacing, loss, ECN,
+reordering, and WAN regression coverage exist.
 
 ## WAN A/B procedure and queue guidance
 

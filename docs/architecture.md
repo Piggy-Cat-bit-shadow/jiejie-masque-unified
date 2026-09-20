@@ -160,7 +160,8 @@ UDP dial fallback, and TCP dial work.
 
 TUN offload and TCP TX GRO default to false. UDP GRO/USO is not supported.
 QUIC UDP GSO remains enabled. Congestion controller values are `default` and
-`cubic`; `default` preserves baseline behavior, and BBR is not implemented.
+`cubic`; `default` preserves baseline behavior. BBRv3 is an IETF Experimental
+draft, but is not implemented in this fork and is not production-recommended.
 
 QUIC startup reports requested/effective UDP socket buffers where the platform
 allows inspection. Insufficient tuning is observable and non-fatal. The service
