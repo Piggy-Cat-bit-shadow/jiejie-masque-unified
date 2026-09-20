@@ -338,6 +338,19 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 						YieldPTO:                  schedulerCounter(runtimeStats.YieldPTO, previousRuntime.YieldPTO, baseline),
 						YieldOther:                schedulerCounter(runtimeStats.YieldOther, previousRuntime.YieldOther, baseline),
 					},
+					GSO: diagnostics.GSOStats{
+						UDPWrites:           schedulerCounter(runtimeStats.UDPWrites, previousRuntime.UDPWrites, baseline),
+						GSOWrites:           schedulerCounter(runtimeStats.GSOWrites, previousRuntime.GSOWrites, baseline),
+						NonGSOWrites:        schedulerCounter(runtimeStats.NonGSOWrites, previousRuntime.NonGSOWrites, baseline),
+						GSOSegments:         schedulerCounter(runtimeStats.GSOSegments, previousRuntime.GSOSegments, baseline),
+						SegmentsPerWrite:    segmentsPerWriteAverage(runtimeStats.SegmentsPerWriteBuckets),
+						SegmentsP50:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 50),
+						SegmentsP90:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 90),
+						SegmentsP99:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 99),
+						SegmentsMax:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 100),
+						BytesPerWrite:       average(runtimeStats.UDPWireBytes, runtimeStats.UDPWrites),
+						QUICPacketsPerWrite: ratio(runtimeStats.PacketsPacked, runtimeStats.UDPWrites),
+					},
 					Queues: diagnostics.QueueStats{
 						Session: diagnostics.SessionQueueStats{Sessions: queueStats.Sessions, Capacity: queueStats.Capacity,
 							Depth: queueStats.Depth, HighWater: queueStats.HighWater, Enqueued: queueStats.Enqueued,
@@ -368,7 +381,7 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			t := tun.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d nonempty=%s blocked=%d/%s send_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d hard_block=%d/%s packed=%d/%dB pacing_wakeups=%d udp_writes=%d udp_wire_bytes=%d gso_bytes=%d rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramEnqueue, qs.DatagramDequeue, qs.DatagramEnqueueBytes, qs.DatagramDequeueBytes, qs.DatagramNonEmptyDuration, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueEnqueue, qs.SendQueueDequeue, qs.SendQueueEnqueueBytes, qs.SendQueueDequeueBytes, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.PacketsPacked, qs.PackedBytes, qs.PacingWakeups, qs.UDPWrites, qs.UDPWireBytes, qs.GSOBytes, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d nonempty=%s blocked=%d/%s send_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d hard_block=%d/%s packed=%d/%dB pacing_wakeups=%d udp_writes=%d udp_wire_bytes=%d gso_bytes=%d gso_writes=%d non_gso_writes=%d gso_segments=%d segments_per_write=%.2f/%d/%d/%d/%d rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramEnqueue, qs.DatagramDequeue, qs.DatagramEnqueueBytes, qs.DatagramDequeueBytes, qs.DatagramNonEmptyDuration, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueEnqueue, qs.SendQueueDequeue, qs.SendQueueEnqueueBytes, qs.SendQueueDequeueBytes, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.PacketsPacked, qs.PackedBytes, qs.PacingWakeups, qs.UDPWrites, qs.UDPWireBytes, qs.GSOBytes, qs.GSOWrites, qs.NonGSOWrites, qs.GSOSegments, segmentsPerWriteAverage(qs.SegmentsPerWriteBuckets), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 50), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 90), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 99), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 100), qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
 		}
 	}
 }
@@ -397,6 +410,51 @@ func schedulerCounter(total, previous uint64, baseline bool) diagnostics.Counter
 		return diagnostics.CounterStats{Total: total}
 	}
 	return diagnostics.CounterStats{Total: total, Delta: counterDelta(total, previous)}
+}
+
+func average(total, count uint64) uint64 {
+	if count == 0 {
+		return 0
+	}
+	return total / count
+}
+
+func ratio(total, count uint64) float64 {
+	if count == 0 {
+		return 0
+	}
+	return float64(total) / float64(count)
+}
+
+func segmentsPerWriteAverage(buckets [65]uint64) float64 {
+	var writes, segments uint64
+	for i, count := range buckets {
+		writes += count
+		segments += uint64(i) * count
+	}
+	if writes == 0 {
+		return 0
+	}
+	return float64(segments) / float64(writes)
+}
+
+func segmentWritePercentile(buckets [65]uint64, percentile uint64) uint64 {
+	var total uint64
+	for _, count := range buckets {
+		total += count
+	}
+	if total == 0 {
+		return 0
+	}
+	target := (total*percentile + 99) / 100
+	var seen uint64
+	for i, count := range buckets {
+		seen += count
+		if seen >= target {
+			return uint64(i)
+		}
+	}
+	return uint64(len(buckets) - 1)
 }
 
 func isServerClosed(err error) bool {

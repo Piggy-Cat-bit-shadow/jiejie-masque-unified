@@ -117,6 +117,10 @@ type AggregateRuntimeStats struct {
 	UDPWrites                    uint64
 	UDPWireBytes                 uint64
 	GSOBytes                     uint64
+	GSOWrites                    uint64
+	NonGSOWrites                 uint64
+	GSOSegments                  uint64
+	SegmentsPerWriteBuckets      [65]uint64
 	PacketsPacked                uint64
 	PackedBytes                  uint64
 	PacingWakeups                uint64
@@ -790,6 +794,12 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.UDPWrites += stats.UDPWrites
 		out.UDPWireBytes += stats.UDPWireBytes
 		out.GSOBytes += stats.GSOBytes
+		out.GSOWrites += stats.GSOWrites
+		out.NonGSOWrites += stats.NonGSOWrites
+		out.GSOSegments += stats.GSOSegments
+		for i, count := range stats.SegmentsPerWriteBuckets {
+			out.SegmentsPerWriteBuckets[i] += count
+		}
 		out.PacketsPacked += stats.PacketsPacked
 		out.PackedBytes += stats.PackedBytes
 		out.PacingWakeups += stats.PacingWakeups

@@ -80,6 +80,21 @@ func TestProtocolForParse(t *testing.T) {
 	}
 }
 
+func TestSegmentsPerWriteMetrics(t *testing.T) {
+	var buckets [65]uint64
+	buckets[1] = 4
+	buckets[4] = 1
+	if got := segmentsPerWriteAverage(buckets); got != 1.6 {
+		t.Fatalf("average segments/write = %v, want 1.6", got)
+	}
+	if got := segmentWritePercentile(buckets, 50); got != 1 {
+		t.Fatalf("p50 segments/write = %d, want 1", got)
+	}
+	if got := segmentWritePercentile(buckets, 90); got != 4 {
+		t.Fatalf("p90 segments/write = %d, want 4", got)
+	}
+}
+
 func TestRequestTemplateRejectsMalformedAuthority(t *testing.T) {
 	for _, host := range []string{"", "user@example.com", "example.com/path", "example.com:bad"} {
 		if got, err := requestTemplate(host); err == nil || got != nil {

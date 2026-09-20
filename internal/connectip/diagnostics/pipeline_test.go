@@ -55,6 +55,9 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 	p.Add(UDPWire, 1, 1280)
 	s, _ := p.Snapshot(nil, time.Second)
 	s.Runtime.Scheduler.TXTurnEndedDueToRXPending.Total = 7
+	s.Runtime.GSO.UDPWrites = CounterStats{Total: 12, Delta: 4}
+	s.Runtime.GSO.GSOSegments = CounterStats{Total: 30, Delta: 10}
+	s.Runtime.GSO.SegmentsP50 = 1
 	s.RefreshGaps()
 	b, err := s.JSON()
 	if err != nil {
@@ -68,7 +71,7 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 			t.Fatalf("unexpected sensitive field %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(b), `"downstream"`) || !strings.Contains(string(b), `"upstream"`) || !strings.Contains(string(b), `"scheduler"`) || !strings.Contains(string(b), `"tx_turn_ended_due_to_rx_pending":{"total":7,"delta":0}`) {
+	if !strings.Contains(string(b), `"downstream"`) || !strings.Contains(string(b), `"upstream"`) || !strings.Contains(string(b), `"scheduler"`) || !strings.Contains(string(b), `"gso"`) || !strings.Contains(string(b), `"segments_per_write_p50":1`) || !strings.Contains(string(b), `"udp_writes":{"total":12,"delta":4}`) || !strings.Contains(string(b), `"tx_turn_ended_due_to_rx_pending":{"total":7,"delta":0}`) {
 		t.Fatalf("missing typed pipeline sections: %s", b)
 	}
 }

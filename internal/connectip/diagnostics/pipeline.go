@@ -95,8 +95,23 @@ type DirectionStats struct {
 type RuntimeStats struct {
 	QUIC      QUICStats      `json:"quic"`
 	Scheduler SchedulerStats `json:"scheduler"`
+	GSO       GSOStats       `json:"gso"`
 	Queues    QueueStats     `json:"queues"`
 	TUN       TUNStats       `json:"tun"`
+}
+
+type GSOStats struct {
+	UDPWrites           CounterStats `json:"udp_writes"`
+	GSOWrites           CounterStats `json:"gso_writes"`
+	NonGSOWrites        CounterStats `json:"non_gso_writes"`
+	GSOSegments         CounterStats `json:"gso_segments"`
+	SegmentsPerWrite    float64      `json:"segments_per_write_avg"`
+	SegmentsP50         uint64       `json:"segments_per_write_p50"`
+	SegmentsP90         uint64       `json:"segments_per_write_p90"`
+	SegmentsP99         uint64       `json:"segments_per_write_p99"`
+	SegmentsMax         uint64       `json:"segments_per_write_max"`
+	BytesPerWrite       uint64       `json:"bytes_per_write_avg"`
+	QUICPacketsPerWrite float64      `json:"quic_packets_per_write_avg"`
 }
 
 type QUICStats struct {
