@@ -167,6 +167,17 @@ func TestCongestionControllerValidation(t *testing.T) {
 	}
 }
 
+func TestPipelineDiagnosticsValidation(t *testing.T) {
+	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/30"}, Diagnostics: Diagnostics{Pipeline: Pipeline{Enabled: true, Interval: "1s", Format: "json"}}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid pipeline rejected: %v", err)
+	}
+	c.Diagnostics.Pipeline.Format = "xml"
+	if err := c.Validate(); err == nil {
+		t.Fatal("invalid pipeline format accepted")
+	}
+}
+
 func TestMultiClientValidation(t *testing.T) {
 	keyA := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
 	keyB := "BJVHqCpze4DJd2ZMvQDENmffhP3y1iW9t63vgbGvZ2mCC9kAmupPlruK5JYN8ZpAOFBTQ9zetFSFbPIBH3mWbgA="

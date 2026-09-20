@@ -101,10 +101,25 @@ type AggregateRuntimeStats struct {
 	DatagramQueueHighWater       uint64
 	DatagramBlocked              uint64
 	DatagramBlockedDuration      time.Duration
+	DatagramEnqueue              uint64
+	DatagramDequeue              uint64
+	DatagramEnqueueBytes         uint64
+	DatagramDequeueBytes         uint64
+	DatagramNonEmptyDuration     time.Duration
 	SendQueueDepth               uint64
 	SendQueueHighWater           uint64
 	SendQueueHardBlocks          uint64
 	SendQueueHardBlockedDuration time.Duration
+	SendQueueEnqueue             uint64
+	SendQueueDequeue             uint64
+	SendQueueEnqueueBytes        uint64
+	SendQueueDequeueBytes        uint64
+	UDPWrites                    uint64
+	UDPWireBytes                 uint64
+	GSOBytes                     uint64
+	PacketsPacked                uint64
+	PackedBytes                  uint64
+	PacingWakeups                uint64
 	ReceivedPacketQueueDrops     uint64
 	ReceivedDatagramQueueDrops   uint64
 	MinRTT                       time.Duration
@@ -742,10 +757,25 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.DatagramQueueHighWater += stats.DatagramSendQueueHighWater
 		out.DatagramBlocked += stats.DatagramSendBlocked
 		out.DatagramBlockedDuration += stats.DatagramSendBlockedDuration
+		out.DatagramEnqueue += stats.DatagramSendEnqueue
+		out.DatagramDequeue += stats.DatagramSendDequeue
+		out.DatagramEnqueueBytes += stats.DatagramSendEnqueueBytes
+		out.DatagramDequeueBytes += stats.DatagramSendDequeueBytes
+		out.DatagramNonEmptyDuration = max(out.DatagramNonEmptyDuration, stats.DatagramQueueNonEmptyDuration)
 		out.SendQueueDepth += stats.SendQueueDepth
 		out.SendQueueHighWater += stats.SendQueueHighWater
 		out.SendQueueHardBlocks += stats.SendQueueHardBlocks
 		out.SendQueueHardBlockedDuration += stats.SendQueueHardBlockedDuration
+		out.SendQueueEnqueue += stats.SendQueueEnqueue
+		out.SendQueueDequeue += stats.SendQueueDequeue
+		out.SendQueueEnqueueBytes += stats.SendQueueEnqueueBytes
+		out.SendQueueDequeueBytes += stats.SendQueueDequeueBytes
+		out.UDPWrites += stats.UDPWrites
+		out.UDPWireBytes += stats.UDPWireBytes
+		out.GSOBytes += stats.GSOBytes
+		out.PacketsPacked += stats.PacketsPacked
+		out.PackedBytes += stats.PackedBytes
+		out.PacingWakeups += stats.PacingWakeups
 		out.ReceivedPacketQueueDrops += stats.ReceivedPacketQueueDrops
 		out.ReceivedDatagramQueueDrops += stats.ReceivedDatagramQueueDrops
 		if stats.MinRTT > 0 && (out.MinRTT == 0 || stats.MinRTT < out.MinRTT) {

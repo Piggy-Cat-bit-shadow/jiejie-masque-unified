@@ -4,6 +4,12 @@ diagnostics:
   qlog:
     enabled: false
     directory: /var/log/jiejie-masque/qlog
+  # Opt-in one-second aggregate pipeline diagnostics. JSON emits one JSON line
+  # per interval and never includes client identity, targets, or payloads.
+  pipeline:
+    enabled: false
+    interval: 1s
+    format: text
 tls:
   # Generated with: jiejie-masque server-keygen --cert /etc/jiejie-masque/connect-ip/server.crt --key /etc/jiejie-masque/connect-ip/server.key
   # Must be an independent P-256 ECDSA certificate, not a wildcard certificate.

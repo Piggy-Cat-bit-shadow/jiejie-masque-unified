@@ -22,6 +22,7 @@ import (
 	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/diagnostics"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/hostnet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
@@ -35,6 +36,7 @@ import (
 )
 
 var lastQueueOverflowLog atomic.Int64
+var connectIPPipeline atomic.Pointer[diagnostics.Probe]
 
 func runConnectIPLegacy() {
 	if err := serveConnectIP(); err != nil {
@@ -43,6 +45,12 @@ func runConnectIPLegacy() {
 }
 
 func serveConnectIP() error {
+	if len(os.Args) > 1 && os.Args[1] == "diagnose-report" {
+		if len(os.Args) != 3 {
+			return fmt.Errorf("usage: diagnose-report FILE")
+		}
+		return diagnoseReport(os.Args[2])
+	}
 	if len(os.Args) > 1 && os.Args[1] == "keygen" {
 		keygen()
 		return nil
@@ -64,6 +72,10 @@ func serveConnectIP() error {
 	c, err := config.Load(*path)
 	if err != nil {
 		return err
+	}
+	connectIPPipeline.Store(nil)
+	if c.Diagnostics.Pipeline.Enabled {
+		connectIPPipeline.Store(&diagnostics.Probe{})
 	}
 	if err := validateQLogDirectory(c.Diagnostics.QLog); err != nil {
 		return err
@@ -207,7 +219,7 @@ func serveConnectIP() error {
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopReaper := context.WithCancel(context.Background())
 	defer stopReaper()
-	go connectIPDiagnostics(appCtx, mgr, tun)
+	go connectIPDiagnostics(appCtx, mgr, tun, c.Diagnostics.Pipeline)
 	idleTimeout, _ := time.ParseDuration(c.Server.SessionIdleTimeout)
 	if idleTimeout > 0 {
 		go sessionReaper(appCtx, mgr, idleTimeout)
@@ -246,22 +258,72 @@ func serveConnectIP() error {
 // connectIPDiagnostics emits identity-free, rate-limited dataplane counters.
 // It is intentionally a periodic snapshot: packet-level logging would itself
 // distort the WAN path being diagnosed.
-func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel.Device) {
-	ticker := time.NewTicker(30 * time.Second)
+func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel.Device, cfg config.Pipeline) {
+	interval := 30 * time.Second
+	if cfg.Enabled {
+		interval, _ = time.ParseDuration(cfg.Interval)
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var previous map[diagnostics.Stage]diagnostics.Point
+	var previousAt time.Time
+	var previousRuntime session.AggregateRuntimeStats
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if probe := connectIPPipeline.Load(); cfg.Enabled && probe != nil {
+				now := time.Now()
+				elapsed := interval
+				if !previousAt.IsZero() {
+					elapsed = now.Sub(previousAt)
+				}
+				snapshot, next := probe.Snapshot(previous, elapsed)
+				previous, previousAt = next, now
+				runtimeStats := mgr.AggregateRuntimeStats()
+				if !previousAt.IsZero() {
+					setRuntimeStage(&snapshot, diagnostics.QUICDatagramEnqueue, counterDelta(runtimeStats.DatagramEnqueueBytes, previousRuntime.DatagramEnqueueBytes), counterDelta(runtimeStats.DatagramEnqueue, previousRuntime.DatagramEnqueue), elapsed)
+					setRuntimeStage(&snapshot, diagnostics.QUICDatagramDequeue, counterDelta(runtimeStats.DatagramDequeueBytes, previousRuntime.DatagramDequeueBytes), counterDelta(runtimeStats.DatagramDequeue, previousRuntime.DatagramDequeue), elapsed)
+					setRuntimeStage(&snapshot, diagnostics.QUICPacketPacked, counterDelta(runtimeStats.PackedBytes, previousRuntime.PackedBytes), counterDelta(runtimeStats.PacketsPacked, previousRuntime.PacketsPacked), elapsed)
+					setRuntimeStage(&snapshot, diagnostics.QUICPacketSent, counterDelta(runtimeStats.SendQueueDequeueBytes, previousRuntime.SendQueueDequeueBytes), counterDelta(runtimeStats.SendQueueDequeue, previousRuntime.SendQueueDequeue), elapsed)
+					setRuntimeStage(&snapshot, diagnostics.UDPWrite, counterDelta(runtimeStats.UDPWireBytes, previousRuntime.UDPWireBytes), counterDelta(runtimeStats.UDPWrites, previousRuntime.UDPWrites), elapsed)
+					setRuntimeStage(&snapshot, diagnostics.UDPWire, counterDelta(runtimeStats.UDPWireBytes, previousRuntime.UDPWireBytes), counterDelta(runtimeStats.UDPWrites, previousRuntime.UDPWrites), elapsed)
+				}
+				previousRuntime = runtimeStats
+				if cfg.Format == "json" {
+					if encoded, err := snapshot.JSON(); err == nil {
+						log.Printf("CONNECT-IP pipeline: %s", encoded)
+					}
+				} else {
+					log.Printf("CONNECT-IP pipeline: interval=%s tun_rx_mbps=%.2f session_enqueue_mbps=%.2f session_writer_mbps=%.2f connectip_rx_mbps=%.2f udp_wire_mbps=%.2f largest_gap=%s->%s/%.3f", snapshot.IntervalSecondsString(), snapshot.Stages[string(diagnostics.TunRead)].Mbps, snapshot.Stages[string(diagnostics.SessionEnqueue)].Mbps, snapshot.Stages[string(diagnostics.SessionWriterSubmit)].Mbps, snapshot.Stages[string(diagnostics.ConnectIPPacketReceived)].Mbps, snapshot.Stages[string(diagnostics.UDPWire)].Mbps, snapshot.LargestGap.From, snapshot.LargestGap.To, snapshot.LargestGap.Ratio)
+				}
+				continue
+			}
 			q := mgr.AggregateQueueStats()
 			qs := mgr.AggregateRuntimeStats()
 			t := tun.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d blocked=%d/%s send_queue=%d/%d hard_block=%d/%s rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d nonempty=%s blocked=%d/%s send_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d hard_block=%d/%s packed=%d/%dB pacing_wakeups=%d udp_writes=%d udp_wire_bytes=%d gso_bytes=%d rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramEnqueue, qs.DatagramDequeue, qs.DatagramEnqueueBytes, qs.DatagramDequeueBytes, qs.DatagramNonEmptyDuration, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueEnqueue, qs.SendQueueDequeue, qs.SendQueueEnqueueBytes, qs.SendQueueDequeueBytes, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.PacketsPacked, qs.PackedBytes, qs.PacingWakeups, qs.UDPWrites, qs.UDPWireBytes, qs.GSOBytes, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
 		}
 	}
+}
+
+func setRuntimeStage(snapshot *diagnostics.Stats, stage diagnostics.Stage, bytes, packets uint64, elapsed time.Duration) {
+	seconds := elapsed.Seconds()
+	if seconds <= 0 {
+		return
+	}
+	bytesPerSecond := float64(bytes) / seconds
+	snapshot.Stages[string(stage)] = diagnostics.StageStats{PacketsTotal: packets, BytesTotal: bytes, PacketsPerSecond: float64(packets) / seconds, BytesPerSecond: bytesPerSecond, Mbps: bytesPerSecond * 8 / 1e6}
+}
+
+func counterDelta(now, before uint64) uint64 {
+	if now < before {
+		return now
+	}
+	return now - before
 }
 
 func isServerClosed(err error) bool {
@@ -497,6 +559,9 @@ func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, packetPo
 		if now-previous >= 30 && lastQueueOverflowLog.CompareAndSwap(previous, now) {
 			log.Printf("CONNECT-IP outbound queue overflow: aggregate_drops=%d", mgr.QueueOverflowTotal())
 		}
+	} else if probe := connectIPPipeline.Load(); probe != nil {
+		probe.Add(diagnostics.SessionEnqueue, 1, uint64(len(pkt.Data)))
+		probe.Add(diagnostics.TunDispatchSuccess, 1, uint64(len(pkt.Data)))
 	}
 	return true
 }
@@ -515,6 +580,13 @@ func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool
 			}
 			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
 			return
+		}
+		if probe := connectIPPipeline.Load(); probe != nil {
+			var bytes uint64
+			for i := 0; i < n; i++ {
+				bytes += uint64(sizes[i])
+			}
+			probe.Add(diagnostics.TunRead, uint64(n), bytes)
 		}
 		for i, pkt := range packets {
 			if i >= n {
@@ -562,6 +634,9 @@ func tunDispatcherReadLoop(tun tunPacketReader, mgr *session.Manager, packetPool
 			packetPool.Put(pkt)
 			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
 			return
+		}
+		if probe := connectIPPipeline.Load(); probe != nil {
+			probe.Add(diagnostics.TunRead, 1, uint64(n))
 		}
 		if !packetPool.CommitRead(pkt, n) {
 			packetPool.Put(pkt)
@@ -660,6 +735,13 @@ func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int
 			batch = drainSessionWriterReady(pkt, s.Outbound, batch)
 		}
 		s.RecordDequeuedN(len(batch))
+		if probe := connectIPPipeline.Load(); probe != nil {
+			var bytes uint64
+			for _, pkt := range batch {
+				bytes += uint64(len(pkt.Data))
+			}
+			probe.Add(diagnostics.SessionDequeue, uint64(len(batch)), bytes)
+		}
 		successful := 0
 		for i, pkt := range batch {
 			if s.Ctx.Err() != nil {
@@ -670,6 +752,13 @@ func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int
 				return
 			}
 			icmp, err := writer.write(s, pkt)
+			if probe := connectIPPipeline.Load(); probe != nil {
+				probe.Add(diagnostics.SessionWriterSubmit, 1, uint64(len(pkt.Data)))
+				if err == nil {
+					probe.Add(diagnostics.ConnectIPDatagramSubmit, 1, uint64(len(pkt.Data)))
+					probe.Add(diagnostics.HTTP3DatagramSubmit, 1, uint64(len(pkt.Data)))
+				}
+			}
 			if len(icmp) > 0 {
 				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
 					// Do not let an untranslated response skip error handling for
@@ -727,10 +816,18 @@ func sessionReaderWithAddresses(s *session.Session, tun *tunnel.Device, mgr *ses
 			owned, err = ownedReader.ReadPacketBuffer()
 			if err == nil {
 				pkt, release = owned.Data, owned.Release
+				if probe := connectIPPipeline.Load(); probe != nil {
+					probe.Add(diagnostics.ConnectIPPacketReceived, 1, uint64(len(pkt)))
+				}
 			}
 		} else {
 			pkt, err = s.Conn.ReadPacket()
 			release = func() {}
+			if err == nil {
+				if probe := connectIPPipeline.Load(); probe != nil {
+					probe.Add(diagnostics.ConnectIPPacketReceived, 1, uint64(len(pkt)))
+				}
+			}
 		}
 		if err != nil {
 			if normalSessionError(err, s.Ctx) {
@@ -779,8 +876,18 @@ func sessionReaderWithAddresses(s *session.Session, tun *tunnel.Device, mgr *ses
 		}
 		if err == nil {
 			if len(batch) == 1 {
+				if probe := connectIPPipeline.Load(); probe != nil {
+					probe.Add(diagnostics.TunWrite, 1, uint64(len(batch[0])))
+				}
 				_, err = tun.Write(batch[0])
 			} else {
+				if probe := connectIPPipeline.Load(); probe != nil {
+					var bytes uint64
+					for _, pkt := range batch {
+						bytes += uint64(len(pkt))
+					}
+					probe.Add(diagnostics.TunWrite, uint64(len(batch)), bytes)
+				}
 				_, err = tun.WriteBatch(batch)
 			}
 		}

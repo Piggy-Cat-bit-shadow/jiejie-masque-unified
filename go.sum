@@ -1,7 +1,7 @@
 github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260920121826-9ff1656afbaf h1:VePJ0vnqZUoXW2wLP/1ETNTKBqIPLB6RT+YpDCynnzM=
 github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260920121826-9ff1656afbaf/go.mod h1:UqplDiIFhnX+AmFgFe3C5e1d+y/3HfrV1pBBXp6OrBk=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920121748-02ac8e5cb125 h1:RY9E2CvfFNviK5Saef2cgaJIpkW9WFsI+oHc1uBby1c=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920121748-02ac8e5cb125/go.mod h1:wSLVa9CU2j2Go9SRmgcjRIwsd2sIEpRyKophg3YLLYQ=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920123852-3a2faf7b603f h1:rGns6J8wbUeaRD4AJlihptCbvRnkVpJw2kBgd9yPRf8=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920123852-3a2faf7b603f/go.mod h1:wSLVa9CU2j2Go9SRmgcjRIwsd2sIEpRyKophg3YLLYQ=
 github.com/dunglas/httpsfv v1.1.1 h1:HoSs101zIE9I23DlqlmljJ/OIi7ILwrH347pXhRZdxI=
 github.com/dunglas/httpsfv v1.1.1/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
 github.com/metacubex/cpu v0.1.0 h1:8PeTdV9j6UKbN1K5Jvtbi/Jock7dknvzyYuLb8Conmk=

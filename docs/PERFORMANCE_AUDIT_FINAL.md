@@ -35,6 +35,40 @@ masque0 TUN -> TUN batch reader -> packet.Parse / policy / NAT rewrite
 No packet-level logging is enabled by default. Diagnostics are aggregate and
 periodic; QLOG remains opt-in.
 
+## CONNECT-IP pipeline diagnosis
+
+The measured download path is:
+
+```text
+TUN Read -> dispatch/session lookup -> Session outbound queue
+  -> sessionWriter -> connect-ip-go WritePacketBufferOwned
+  -> HTTP/3 DATAGRAM -> quic-go DATAGRAM queue -> packet packer
+  -> CUBIC/pacer -> bounded sendQueue -> UDP/GSO -> WAN
+```
+
+The reverse path is measured separately:
+
+```text
+WAN -> UDP/quic-go receive -> HTTP/3 DATAGRAM -> connect-ip-go
+  -> sessionReader -> TUN Write/WriteBatch -> host routing
+```
+
+When `diagnostics.pipeline.enabled` is true, the service emits one aggregate
+JSONL or text snapshot per configured interval (the intended diagnostic default
+is 1s). The stage counters are monotonic and identity-free: TUN reads and
+writes, dispatch, Session enqueue/dequeue, writer submit, CONNECT-IP/HTTP/3
+submit/receive, and the QUIC/UDP stages exposed by the maintained fork. Rates
+are computed from deltas; fixed latency buckets and high-water counters avoid
+packet-level logging. `diagnose-report FILE` prints stage peaks and the largest
+observed rate gap as evidence, never as an automatic root-cause decision.
+
+Interpretation: UDP bulk near line rate but inner TCP at one-third points to
+inner TCP/outer QUIC coupling; both protocols low with a QUIC packet/UDP gap
+points to outer packetization, pacing, sendQueue, or syscall behavior; full
+Session/TUN rates with a persistently full DATAGRAM queue indicate downstream
+QUIC pressure. These are controlled-experiment hypotheses and require the
+documented clean-path, upload/download, packet-size, and real-WAN matrix.
+
 ## Findings
 
 ### HIGH

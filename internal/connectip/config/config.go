@@ -30,11 +30,17 @@ type Config struct {
 	Diagnostics Diagnostics `yaml:"diagnostics,omitempty"`
 }
 type Diagnostics struct {
-	QLog QLog `yaml:"qlog,omitempty"`
+	QLog     QLog     `yaml:"qlog,omitempty"`
+	Pipeline Pipeline `yaml:"pipeline,omitempty"`
 }
 type QLog struct {
 	Enabled   bool   `yaml:"enabled"`
 	Directory string `yaml:"directory"`
+}
+type Pipeline struct {
+	Enabled  bool   `yaml:"enabled"`
+	Interval string `yaml:"interval,omitempty"`
+	Format   string `yaml:"format,omitempty"`
 }
 type QUIC struct {
 	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
@@ -192,6 +198,21 @@ func Load(path string) (Config, error) {
 	if c.Diagnostics.QLog.Enabled && c.Diagnostics.QLog.Directory == "" {
 		return c, fmt.Errorf("diagnostics.qlog.directory is required when qlog is enabled")
 	}
+	if c.Diagnostics.Pipeline.Enabled {
+		if c.Diagnostics.Pipeline.Interval == "" {
+			c.Diagnostics.Pipeline.Interval = "1s"
+		}
+		interval, err := time.ParseDuration(c.Diagnostics.Pipeline.Interval)
+		if err != nil || interval <= 0 {
+			return c, fmt.Errorf("diagnostics.pipeline.interval must be a positive duration")
+		}
+		if c.Diagnostics.Pipeline.Format == "" {
+			c.Diagnostics.Pipeline.Format = "text"
+		}
+		if c.Diagnostics.Pipeline.Format != "text" && c.Diagnostics.Pipeline.Format != "json" {
+			return c, fmt.Errorf("diagnostics.pipeline.format must be text or json")
+		}
+	}
 	// DNS is part of the CONNECT-IP service, rather than a client-side
 	// prerequisite. Existing configurations get the production default.
 	if c.DNSGateway.Enabled == nil {
@@ -215,6 +236,17 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.Diagnostics.Pipeline.Enabled {
+		if c.Diagnostics.Pipeline.Interval != "" {
+			interval, err := time.ParseDuration(c.Diagnostics.Pipeline.Interval)
+			if err != nil || interval <= 0 {
+				return fmt.Errorf("diagnostics.pipeline.interval must be a positive duration")
+			}
+		}
+		if c.Diagnostics.Pipeline.Format != "" && c.Diagnostics.Pipeline.Format != "text" && c.Diagnostics.Pipeline.Format != "json" {
+			return fmt.Errorf("diagnostics.pipeline.format must be text or json")
+		}
+	}
 	if c.Server.TunTXGRO && !c.Server.TunOffload {
 		return fmt.Errorf("server.tun_tx_gro requires server.tun_offload=true")
 	}

@@ -33,7 +33,7 @@ HTTP/3 control stream and CONNECT-IP data plane
 
 `github.com/metacubex/quic-go` is replaced by
 `github.com/Piggy-Cat-bit-shadow/quic-go` commit
-`607c23f0eaf06c992a72f9e3fbc0649b01df6a28`.
+`3a2faf7b603fa897c8b3e24c03254a5f6f6efe1d`.
 It is based on canonical quic-go v0.62.0 commit
 `793f74d8e03368c5aded128af6f48d21dbb47f73`; the fork
 adds the project's DATAGRAM/ownership integration and selected congestion-control

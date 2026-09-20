@@ -4,7 +4,7 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `02ac8e5cb125732a674d4b9fde70e23b10e025ea`
+- Pinned commit: `3a2faf7b603fa897c8b3e24c03254a5f6f6efe1d`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the pinned fork: owned DATAGRAM buffers, retained receive

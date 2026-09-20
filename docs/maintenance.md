@@ -1,7 +1,7 @@
 # Current maintenance and release specification
 
-The current maintenance release is `v1.0.16`.
-Current released version: `v1.0.16`
+The current maintenance release is `v1.0.17`.
+Current released version: `v1.0.17`
 
 This document describes the current repository contract. It is not a release
 ledger and does not preserve superseded release narratives.
@@ -12,7 +12,7 @@ The main module must use the maintained forks below:
 
 ```text
 current connect-ip-go version: v0.0.0-20260920121826-9ff1656afbaf
-current quic-go replacement version: v0.61.1-0.20260920121748-02ac8e5cb125
+current quic-go replacement version: v0.61.1-0.20260920123852-3a2faf7b603f
 ```
 
 The replacement must remain explicit in `go.mod`. Run both
@@ -64,7 +64,7 @@ bash scripts/verify-release-tag-selftest.sh
 bash scripts/verify-dependency-provenance-selftest.sh
 bash scripts/verify-git-metadata-selftest.sh
 bash scripts/verify-public-repo-selftest.sh
-bash scripts/verify-release-docs.sh v1.0.16 .
+bash scripts/verify-release-docs.sh v1.0.17 .
 ```
 
 Linux CI additionally runs dataplane benchmarks, TX GRO and ICMP/fragment
@@ -84,8 +84,8 @@ replace a real VPS WAN, high-RTT, mobile or reordered-path evaluation.
 4. Create an annotated semver tag whose target is the exact validated commit:
 
    ```sh
-   git tag -a v1.0.16 -m "jiejie-masque v1.0.16"
-   git push origin v1.0.16
+   git tag -a v1.0.17 -m "jiejie-masque v1.0.17"
+   git push origin v1.0.17
    ```
 
 5. The tag workflow validates the tag object, current README and maintenance
@@ -96,7 +96,7 @@ replace a real VPS WAN, high-RTT, mobile or reordered-path evaluation.
    verify the downloaded binary with `--version` and its checksum.
 
 The only release note maintained by the repository is
-`docs/RELEASE_NOTES_v1.0.16.md`. A future release replaces the current marker
+`docs/RELEASE_NOTES_v1.0.17.md`. A future release replaces the current marker
 and current release note as one intentional consolidation change; the Git
 commit graph is never rewritten.
 

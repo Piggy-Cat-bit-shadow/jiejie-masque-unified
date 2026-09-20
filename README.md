@@ -1,7 +1,7 @@
 # jiejie-masque
 
-The current maintenance release is `v1.0.16`.
-当前正式维护版本：`v1.0.16`。
+The current maintenance release is `v1.0.17`.
+当前正式维护版本：`v1.0.17`。
 
 jiejie-masque 是面向 Linux 的统一 MASQUE 服务端，在单一静态 Linux amd64 二进制中提供 CONNECT-IP、CONNECT-UDP 和 CONNECT-TCP。项目强调协议正确性、可控资源、明确 ownership、长期运行稳定性和可验证发布链。
 
@@ -11,6 +11,7 @@ jiejie-masque 是面向 Linux 的统一 MASQUE 服务端，在单一静态 Linux
 - CONNECT-UDP：RFC 9298 HTTP/3 DATAGRAM relay，支持 UDP authentication、target policy、flow idle timeout 和 bounded buffer。
 - CONNECT-TCP：HTTP/3 stream relay，保留 TCP half-close 语义并使用同一 target policy。
 - 运维：`check-config`、`doctor`、network prepare、systemd `Type=notify`、watchdog、deep probe 和 qlog。
+- 吞吐诊断：默认关闭的 1 秒 CONNECT-IP pipeline JSONL/text snapshot，以及 `diagnose-report FILE` 离线证据汇总；不记录身份、目标或 payload。
 - 客户端：可生成 Mihomo/MetaCubeX CONNECT-IP 节点配置，IPv4-only、IPv6-only 和 dual-stack 输出分别保持 family accurate。
 
 ## 架构与资源边界
@@ -43,7 +44,7 @@ IPv6 tunnel connectivity 不等于 public IPv6 egress。默认不会为 IPv6 宣
 
 ## 安装与运行
 
-从 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases) 下载 v1.0.16 Linux amd64 binary，先校验 `.sha256`，再安装：
+从 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases) 下载 v1.0.17 Linux amd64 binary，先校验 `.sha256`，再安装：
 
 ```sh
 chmod +x jiejie-masque-linux-amd64
@@ -89,7 +90,7 @@ systemd unit 位于 `contrib/`。CONNECT-IP 使用 `CAP_NET_ADMIN`、`CAP_NET_BI
 - [QUIC / congestion 说明](docs/CONNECT_IP_QUIC_CONGESTION.md)：CUBIC 默认、runtime diagnostics、实验性能力和验证边界。
 - [fork provenance](docs/FORKS.md)：当前维护 quic-go 与 connect-ip-go 来源及 pin。
 - [维护规范](docs/maintenance.md)：当前 release、依赖、CI gates、release procedure 和限制。
-- [当前 release notes](docs/RELEASE_NOTES_v1.0.16.md)：仅描述当前正式版本状态。
+- [当前 release notes](docs/RELEASE_NOTES_v1.0.17.md)：仅描述当前正式版本状态。
 
 ## 当前限制
 

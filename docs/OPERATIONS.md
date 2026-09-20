@@ -133,6 +133,26 @@ Session queue、QUIC backpressure、socket buffer 还是 CPU/GC 先饱和。QUIC
 对 latest/smoothed RTT 取保守最大值，controller/state 不一致时为 `mixed`。
 不会记录 destination、client identity 或每 packet 日志。
 
+需要定位组件协作瓶颈时，临时开启：
+
+```yaml
+diagnostics:
+  pipeline:
+    enabled: true
+    interval: 1s
+    format: json
+```
+
+每行是一个 aggregate JSON snapshot，可保存 60 秒后离线分析：
+
+```sh
+jiejie-masque diagnose-report pipeline.jsonl
+```
+
+诊断阶段会对 TUN、Session、CONNECT-IP/HTTP/3 handoff、QUIC queue 和 UDP
+阶段计算 packets/s、bytes/s、Mbps 及 pipeline gap。开启时只增加 atomic
+counter 和固定桶 histogram；生产默认关闭，不能把报告中的 gap 单独当作根因。
+
 ### network prepare
 
 CONNECT-IP network prepare helper 的 external interface 优先级是：
@@ -348,5 +368,5 @@ Session NAT cleanup 使用 bounded two-worker executor，cleanup pending 地址�
 立即复用。F-302/F-404 仍需要真实 Linux/VPS reproduction；本手册不把 deferred
 finding 描述成已解决问题。
 
-当前正式维护基线为 v1.0.16；首次生产部署仍应以
+当前正式维护基线为 v1.0.17；首次生产部署仍应以
 真实 Linux VPS 的 doctor、CUBIC baseline 和 WAN A/B 结果为准。
