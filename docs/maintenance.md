@@ -77,6 +77,8 @@ replace a real VPS WAN, high-RTT, mobile or reordered-path evaluation.
 1. Keep the worktree clean except for the intended release changes and review
    tracked, deleted and untracked files for credentials, private keys, build
    output and production configuration.
+   New commits must use the repository's GitHub noreply identity so future
+   metadata privacy checks do not expose a personal email address.
 2. Run all local gates and push `codex/unified-masque` without force push.
 3. Wait for the branch workflow to finish successfully.
 4. Create an annotated semver tag whose target is the exact validated commit:
