@@ -151,6 +151,49 @@ func (c *writerTestConn) snapshot() (writes [][]byte, calls int) {
 	defer c.mu.Unlock()
 	return append([][]byte(nil), c.writes...), c.callNext
 }
+
+type tryWritableTestConn struct {
+	writerTestConn
+	attempts atomic.Int32
+	writable chan struct{}
+}
+
+type batchWriterTestConn struct {
+	writerTestConn
+	acceptedPerBatch int
+	batchCalls       int
+	writable         chan struct{}
+}
+
+func (c *batchWriterTestConn) TryWritePacketBuffersOwnedBatch(packets []connectip.OwnedPacketBuffer) (int, [][]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.batchCalls++
+	accepted := min(c.acceptedPerBatch, len(packets))
+	for _, packet := range packets[:accepted] {
+		c.owners = append(c.owners, packet.Owner)
+	}
+	return accepted, make([][]byte, accepted), nil
+}
+
+func (c *batchWriterTestConn) DatagramWritable() <-chan struct{} {
+	if c.writable != nil {
+		return c.writable
+	}
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+func (c *tryWritableTestConn) TryWritePacketBufferOwned(buf []byte, offset, length int, owner connectip.PacketPayloadOwner) ([]byte, bool, error) {
+	if c.attempts.Add(1) == 1 {
+		return nil, false, nil
+	}
+	icmp, err := c.writerTestConn.write(buf[offset:offset+length], owner)
+	return icmp, err == nil, err
+}
+
+func (c *tryWritableTestConn) DatagramWritable() <-chan struct{} { return c.writable }
 func (c *writerTestConn) releaseTransferred() {
 	c.mu.Lock()
 	owners := c.owners
@@ -233,6 +276,85 @@ func TestSessionWriterOwnedOwnershipTransfers(t *testing.T) {
 	s.Close()
 	<-done
 	conn.releaseTransferred()
+}
+
+func TestSessionWriterWaitsForWritableWithoutBusyLoop(t *testing.T) {
+	conn := &tryWritableTestConn{writable: make(chan struct{})}
+	s := newWriterTestSession(context.Background(), conn)
+	if !s.TryEnqueue(writerTestPacket(1)) {
+		t.Fatal("enqueue failed")
+	}
+	done := make(chan struct{})
+	go func() { sessionWriterWithTUNWriter(s, nil, 1280); close(done) }()
+	deadline := time.Now().Add(time.Second)
+	for conn.attempts.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := conn.attempts.Load(); got != 1 {
+		t.Fatalf("initial send attempts = %d, want 1", got)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := conn.attempts.Load(); got != 1 {
+		t.Fatalf("writer busy-looped while transport was full: attempts=%d", got)
+	}
+	close(conn.writable)
+	waitWriterCalls(t, &conn.writerTestConn, 1)
+	s.Close()
+	<-done
+	conn.releaseTransferred()
+}
+
+func TestSessionBatchWriterTransfersAcceptedPrefixes(t *testing.T) {
+	conn := &batchWriterTestConn{acceptedPerBatch: 1}
+	s := newWriterTestSession(context.Background(), conn)
+	packets := []*session.PacketBuffer{writerTestPacket(1), writerTestPacket(2), writerTestPacket(3)}
+	if !newSessionPacketWriter(conn).writeBatch(s, nil, packets) {
+		t.Fatal("batch writer failed")
+	}
+	conn.mu.Lock()
+	calls, owners := conn.batchCalls, len(conn.owners)
+	conn.mu.Unlock()
+	if calls != 3 || owners != 3 {
+		t.Fatalf("batch calls=%d owners transferred=%d, want 3 and 3", calls, owners)
+	}
+	s.Close()
+	conn.releaseTransferred()
+}
+
+func TestSessionBatchWriterCancellationUnblocksFullQueue(t *testing.T) {
+	conn := &batchWriterTestConn{writable: make(chan struct{})}
+	s := newWriterTestSession(context.Background(), conn)
+	packets := []*session.PacketBuffer{writerTestPacket(1), writerTestPacket(2)}
+	done := make(chan struct{})
+	go func() { newSessionPacketWriter(conn).writeBatch(s, nil, packets); close(done) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn.mu.Lock()
+		calls := conn.batchCalls
+		conn.mu.Unlock()
+		if calls > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	conn.mu.Lock()
+	calls := conn.batchCalls
+	conn.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("batch attempts while full = %d, want 1", calls)
+	}
+	s.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch writer did not stop after session cancellation")
+	}
+	conn.mu.Lock()
+	owners := len(conn.owners)
+	conn.mu.Unlock()
+	if owners != 0 {
+		t.Fatalf("owners transferred while queue was full: %d", owners)
+	}
 }
 
 func TestSessionWriterDrainsReadyBurstPreservesOrder(t *testing.T) {

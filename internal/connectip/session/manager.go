@@ -121,6 +121,8 @@ type AggregateRuntimeStats struct {
 	PackedBytes                  uint64
 	PacingWakeups                uint64
 	ReceivedPacketQueueDrops     uint64
+	QUICPacketsReceived          uint64
+	QUICBytesReceived            uint64
 	ReceivedDatagramQueueDrops   uint64
 	MinRTT                       time.Duration
 	LatestRTT                    time.Duration
@@ -777,6 +779,8 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.PackedBytes += stats.PackedBytes
 		out.PacingWakeups += stats.PacingWakeups
 		out.ReceivedPacketQueueDrops += stats.ReceivedPacketQueueDrops
+		out.QUICPacketsReceived += stats.ReceivedPackets
+		out.QUICBytesReceived += stats.ReceivedBytes
 		out.ReceivedDatagramQueueDrops += stats.ReceivedDatagramQueueDrops
 		if stats.MinRTT > 0 && (out.MinRTT == 0 || stats.MinRTT < out.MinRTT) {
 			out.MinRTT = stats.MinRTT

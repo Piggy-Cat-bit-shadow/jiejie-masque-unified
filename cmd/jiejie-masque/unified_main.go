@@ -32,6 +32,12 @@ func main() {
 		fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "diagnose-report" {
+		if err := diagnoseReportCommand(os.Args[1:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "keygen" {
 		keygen()
 		return
@@ -149,9 +155,14 @@ func main() {
 	if os.Args[1] != "serve" {
 		log.Fatalf("unknown command %q", os.Args[1])
 	}
-	// The migrated CONNECT-IP runner retains its validated legacy flag parser.
-	os.Args = []string{os.Args[0], "--config", *path}
-	if err := serveConnectIP(); err != nil {
+	if err := serveConnectIPArgs([]string{"--config", *path}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func diagnoseReportCommand(args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: jiejie-masque diagnose-report FILE")
+	}
+	return diagnoseReport(args[1])
 }

@@ -9,15 +9,24 @@ func TestProbeSnapshotRatesAndGap(t *testing.T) {
 	p := &Probe{}
 	p.Add(TunRead, 10, 1000)
 	p.Add(SessionEnqueue, 10, 1000)
+	p.Add(SessionDequeue, 10, 1000)
 	p.Add(SessionWriterSubmit, 10, 500)
 	p.ObserveWait(SessionEnqueue, 5*time.Microsecond)
 	p.ObserveWait(SessionEnqueue, 100*time.Microsecond)
 
-	s, previous := p.Snapshot(nil, time.Second)
+	baseline, previous := p.Snapshot(nil, time.Second)
+	if !baseline.Warmup || baseline.Stages[string(TunRead)].PacketsDelta != 0 || baseline.Stages[string(TunRead)].Mbps != 0 {
+		t.Fatalf("first snapshot was not a zero-rate baseline: %+v", baseline)
+	}
+	p.Add(TunRead, 10, 1000)
+	p.Add(SessionEnqueue, 10, 1000)
+	p.Add(SessionDequeue, 10, 1000)
+	p.Add(SessionWriterSubmit, 10, 500)
+	s, previous := p.Snapshot(previous, time.Second)
 	if got := s.Stages[string(TunRead)].Mbps; got != 0.008 {
 		t.Fatalf("tun Mbps = %v", got)
 	}
-	if s.LargestGap.From != string(SessionEnqueue) || s.LargestGap.To != string(SessionWriterSubmit) {
+	if s.LargestGap.From != string(SessionDequeue) || s.LargestGap.To != string(SessionWriterSubmit) {
 		t.Fatalf("largest gap = %+v", s.LargestGap)
 	}
 	if s.Stages[string(SessionEnqueue)].WaitP99US == 0 {
@@ -27,6 +36,16 @@ func TestProbeSnapshotRatesAndGap(t *testing.T) {
 	next, _ := p.Snapshot(previous, 2*time.Second)
 	if next.Stages[string(TunRead)].PacketsPerSecond != 5 {
 		t.Fatalf("delta rate = %v", next.Stages[string(TunRead)].PacketsPerSecond)
+	}
+}
+
+func TestProbeNeverComputesGapAcrossDirections(t *testing.T) {
+	p := &Probe{}
+	p.Add(UDPWire, 100, 100_000)
+	p.Add(UDPRead, 1, 100)
+	s, _ := p.Snapshot(nil, time.Second)
+	if s.DownstreamGap.Ratio != 0 || s.UpstreamGap.Ratio != 0 || s.LargestGap.Ratio != 0 {
+		t.Fatalf("invented cross-direction gap: %+v", s)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,8 +28,15 @@ func diagnoseReport(path string) error {
 	a := aggregate{Peak: map[string]float64{}, Sum: map[string]float64{}}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if marker := []byte("CONNECT-IP pipeline:"); bytes.Contains(line, marker) {
+			line = bytes.TrimSpace(line[bytes.Index(line, marker)+len(marker):])
+		}
+		if len(line) == 0 {
+			continue
+		}
 		var snapshot diagnostics.Stats
-		if err := json.Unmarshal(scanner.Bytes(), &snapshot); err != nil {
+		if err := json.Unmarshal(line, &snapshot); err != nil {
 			return fmt.Errorf("parse pipeline JSONL: %w", err)
 		}
 		a.Samples++

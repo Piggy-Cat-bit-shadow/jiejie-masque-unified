@@ -4,12 +4,12 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `3a2faf7b603fa897c8b3e24c03254a5f6f6efe1d`
+- Pinned commit: `7e1e7973b076fcf31e811ba6c5d4a952f4c7a6c7`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
-- Local patches in the pinned fork: owned DATAGRAM buffers, retained receive
-  budget, reusable borrowed parsing, native CUBIC selector, and the existing
-  qlog/ECN/PMTU behavior used by CONNECT-IP.
+- Local patches in the pinned fork: owned DATAGRAM buffers, nonblocking and
+  prefix-accepting batch submission, retained receive budget, reusable borrowed
+  parsing, native CUBIC selector, runtime counters, and qlog/ECN/PMTU behavior.
 - Sync baseline: the fork's existing MetaCubeX v0.62-compatible line, including
   the local DATAGRAM ownership and early-datagram lifecycle patches.
 - Adopted upstream runtime fix: `fcb5bedb` (`CONNECTION_CLOSE` packet sizing
@@ -34,10 +34,11 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `9ff1656afbaf79fbd847606ec13bff23bf1d6450`
+- Pinned commit: `2bd33182359bafa3813529b0eb930c177e149182`
 - License: MIT
-- Used interfaces: owned packet-buffer send, borrowed packet-buffer receive,
-  bounded DATAGRAM ownership, and CONNECT-IP address/route handling.
+- Used interfaces: owned packet-buffer send and prefix-accepting batch send,
+  borrowed packet-buffer receive, bounded DATAGRAM ownership, and CONNECT-IP
+  address/route handling.
 - Sync baseline: local fork HEAD `31093245...`, preserving the local terminal
   error normalization, bounded capsule queue, packet-buffer APIs, and test
   timing adjustments.

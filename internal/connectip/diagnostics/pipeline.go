@@ -29,6 +29,7 @@ const (
 	QUICPacketReceived      Stage = "quic_packet_received"
 	HTTP3DatagramReceived   Stage = "http3_datagram_received"
 	ConnectIPPacketReceived Stage = "connectip_packet_received"
+	SessionReader           Stage = "session_reader"
 	TunWrite                Stage = "tun_write"
 )
 
@@ -37,7 +38,19 @@ var stages = [...]Stage{
 	SessionWriterSubmit, ConnectIPDatagramSubmit, HTTP3DatagramSubmit,
 	QUICDatagramEnqueue, QUICDatagramDequeue, QUICPacketPacked,
 	QUICPacketSent, UDPWrite, UDPWire, UDPRead, QUICPacketReceived,
-	HTTP3DatagramReceived, ConnectIPPacketReceived, TunWrite,
+	HTTP3DatagramReceived, ConnectIPPacketReceived, SessionReader, TunWrite,
+}
+
+var downstreamStages = [...]Stage{
+	TunRead, TunDispatchSuccess, SessionEnqueue, SessionDequeue,
+	SessionWriterSubmit, ConnectIPDatagramSubmit, HTTP3DatagramSubmit,
+	QUICDatagramEnqueue, QUICDatagramDequeue, QUICPacketPacked,
+	QUICPacketSent, UDPWrite, UDPWire,
+}
+
+var upstreamStages = [...]Stage{
+	UDPRead, QUICPacketReceived, HTTP3DatagramReceived,
+	ConnectIPPacketReceived, SessionReader, TunWrite,
 }
 
 const histogramBuckets = 8
@@ -45,14 +58,21 @@ const histogramBuckets = 8
 // Stats is a machine-readable interval snapshot. Rates are calculated from
 // monotonic counter deltas; no identity, address, target, or payload is kept.
 type Stats struct {
+	Timestamp       string                `json:"timestamp,omitempty"`
 	IntervalSeconds float64               `json:"interval_seconds"`
+	Warmup          bool                  `json:"warmup,omitempty"`
 	Stages          map[string]StageStats `json:"stages"`
 	LargestGap      Gap                   `json:"largest_pipeline_gap,omitempty"`
+	DownstreamGap   Gap                   `json:"downstream_gap,omitempty"`
+	UpstreamGap     Gap                   `json:"upstream_gap,omitempty"`
+	Runtime         any                   `json:"runtime,omitempty"`
 }
 
 type StageStats struct {
 	PacketsTotal     uint64  `json:"packets_total"`
 	BytesTotal       uint64  `json:"bytes_total"`
+	PacketsDelta     uint64  `json:"packets_delta"`
+	BytesDelta       uint64  `json:"bytes_delta"`
 	PacketsPerSecond float64 `json:"packets_per_second"`
 	BytesPerSecond   float64 `json:"bytes_per_second"`
 	Mbps             float64 `json:"mbps"`
@@ -136,45 +156,60 @@ func (p *Probe) Snapshot(previous map[Stage]Point, elapsed time.Duration) (Stats
 		elapsed = time.Second
 	}
 	seconds := elapsed.Seconds()
-	out := Stats{IntervalSeconds: seconds, Stages: make(map[string]StageStats, len(stages))}
+	out := Stats{IntervalSeconds: seconds, Warmup: previous == nil, Stages: make(map[string]StageStats, len(stages))}
 	now := make(map[Stage]Point, len(stages))
-	var values []struct {
-		stage Stage
-		rate  float64
-	}
+	rates := make(map[Stage]float64, len(stages))
 	for i, stage := range stages {
 		packets := p.stages[i].Packets.Load()
 		bytes := p.stages[i].Bytes.Load()
 		old := previous[stage]
-		ps := float64(packets-old.Packets) / seconds
-		bs := float64(bytes-old.Bytes) / seconds
-		out.Stages[string(stage)] = StageStats{PacketsTotal: packets, BytesTotal: bytes, PacketsPerSecond: ps, BytesPerSecond: bs, Mbps: bs * 8 / 1e6, WaitP50US: p.quantile(i, 0.50), WaitP90US: p.quantile(i, 0.90), WaitP99US: p.quantile(i, 0.99), WaitMaxUS: p.stages[i].WaitMax.Load()}
+		packetsDelta, bytesDelta := packets-old.Packets, bytes-old.Bytes
+		if out.Warmup {
+			packetsDelta, bytesDelta = 0, 0
+		}
+		ps := float64(packetsDelta) / seconds
+		bs := float64(bytesDelta) / seconds
+		out.Stages[string(stage)] = StageStats{PacketsTotal: packets, BytesTotal: bytes, PacketsDelta: packetsDelta, BytesDelta: bytesDelta, PacketsPerSecond: ps, BytesPerSecond: bs, Mbps: bs * 8 / 1e6, WaitP50US: p.quantile(i, 0.50), WaitP90US: p.quantile(i, 0.90), WaitP99US: p.quantile(i, 0.99), WaitMaxUS: p.stages[i].WaitMax.Load()}
 		now[stage] = Point{Packets: packets, Bytes: bytes}
-		values = append(values, struct {
-			stage Stage
-			rate  float64
-		}{stage, bs})
+		rates[stage] = bs
 	}
-	var previousValue struct {
-		stage Stage
-		rate  float64
-	}
-	for _, right := range values {
-		if right.rate <= 0 {
-			continue
-		}
-		if previousValue.rate == 0 {
-			previousValue = right
-			continue
-		}
-		left := previousValue
-		ratio := right.rate / left.rate
-		if ratio < out.LargestGap.Ratio || out.LargestGap.Ratio == 0 {
-			out.LargestGap = Gap{string(left.stage), string(right.stage), ratio}
-		}
-		previousValue = right
+	out.DownstreamGap = largestAdjacentGap(downstreamStages[:], rates)
+	out.UpstreamGap = largestAdjacentGap(upstreamStages[:], rates)
+	out.LargestGap = out.DownstreamGap
+	if out.LargestGap.Ratio == 0 || (out.UpstreamGap.Ratio > 0 && out.UpstreamGap.Ratio < out.LargestGap.Ratio) {
+		out.LargestGap = out.UpstreamGap
 	}
 	return out, now
+}
+
+func largestAdjacentGap(ordered []Stage, rates map[Stage]float64) Gap {
+	var largest Gap
+	for i := 1; i < len(ordered); i++ {
+		left, right := rates[ordered[i-1]], rates[ordered[i]]
+		if left <= 0 || right <= 0 {
+			continue
+		}
+		ratio := right / left
+		if largest.Ratio == 0 || ratio < largest.Ratio {
+			largest = Gap{From: string(ordered[i-1]), To: string(ordered[i]), Ratio: ratio}
+		}
+	}
+	return largest
+}
+
+// RefreshGaps recomputes only adjacent same-direction stage gaps. It is useful
+// after aggregate runtime counters have been merged into a probe snapshot.
+func (s *Stats) RefreshGaps() {
+	rates := make(map[Stage]float64, len(stages))
+	for _, stage := range stages {
+		rates[stage] = s.Stages[string(stage)].BytesPerSecond
+	}
+	s.DownstreamGap = largestAdjacentGap(downstreamStages[:], rates)
+	s.UpstreamGap = largestAdjacentGap(upstreamStages[:], rates)
+	s.LargestGap = s.DownstreamGap
+	if s.LargestGap.Ratio == 0 || (s.UpstreamGap.Ratio > 0 && s.UpstreamGap.Ratio < s.LargestGap.Ratio) {
+		s.LargestGap = s.UpstreamGap
+	}
 }
 
 func (p *Probe) quantile(i int, q float64) uint64 {
