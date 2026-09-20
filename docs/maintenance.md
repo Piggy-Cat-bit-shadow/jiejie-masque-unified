@@ -1,304 +1,44 @@
-# Maintenance and release guide
+# Current maintenance and release specification
 
-Current released version: `v1.0.14`
+The current maintenance release is `v1.0.15`.
+Current released version: `v1.0.15`
 
-## Maintenance candidate ledger — post-v1.0.11
+This document describes the current repository contract. It is not a release
+ledger and does not preserve superseded release narratives.
 
-| Finding | Classification | Status |
-| --- | --- | --- |
-| F-802 | CONFIRMED CORRECTNESS / OPTIONAL TX GRO | FIXED / CANDIDATE VERIFIED |
-| F-801 | CONFIG / EXAMPLE CORRECTNESS | FIXED / CANDIDATE VERIFIED |
-| F-803 | TX GRO SHARED SCRATCH RACE | FIXED / CANDIDATE VERIFIED |
-| F-804 | TX GRO IPv4 FRAGMENT MASK | FIXED / CANDIDATE VERIFIED |
-| F-805 | SESSION-NAT ICMP QUOTE CLASSIFICATION | FIXED / CANDIDATE VERIFIED |
-| F-806 | SESSION-NAT FRAGMENTED ICMP SAFETY | FIXED / CANDIDATE VERIFIED |
-| F-807 | CONFIG DEFAULT / SYSTEMD STATE DIRECTORY DRIFT | FIXED / CANDIDATE VERIFIED |
-| F-808 | F-701 REGRESSION CI COVERAGE GAP | FIXED / CANDIDATE VERIFIED |
-| F-809 | UNSUPPORTED TUN INTERFACE ENVIRONMENT OVERRIDE | FIXED / CANDIDATE VERIFIED |
-| F-810 | TCP TX GRO SEGMENT-SIZE ORDERING | FIXED / CANDIDATE VERIFIED |
-| CI-02 | DEFAULT-BRANCH / ACTION PIN / PROVENANCE DRIFT | FIXED / CANDIDATE VERIFIED |
-| DOC-01 | DOCUMENTATION SELF-DESCRIPTION DRIFT | FIXED ON CURRENT BRANCH / FUTURE GATE HARDENED |
-| H-311 | OBSERVABILITY GAP | DEFERRED |
-| H-312 | OPTIONAL IPv6 GSO HYPOTHESIS | DEFERRED / NO CODE CHANGE |
-| N-06 | LARGE UDP DNS FRAGMENTATION CONTRACT GAP | DOCUMENTED / DEFERRED |
-| N-09 | RUNTIME UFW DRIFT OBSERVABILITY | CLOSED BY EXPLICIT READ-ONLY DOCTOR |
-| N-12 | FUTURE GIT METADATA PRIVACY HARDENING | FIXED / NEW-COMMIT RANGE GATE |
-| H-307 | EARLY CONNECT-UDP REQUEST DATAGRAM | CONFIRMED / FIXED IN QUIC FORK |
-| F-404 | FAILED CONNTRACK CLEANUP SHADOW-IP REUSE | CONFIRMED / FIXED WITH PROCESS-LIFETIME QUARANTINE |
-| F-302 | RESTART-BOUND CONNTRACK LIFECYCLE | ROOT REPRODUCTION HARNESS PROVIDED / DEFERRED |
-| C-01 | VARIABLE SEGMENT-SIZE GRO | RESOLVED INTO F-810 |
-| S-801 | SUPPLY-CHAIN HARDENING | DEFERRED |
-| P-001 | LINUX CONNECT-UDP BOUNDED UDP BATCHING | FIXED / PERFORMANCE CANDIDATE |
-| P-002 | CONNECT-IP READY-PACKET DRAIN | FIXED / PERFORMANCE CANDIDATE |
+## Current dependency provenance
 
-F-802 rejects IPv4 options from the optional TX-GRO candidate path; the default
-`tun_tx_gro: false` path is unaffected. F-801 removes the stale root example,
-leaving the two mode-specific canonical examples with semantic validation
-coverage. DOC-01 corrects the current-version claim below and hardens the
-future release-document consistency check. F-803 serializes the shared TX-GRO
-scratch buffer through completion of the device write, and F-804 rejects the
-full IPv4 fragment field while preserving DF-only packets. F-805 parses quoted
-IPv4 only for ICMP error types; F-806 leaves fragmented ICMP payloads and ICMP
-checksums opaque while translating only the outer address and checksum. DNS
-fragmentation tracking remains deferred; deployments should use EDNS around
-1232 bytes and TCP fallback. CI-02 aligns pull requests with the repository
-default branch, pins official actions, and checks current module provenance.
-F-807 aligns the omitted stateless-reset key default with the packaged
-StateDirectory. F-808 runs the fake-command F-701 regression as a build and
-release gate. F-809 rejects non-`masque0` helper overrides before any host
-mutation because runtime creation and probing remain fixed at `masque0`.
-N-06 documents the MTU-safe DNS contract: the gateway may accept up to 4096
-bytes after IP reassembly, but fragmented tunnel-local UDP DNS is not
-guaranteed; use EDNS around 1232 bytes and TCP fallback. No fragment tracker
-is implemented. N-09 remains deferred without runtime UFW supervision. N-12
-is now guarded over the explicit new-commit range from `v1.0.13` to `HEAD`;
-historical metadata is retained and never makes the release permanently fail.
-N-09 is covered by the explicit, read-only `doctor` command rather than a
-background firewall supervisor. H-311,
-H-312, and broader S-801 hardening remain deferred. F-810 closes the confirmed
-optional TX-GRO ordering bug: the first segment establishes `gso_size`, a final
-segment may be shorter, a short segment ends the current ordered group, and a
-larger segment cannot follow the established size. `tun_tx_gro` remains
-disabled by default, so the default production path is unaffected. C-01 is
-resolved into this finding. P-001 adds bounded Linux `recvmmsg` receive and
-`sendmmsg` target writes with non-Linux fallbacks, descriptor reuse, and
-datagram-boundary regression coverage. P-002 drains only already-queued
-CONNECT-IP packets (maximum 32) and leaves queue capacity, TUN offload, and
-TX-GRO defaults unchanged.
-
-## v1.0.12 aborted pre-release tag attempt
-
-The first pre-release `v1.0.12` annotated tag attempt was intentionally
-aborted before formal artifact generation. The old annotated tag object was
-`f413cd5629eaa340a794681bf72c31f67ef65de8`, targeting
-`237c8be17c9bd7dc313db87cf23561ad68aadf7f`; its tag workflow was
-`34002923431`.
-
-The tag-only metadata validation called `scripts/verify-release-docs.sh`
-before the later privacy-scanner installation step, so the runner did not yet
-have `rg`. The build failed before artifact generation, the release job was
-skipped, no formal artifact was published, and no GitHub Release exists for
-this aborted attempt. The old tag object is retained here as an aborted
-pre-release tag object and is not the formal `v1.0.12` release tag object.
-
-The first controlled retag then produced annotated tag object
-`b70fde83abcbd9379237698e8aa170b921e4558b`, targeting
-`7ba3e77d8141cf305b2adfeef1275444a9bc84e8`; workflow `34003319620` passed
-the build job but failed in the release job because that independent job also
-needed `rg`. No draft or formal release was created. This superseded tag
-object is likewise retained only as aborted pre-release provenance.
-
-## v1.0.12 final release provenance
-
-The formal `v1.0.12` annotated tag object is
-`e4c7e31c6d639c56d80893686e5b32713e945aee` and targets
-`37a5b061a07be8536ec7cc78f85cb4bfa2bd8571`. Tag workflow
-`34003638527` passed both the build and release jobs:
-https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/actions/runs/34003638527
-
-The published release is
-https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.12
-with `draft=false`, `prerelease=false`, and it is the latest release. The
-Linux amd64 artifact is 8,954,004 bytes with SHA256
-`5ef9f124246914b4e634a41dc8e872d93da52ef38b1b6007882ebf6b5d0be232`.
-`RELEASE.txt` records version `1.0.12`, the exact target commit above,
-`GOOS=linux`, `GOARCH=amd64`, and matching size/digest metadata. The CI
-artifact and published Release asset passed byte-for-byte `cmp` and checksum
-verification; the embedded Linux CI `--version` gate also passed.
-
-F-801 through F-810 are FIXED / RELEASED in v1.0.12. Production remains NOT
-DEPLOYED. N-06 and N-09 remain deferred. The aborted tag objects
-`f413cd5629eaa340a794681bf72c31f67ef65de8` and
-`b70fde83abcbd9379237698e8aa170b921e4558b` remain documented as failed
-pre-release attempts and are not the formal release tag object.
-
-## v1.0.11 final release provenance
-
-The v1.0.11 annotated tag object is
-`61b3e31c33b680828e4762c0cf32cd37f0647185` and targets
-`34b22e20112a0f5acf7b65d1e4df99524e798fbd`. Tag workflow `33978955171`
-passed both the build and release jobs. The published v1.0.11 release was
-https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.11
-with `draft=false` and `prerelease=false`; v1.0.12 supersedes it as latest.
-
-The formal binary is `jiejie-masque-linux-amd64`, with 8,954,004 bytes and
-SHA256 `0162110e753d892da7225073844e1d1a8255414a588309b6fcb8bc5c410357ef`.
-The CI artifact and GitHub Release asset have matching size, digest, and
-byte-for-byte comparison (`cmp PASS`). `RELEASE.txt` records version `1.0.11`
-and commit `34b22e20112a0f5acf7b65d1e4df99524e798fbd`; Linux CI binary gates
-also verified the embedded `--version` metadata.
-
-F-701 is FIXED / RELEASED in v1.0.11. Production remains NOT DEPLOYED.
-
-## F-701 — CONNECT-IP active-UFW firewall integration
-
-F-701 is a deployment-correctness finding, not a CONNECT-IP protocol or core
-dataplane bug. The privileged network-prepare helper now obtains the canonical
-tunnel address, masked network, and DNS port through `network-prepare-info`.
-When UFW reports `Status: active`, it installs the minimal TUN `INPUT` rules
-for tunnel-local DNS and the TUN-to-WAN `FORWARD` rule, while retaining the
-existing project-owned nft MASQUERADE setup and IPv4 forwarding setup. It adds
-the desired rules first, then removes only stale rules carrying the project's
-private comments; if an add fails, cleanup is not reached and old rules remain.
-UFW is left untouched when unavailable or inactive. Shell and config-query
-tests cover the candidate path. This release-preparation entry targets v1.0.11;
-formal release provenance will be recorded only after the tag workflow succeeds.
-
-| Finding | Classification | Candidate status |
-| --- | --- | --- |
-| F-701 | DEPLOYMENT CORRECTNESS / HOST NETWORK PREPARATION / FIREWALL INTEGRATION | FIXED / RELEASE TARGET v1.0.11 |
-
-The release does not move, delete, recreate, or modify the v1.0.10 tag or
-release artifacts, and does not change the frozen dataplane or dependency pins.
-
-v1.0.9 runtime correctness fix:
-`66cb3bd1057d93f81bb5858b0eabb7fe865ca251`
-
-F-601 runtime fix:
-`e6ceea21360d5a4e0cddfe86719d13774a82d0ca`
-
-v1.0.8 networking/runtime behavior baseline:
-`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
-
-v1.0.8 final release tag target:
-`14ed18241268a07bb462792b348dd27e5c24ce8b`
-
-v1.0.3 runtime baseline:
-`5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`
-
-v1.0.3 release commit:
-`1203497d5b21b85cacea63c5312465a6fe7085c2`
-
-v1.0.4 release-preparation baseline:
-`dcbd06708cf80a0f55bc5a0f0bed8660a26fd655`
-
-Formal releases are tag-triggered GitHub Actions builds. The annotated tag
-provides the version and exact commit; the build job produces and validates one
-artifact, and the release job uploads that same artifact without rebuilding.
-Branch and pull-request artifacts are candidate artifacts, not release assets.
-
-## v1.0.10 final release provenance
-
-The v1.0.10 annotated tag object is
-`2240380d78695850fc645785c12c35cc9ea8ea1a` and targets
-`69791767a9e11f3a5b6a7f0ebf8c69e30b372304`. Preparation CI was
-`33973339000`; tag workflow `33973458145` passed all build and release gates.
-The published release is
-https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.10
-with `draft=false` and `prerelease=false`.
-
-The CI artifact and GitHub Release binary are both 8,954,004 bytes with SHA256
-`163a35d5e612ea831d917f27358e5732a3256f9bc44a6e18c18d8c60b408dbca`.
-The checksum file, `RELEASE.txt`, remote asset digest, and byte-for-byte
-comparison all agree. F-601 is FIXED / RELEASED in v1.0.10. The release job
-downloaded the validated CI artifact and did not rebuild it.
-
-## v1.0.10 release — F-601 and Chinese documentation
-
-F-601 preserves the TCP TX GRO boundary after a segment carrying PSH is
-absorbed: that segment may remain the final segment of the current aggregate,
-but subsequent segments start a later group. The fix is covered by Linux
-`WriteBatch` regressions for IPv4 and IPv6, including intermediate, final,
-initial, and multiple PSH boundaries. `tun_tx_gro` remains disabled by default;
-the core dataplane and all unrelated ownership, queue, QUIC, DNS, Session-NAT,
-and release-provenance behavior remain frozen.
-
-The v1.0.2 runtime baseline is frozen at
-`3a07c4be6ad027620cfdaddad13a53609b7c0a06`. Accept correctness, security,
-compatibility, ownership, shutdown, and release-metadata fixes. Do not reopen
-speculative performance work without reproducible production evidence.
-
-Changes to `mihomo-config` key encodings must be checked against the consumer
-parser contract: client `private-key` is SEC1 EC DER Base64, while the server
-endpoint `public-key` is PKIX/SubjectPublicKeyInfo DER Base64. Client
-authentication `public_key` values remain raw uncompressed P-256 point Base64.
-
-The CONNECT-IP DNS gateway can accept UDP requests up to 4096 bytes after IP
-reassembly and drops larger datagrams before upstream relay. The CONNECT-IP
-local-service admission path is MTU-safe UDP; fragmented tunnel-local UDP DNS
-is not guaranteed. Clients should use EDNS UDP payloads around 1232 bytes and
-TCP fallback for larger DNS messages. The privileged network-prepare helper
-must obtain `server.tunnel_ipv4` through `network-prepare-info`; it must not
-parse YAML itself. Public-repository checks scan all tracked files for
-high-confidence private-key material and scan public documentation/configuration
-for non-example addresses and domains.
-
-CONNECT-IP DNS-over-TCP keeps one downstream connection open for sequential or
-pipelined length-prefixed queries, processing them in order. Each query still
-uses its own upstream TCP connection; the existing downstream concurrency and
-timeout bounds remain in force.
-
-CONNECT-UDP/CONNECT-TCP `allow_private: false` follows the IANA
-Special-Purpose Address Registries' `Globally Reachable` semantics, including
-more-specific globally reachable exceptions. IPv4-mapped IPv6 addresses are
-unmapped before classification. The static address snapshot is maintained
-manually; runtime and CI do not fetch IANA.
-
-## Exact dependency provenance
+The main module must use the maintained forks below:
 
 ```text
-current released version:           v1.0.12
-v1.0.4 networking/runtime baseline: dcbd06708cf80a0f55bc5a0f0bed8660a26fd655
-v1.0.2 historical runtime baseline: 3a07c4be6ad027620cfdaddad13a53609b7c0a06
-connect-ip-go:                     e645a82498ea70e3411b99e7a338ac740629abdd
-  pseudo-version:                  v0.0.0-20260906041020-e645a82498ea
-quic-go:                           b6c72f4e72efb1a668cfa3dd29cf594350d59348
-  pseudo-version:                  v0.61.1-0.20260906040817-b6c72f4e72ef
-canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
-connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
 current connect-ip-go version: v0.0.0-20260920111434-ff8a7b5f1c62
 current quic-go replacement version: v0.61.1-0.20260920111406-607c23f0eaf0
 ```
 
-The main module and connect-ip-go both replace the MetaCubeX quic-go module
-with the same Piggy-Cat-bit-shadow fork checkpoint. Do not use `go get -u`.
-Any dependency change requires upstream diff review, targeted tests, race,
-vet, benchmark comparison, module verification, and a new main pin.
+The replacement must remain explicit in `go.mod`. Run both
+`scripts/verify-deps.sh` and `scripts/verify-dependency-provenance.sh` after
+every dependency change. Dependency updates are accepted only with a pinned
+commit, reproducible `go.sum`, upstream/license review, and the complete test
+and race gates.
 
-## v1.0.9 final release provenance
+## Runtime invariants
 
-The v1.0.9 annotated tag object is `7d495d4590e08503c2b6311ce8c9cdc4dfddf395`
-and targets `a5fd3daa773d2a8a69f9738a8dbbf4ef34b2d506`. Tag workflow
-`33969687921` passed all build and release gates. The CI artifact and the
-published GitHub Release asset are both 8,954,004 bytes with SHA256
-`c0037990939410a7c1c7738ee8e88aea5d5fde5a5534d8455a68c156378580fa`;
-the checksum, remote asset digest, and byte-for-byte `cmp` all agree.
+- Production congestion control is CUBIC.
+- QUIC DATAGRAM queues are bounded at send 512 and receive 256.
+- HTTP/3 stream DATAGRAM queue is bounded at 256.
+- CONNECT-IP outbound queue defaults to 1024 and retained receive budget is 64.
+- CONNECT-UDP payload admission is bounded to 1500 bytes.
+- Flow, session, NAT cleanup and packet ownership have explicit shutdown paths;
+  every owned packet is released exactly once.
+- IPv6 tunnel MTU is at least 1280. IPv6 `::/0` is advertised only when the
+  operator explicitly enables it for a routed public IPv6 prefix.
+- TUN offload and TCP TX GRO remain disabled by default.
+- qlog is opt-in, identity-free, written with mode 0600, and its directory is
+  validated before service startup.
 
-F-501 is FIXED and RELEASED in v1.0.9. F-502's historical v1.0.8
-self-description residual remains immutable; its future recurrence prevention
-is FIXED by the tag-only README, maintenance, and release-notes consistency
-gate. F-404 remains `REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING`.
+## Required local gates
 
-## Ownership and lifecycle checks
-
-Session-NAT cleanup is a bounded asynchronous resource, not an unbounded
-goroutine-per-session path. Pending shadow addresses remain unavailable until
-their cleanup attempt completes; only then does `reuse_delay` begin. Keep the
-two-worker executor, its `max_sessions`-derived queue, queue-full backpressure,
-error observability, and explicit shutdown lifecycle covered by deterministic
-tests. A normal cleanup error must not terminate a worker; queued cleanup may
-be dropped only while shutting down.
-
-The v1.0.2 maintenance batches are closed: Mihomo consumer-key contracts,
-DNS/config/YAML/privacy correctness, public globally reachable target policy
-with a 10-second establishment deadline, and bounded Session-NAT cleanup.
-The final runtime baseline is the SHA above; a later release-preparation SHA
-contains documentation and release metadata only.
-
-Before changing ownership code, cover queue-full drop, close drain, send
-rejection, `DatagramTooLargeError`, malformed input, duplicate Release, and
-exactly-once transfer. Never reset a release flag or resurrect an object after
-it has been returned to `sync.Pool`; a new generation comes only from
-`Acquire`/`Get`.
-
-The CONNECT-IP retained receive budget is 64. The CONNECT-IP session outbound
-queue is 256 by default. QUIC DATAGRAM send/receive queues are 32/128 and the
-HTTP/3 stream DATAGRAM queue is 32. CONNECT-UDP uses a Proxy-level shared
-1510-byte pool; this is reusable cache, not a strict global memory bound.
-
-## Required validation
-
-From the final release commit:
+Before commit or release, run:
 
 ```sh
 test -z "$(gofmt -l .)"
@@ -307,383 +47,75 @@ go mod verify
 go test ./...
 go test -race ./...
 go vet ./...
-bash -n scripts/*.sh
-bash scripts/verify-deps.sh
-bash scripts/verify-public-repo.sh
-bash scripts/verify-public-repo-selftest.sh
-bash scripts/verify-systemd-contract.sh
+git diff --check
 ```
 
-Also run the focused CONNECT-IP and CONNECT-UDP ownership, malformed-input,
-Flow.Touch/Reap, cancellation, fallback, and notify tests with suitable
-`-count` stress. Run the borrowed parser, CONNECT-IP receive, Flow.Touch, and
-owned-pool benchmarks for allocation regressions; do not turn machine-specific
-nanosecond values into CI gates.
-
-## Release artifact
-
-The release path is:
-
-```text
-annotated tag
-→ tag-derived version and exact commit
-→ GitHub Actions validation gates
-→ one static Linux amd64 build
-→ workflow artifact with binary, checksum, and RELEASE.txt
-→ release job downloads that same artifact
-→ checksum, metadata, size, and remote asset verification
-→ draft release publication
-```
-
-The release job never rebuilds. Local builds are for reproduction/audit only:
+Also run the repository contracts:
 
 ```sh
-TAG="${TAG:?set an annotated tag such as v1.0.4}"
-VERSION="${TAG#v}" COMMIT="$(git rev-list -n1 "$TAG")" \
-  scripts/build-release.sh
+bash scripts/verify-deps.sh
+bash scripts/verify-dependency-provenance.sh
+bash scripts/verify-public-repo.sh
+bash scripts/verify-systemd-contract.sh
+bash scripts/test-connect-ip-network-prepare.sh
+bash scripts/verify-workflow-contract.sh
+bash scripts/verify-release-docs-selftest.sh
+bash scripts/verify-release-tag-selftest.sh
+bash scripts/verify-dependency-provenance-selftest.sh
+bash scripts/verify-git-metadata-selftest.sh
+bash scripts/verify-public-repo-selftest.sh
+bash scripts/verify-release-docs.sh v1.0.15 .
 ```
 
-The wrapper requires explicit `VERSION` and full 40-character `COMMIT` values.
-It verifies embedded metadata on native Linux, writes `dist/RELEASE.txt`, and
-the workflow checks that its SHA256 equals the generated checksum and binary.
-Do not include private paths, credentials, hostnames, or deployment identifiers.
+Linux CI additionally runs dataplane benchmarks, TX GRO and ICMP/fragment
+stress, Linux amd64 build checks, systemd verification and release binary
+metadata checks. Synthetic netem tests are regression tools only; they do not
+replace a real VPS WAN, high-RTT, mobile or reordered-path evaluation.
 
-## Frozen optimization boundary
+## Release procedure
 
-Server dataplane performance is closed for v1.0.2. Synthetic churn can expose
-Manager mutex activity, but current benchmarks do not justify lock architecture
-changes. The final local reference run was approximately 73.6 ns/op for lookup,
-72.9 ns/op under churn, and 1.09 us/op for the cooling-heavy allocator; the
-machine-specific values are evidence for this audit, not CI thresholds.
-`MANAGER LOCK REFACTOR NOT JUSTIFIED`.
+1. Keep the worktree clean except for the intended release changes and review
+   tracked, deleted and untracked files for credentials, private keys, build
+   output and production configuration.
+2. Run all local gates and push `codex/unified-masque` without force push.
+3. Wait for the branch workflow to finish successfully.
+4. Create an annotated semver tag whose target is the exact validated commit:
 
-Normal CONNECT-IP RX and CONNECT-UDP client-to-target application payload
-copies are zero. Normal CONNECT-IP TX and CONNECT-UDP target-to-client paths
-have zero full payload copies before final QUIC serialization. The final
-`DatagramFrame.Append` copy remains intentional. `sendmmsg`/`recvmmsg`,
-MSG_ZEROCOPY, io_uring, public DATAGRAM pooling, custom crypto, incremental
-checksum, new congestion controllers, and UDP batching are deferred and are
-not release blockers. Reopen them only with Linux production profile,
-syscall/CPU/latency, allocation, qlog, or packet-loss evidence.
+   ```sh
+   git tag -a v1.0.15 -m "jiejie-masque v1.0.15"
+   git push origin v1.0.15
+   ```
 
-## Local environment caveats
+5. The tag workflow validates the tag object, current README and maintenance
+   markers, current release note, embedded version/commit, SHA256, size,
+   remote digest and downloaded artifact bytes. It builds once and releases
+   the same artifact.
+6. Verify the GitHub release is published, non-draft and non-prerelease, and
+   verify the downloaded binary with `--version` and its checksum.
 
-Constrained local UDP/TLS/TLS-config environments can expose failures in
-upstream-style quic tests that are unrelated to this release: `TestDial`'s
-four loopback variants may time out; `TestTransportClose` may return too early;
-`TestTransportAndDialConcurrentClose` may see the intentionally incomplete TLS
-config before the transport-close error; HTTP/3 self-tests may reject an empty
-client TLS ServerName; and race instrumentation can make
-`TestFrameParserAllocs/STREAM` report allocations. The known `gofmt -l` files
-`qlog/benchmark_test.go` and `quicvarint/varint_test.go` are inherited fork
-formatting exceptions. Confirm targeted packages, main CI, and release gates
-before classifying such a failure as a product defect. This is a validation
-caveat, not a reason to alter runtime behavior during a release audit.
+The only release note maintained by the repository is
+`docs/RELEASE_NOTES_v1.0.15.md`. A future release replaces the current marker
+and current release note as one intentional consolidation change; the Git
+commit graph is never rewritten.
 
-## v1.0.3 third-audit closure
+## Operations and ownership requirements
 
-The v1.0.3 runtime baseline is `5d5e25ec46b0fb8e6300040760da9a019ccbd8c7`.
-The third-audit release closure changes documentation and release metadata only;
-the runtime baseline remains frozen.
+Configuration files and environment files use mode 0600. Service directories
+use mode 0700. Private keys remain outside Git. `check-config` must pass before
+restart, and `doctor` plus network prepare must pass before the first host
+deployment. systemd units must retain their notify/watchdog and capability
+contracts.
 
-| Finding | Final status |
-| --- | --- |
-| F-301 | FIXED |
-| F-302 | DEFERRED / REPRODUCTION REQUIRED |
-| F-303 | FIXED |
-| F-304 | FIXED |
-| H-305 | MEASURE FIRST |
-| H-306 | PRODUCTION A/B REQUIRED |
+When changing a queue or buffer, document its producer, consumer, close
+behavior, drop policy, high-water metric and ownership transfer. Do not raise a
+default solely to hide backpressure. Performance claims require clean-path
+control plus real WAN measurements covering goodput, loaded RTT, CPU, RSS,
+syscalls, packet loss, reordering and queue pressure.
 
-F-301's effective CONNECT-UDP admission identity is explicit `Credential.Name`
-when non-empty, otherwise `Username`; both usernames and effective identities
-must be unique. F-303 consumes wrapped `connectip.CloseError` values with
-`errors.Is` for `context.Canceled`, `net.ErrClosed`, and `io.ErrClosedPipe`.
-F-304 supports sequential and pipelined length-prefixed DNS-over-TCP messages
-on one downstream connection, processes them in order, and opens one upstream
-TCP connection per query. Clean EOF and idle timeout do not increment DNS
-gateway Errors; malformed or failed message operations do.
+## Known limitations
 
-F-302 remains a plausible cross-process Session-NAT stale-conntrack lifecycle
-risk, but has not been reproduced as a user-visible production failure and does
-not justify a speculative startup conntrack flush. H-305 remains a product
-profile measurement decision, and H-306 requires production A/B measurement;
-neither changes runtime code in v1.0.3.
-
-The IANA IPv4 and IPv6 special-purpose policy snapshots are verified current
-through 2025-10-09. The frozen dataplane ownership, queue, buffer, cleanup,
-PacketPool, and final serialization-copy invariants remain unchanged.
-
-### v1.0.3 provenance addendum
-
-The v1.0.3 source commit passed repository CI gates, but its CI candidate binary
-used embedded version `0.1.0` and was not byte-identical to the separately
-built GitHub Release asset. The historical release asset was 8,945,812 bytes
-with SHA256
-`99a4a495b222640d559e5403b40e089ce5a94afd950729cef07a338b6381cb6d`.
-This is a release provenance gap, not a claim that the historical binary was
-corrupt. The v1.0.4 candidate workflow closes this gap through tag-derived
-metadata and same-artifact release upload; v1.0.3 tags and assets are unchanged.
-
-## v1.0.4 tag-only failed release attempt
-
-The v1.0.4 annotated tag was created successfully, but its release workflow
-stopped before tests and build because the local tag-ref validation was
-incompatible with `actions/checkout` tag checkout behavior. No GitHub Release
-was created, no artifact was manually substituted, and the tag remains
-immutable. v1.0.4 is not a released version.
-
-| Finding | Final pre-tag status |
-| --- | --- |
-| F-401 | FIXED |
-| F-402 | FIXED |
-| F-403 | FIXED |
-| F-404 | REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING |
-| F-405 | WORKFLOW BUG CONFIRMED; VALIDATION HOTFIX IN `983e283` |
-| F-406 | FIXED |
-| H-305 | MEASURE FIRST |
-| H-306 | PRODUCTION A/B REQUIRED |
-
-The v1.0.4 release notes contain the intended maintenance scope. The
-CONNECT-IP packet dataplane, CONNECT-UDP DATAGRAM path,
-PacketPool, owned buffers, queues, retained receive budget, final
-serialization copy, GSO, TargetPolicy, DNS Gateway, Session-NAT cleanup
-lifecycle, Mihomo performance profile, SNI Router, and fork dependency SHAs
-are unchanged. F-404 remains deferred pending real Linux/VPS conntrack
-reproduction. The corrected remote-object validator is being carried into the
-v1.0.5 release attempt.
-
-The v1.0.5 annotated tag was then created from the first validator-hotfix
-candidate, but its workflow stopped before tests/build because the build
-metadata step did not receive `GH_TOKEN` for the GitHub API call. No GitHub
-Release or substituted artifact was created, and v1.0.5 remains immutable.
-The token wiring fix is being carried into the v1.0.6 release attempt.
-
-The v1.0.6 tag reached the release job and completed the full build gates, but
-release verification stopped because `actions/download-artifact` restored the
-Linux binary without its executable bit. No GitHub Release or substituted
-artifact was created, and v1.0.6 remains immutable. The release-job permission
-fix is being carried into the v1.0.7 release attempt.
-
-The v1.0.7 build and artifact jobs passed and the workflow created the draft
-release, but draft verification used the published-release tag endpoint, which
-returns 404 before publication. The draft has not been published and v1.0.7
-remains an immutable failed release attempt. The verification query is being
-fixed for the v1.0.8 release attempt.
-
-## v1.0.8 final release provenance
-
-The v1.0.8 annotated tag target is
-`14ed18241268a07bb462792b348dd27e5c24ce8b`. Tag workflow
-`33967069080` passed the full build and release jobs. The workflow artifact and
-the published GitHub Release binary are byte-identical:
-
-```text
-bytes: 8949908
-sha256: f3a50f592b30c69ca14a06be1690a550dcd138a77d966e474bf9ee4ca0cc2d1f
-```
-
-The release is [jiejie-masque v1.0.8](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.8),
-with `draft=false` and `prerelease=false`. Its two formal assets are the Linux
-amd64 binary and its checksum file. F-405 is FIXED: CI artifact and GitHub
-Release artifact passed `cmp`, size, checksum, embedded metadata, and remote
-digest verification. The post-release provenance record is documentation-only
-and is not part of the v1.0.8 tag.
-
-| Finding | Final status |
-| --- | --- |
-| F-401 | FIXED |
-| F-402 | FIXED |
-| F-403 | FIXED |
-| F-404 | REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING |
-| F-405 | FIXED |
-| F-406 | FIXED |
-| H-305 | MEASURE FIRST |
-| H-306 | PRODUCTION A/B REQUIRED |
-
-## v1.0.9 release preparation — F-501 only
-
-F-501 is a confirmed conntrack cleanup result-classification bug. A command
-that exits non-zero with explicit `0 flow entry`/`0 flow entries` output is a
-benign no-op, so cleanup continues from `-s` to `-d`; other command failures
-remain errors. Timeout classification now uses the saved context error before
-the per-command cancel and only treats `context.DeadlineExceeded` as timeout.
-This removes one confirmed source of incomplete cleanup. F-404 remains
-`REPRODUCTION REQUIRED / NON-RELEASE-BLOCKING` and still concerns genuine
-cleanup failure/restart/reuse behavior, not this fixed result-classification
-bug. F-501 is the only runtime change in this release. F-502 adds a tag-only
-consistency gate requiring README, maintenance, and release-note versions to
-match the tag; the historical v1.0.8 self-description remains immutable.
-
-## v1.0.4 candidate — maintenance batch 1
-
-This candidate reopens only CONNECT-TCP lifecycle handling, CONNECT-IP config
-loading, and network-preparation config propagation:
-
-| Finding | Candidate status |
-| --- | --- |
-| F-401 | FIXED |
-| F-402 | FIXED |
-| F-403 | FIXED |
-| F-404 | REPRODUCTION REQUIRED |
-| F-405 | IMPLEMENTED / REAL TAG-PATH VALIDATION PENDING |
-| F-406 | FIXED |
-
-CONNECT-TCP now treats directional EOF as half-close: client-to-target EOF
-uses TCP `CloseWrite`, target-to-client EOF closes only the HTTP/3 send
-direction, and only abnormal copy errors trigger bidirectional teardown.
-CONNECT-IP semantic YAML defaults and validation remain solely in
-`config.Load`; the mode envelope is routing-only. The network-prepare helper
-supports fixed `tunnel-prefix` and `external-interface` field queries while
-retaining the legacy no-field tunnel-prefix output and the CLI/env/YAML/route
-interface precedence. F-404, release provenance, README drift, H-305, and H-306
-are intentionally outside this batch.
-
-## PRE-v1.0.13 migration regression repair batch 1
-
-These findings were introduced by the post-v1.0.12 dependency migration and
-were not defects in the v1.0.12 release. They are fixed in the unreleased
-candidate only:
-
-| Finding | Description | Candidate status |
-| --- | --- | --- |
-| F-901 | CONNECT-IP TX-GRO owned nonblocking drain capability gate | FIXED / CANDIDATE VERIFIED |
-| F-902 | IPv4 options full-header checksum migration regression | FIXED / CANDIDATE VERIFIED / WAS RELEASE BLOCKER |
-| F-903 | Legacy H3 prepared-DATAGRAM fallback double processing | FIXED / CANDIDATE VERIFIED |
-
-The v1.0.13 tag and release remain uncreated; production remains untouched.
-
-## Final maintenance closure v4 candidate
-
-This post-v1.0.13 candidate does not alter the `v1.0.13` tag, publish a
-release, or deploy a server.
-
-| Finding | Result |
-| --- | --- |
-| H-307 | CONFIRMED / FIXED in the project QUIC fork. A request DATAGRAM arriving before `TrackStream` is retained once per stream for at most one second, with a global bound of 32; registration atomically drains it into the normal stream queue. |
-| F-404 | CONFIRMED / FIXED. A deterministic cleanup-error test proved the previous reuse path; a failed shadow-IP conntrack cleanup now permanently quarantines that address for the remaining process lifetime. `CleanupStats.Quarantined` exposes the count. |
-| F-302 | ROOT REPRODUCTION HARNESS PROVIDED / DEFERRED. The process-local quarantine deliberately cannot survive a daemon restart; solving a confirmed restart case requires a separately designed durable startup/quarantine policy. |
-
-`scripts/reproduce-conntrack-session-reuse.sh f404` and `... f302` build an
-isolated three-namespace topology with veth, nft MASQUERADE, real UDP traffic,
-and conntrack inspection. They require Linux root/CAP_NET_ADMIN and print
-`SKIP` without those prerequisites; they are not part of ordinary Go tests.
-Privileged execution is still required before either kernel finding can be
-claimed as independently reproduced. The F-302 mode is explicitly a partial
-kernel-state reproducer, not a daemon-restart proof.
-
-The H-307 fork checkpoint is
-`509e22e92ae01477de7088738910f77da2631897`
-(`v0.61.1-0.20260906101854-509e22e92ae0`). Its focused deterministic and race
-tests, full fork tests, and main-module module verification are required before
-promotion. `jiejie-masque doctor --config CONFIG` is an explicit read-only
-CONNECT-IP preflight command; it reports PASS/WARN/FAIL/SKIP and never creates
-or changes host state. Doctor is unit-validated; production Linux/UFW-host
-validation remains pending. H-307 is deterministic-unit and race validated,
-but real Surge E2E remains pending.
-
-Future commits are additionally gated by `scripts/verify-git-metadata.sh` over
-an explicit newly-added revision range (`v1.0.13..HEAD` in CI). Historical Git
-metadata is not scanned or rewritten; both author and committer addresses for
-new commits must use GitHub noreply identities.
-
-## v3 final dataplane candidate
-
-The v3 pre-production candidate keeps the v2 queue capacities, MTU, TUN
-offload defaults, and QUIC behavior unchanged. CONNECT-IP WAN-to-client
-`sessionWriter` now drains at most 32 already-ready outbound packets per
-blocking receive, keeps FIFO ordering, caches writer capability, coalesces
-dequeue statistics and activity bookkeeping, and explicitly releases every
-locally drained unprocessed packet on cancellation or terminal failure.
-
-During the associated CONNECT-UDP audit, the client-to-target ready drain was
-corrected to bound *received datagrams*, not merely retained valid payloads.
-Datagrams without a Context ID are now released immediately and cannot extend
-one readiness round beyond 16 receives; retained payloads and owners remain
-one-to-one. No fork, configuration, release, or deployment change is part of
-this candidate.
-
-## v1.0.13 formal release provenance
-
-v1.0.13 was released from the exact release-preparation commit after the
-successful tag workflow. The v1.0.13 annotated tag is immutable in this
-repository's Git provenance: it must not be moved, deleted, force-pushed, or
-recreated.
-
-```text
-pre-release baseline:       bd8f58e3a6c5ab0680da3d6d20d047bcd9e19489
-release prep commit/target: adf9223a390ccbb16e3350ddd154582ed26207d9
-annotated tag object:       40c75127464ae3ab5aad960259e8f30d7149a249
-tag message:                jiejie-masque v1.0.13
-tag workflow:               34011569170
-release id:                 383464177
-release url:                https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases/tag/v1.0.13
-published_at:               2026-09-06 04h30m53s UTC
-artifact:                  jiejie-masque-linux-amd64
-artifact bytes:             9293950
-artifact sha256:            16bf3e0012dbc9a32d1044615ccca703594dbb5755cb9e17a1073ad36a6f5ef9
-checksum asset:             present
-RELEASE.txt:                PASS
-embedded version:           1.0.13
-embedded commit:            adf9223a390ccbb16e3350ddd154582ed26207d9
-Go:                         1.26.8
-QUIC:                       b6c72f4e72efb1a668cfa3dd29cf594350d59348
-CONNECT-IP:                 e645a82498ea70e3411b99e7a338ac740629abdd
-```
-
-The CI artifact and GitHub Release asset are byte-identical: `cmp PASS`,
-SHA256 MATCH, and size MATCH. The release API reports `draft=false`,
-`prerelease=false`, and `immutable=false`; the latter means platform-level
-immutability is not enforced by the API and is not a release provenance
-failure. Build-once provenance is closed: the release job downloaded and
-published the validated artifact without rebuilding the binary.
-
-v1.0.12 is unchanged. v1.0.13 is formally released. Production remains NOT
-DEPLOYED. Real Mihomo and Surge E2E remain NOT EXECUTED; H-307 remains
-TEST GAP / NOT CONFIRMED DEFECT.
-
-## PRE-v1.0.13 migration regression repair batch 3
-
-| Finding | Description | Candidate status |
-| --- | --- | --- |
-| F-907 | QUIC owned DATAGRAM permanent-discard SendOwner leak | FIXED / CANDIDATE VERIFIED |
-| F-908 | CONNECT-IP plain ReadPacket/WritePacket terminal-error normalization seam | FIXED / CANDIDATE VERIFIED |
-| H-307 | Early DATAGRAM before TrackStream deterministic ownership/barrier coverage | TEST GAP / NOT CONFIRMED; no runtime change |
-
-F-907 is fixed only in the QUIC permanent-discard path: successful packing
-still transfers ownership, ACK-constrained packing retains the frame for retry,
-and permanent discard uses `Drop` to release the SendOwner exactly once.
-F-908 routes both plain packet APIs through the existing terminal-error
-normalization while retaining the DatagramTooLarge ICMP behavior. The early
-DATAGRAM review found existing pre-track drop coverage but no deterministic
-barrier reproducing loss of a valid early datagram; it remains a bounded test
-gap and does not justify a buffering/runtime redesign in this batch.
-
-Batch 3 source checkpoints:
-
-```text
-quic-go:      b6c72f4e72efb1a668cfa3dd29cf594350d59348
-  pseudo:     v0.61.1-0.20260906040817-b6c72f4e72ef
-connect-ip:   e645a82498ea70e3411b99e7a338ac740629abdd
-  pseudo:     v0.0.0-20260906041020-e645a82498ea
-```
-
-The v1.0.13 tag and release remain uncreated; production remains untouched.
-
-## PRE-v1.0.13 migration regression repair batch 2
-
-| Finding | Description | Candidate status |
-| --- | --- | --- |
-| F-904 | CONNECT-IP terminal transport close normalization | FIXED / CANDIDATE VERIFIED |
-| F-905 | CONNECT-IP local filesystem replace / clean-clone reproducibility | FIXED / RELEASE BLOCKER CLEARED |
-| F-906 | Dependency-fork public CI source-of-truth correction | VERIFIED / CURRENT FORK CI CLASSIFIED |
-
-The historical fork failures remain recorded: CONNECT-IP runs `34005919904`,
-`34005919763`, and `34005919912` failed at the old `84e7723` candidate; QUIC
-unit `34005926287` and cross-compile `34005926282` passed, while integration
-`34005926280` failed only in the Ubuntu Go 1.26 ECN-disabled MTU assertion and
-lint `34005926330` failed on project-owned formatting/staticcheck issues. The
-current QUIC and CONNECT-IP workflow results are recorded separately from
-MAIN CI and are not collapsed into a single “all forks green” claim.
-
-The v1.0.13 tag and release remain uncreated; production remains untouched.
+Public IPv6 egress depends on the deployment provider routing the configured
+prefix; a tunnel address alone does not prove Internet reachability. Session
+NAT is IPv4-only. Offload, PMTU ceilings and experimental congestion control
+remain opt-in until measured on representative paths. Release CI cannot prove
+firewall policy or provider routing on an individual VPS.

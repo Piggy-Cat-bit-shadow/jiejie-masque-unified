@@ -6,25 +6,22 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 write_docs() {
-	local readme_marker=$1 maintenance_marker=$2 history=${3:-}
-	mkdir -p "$tmp/docs"
-	printf '%s\n' "$readme_marker" > "$tmp/README.md"
-	printf '%s\n%s\n' "$maintenance_marker" "$history" > "$tmp/docs/maintenance.md"
+  local readme_marker=$1 maintenance_marker=$2
+  mkdir -p "$tmp/docs"
+  printf '%s\n' "$readme_marker" > "$tmp/README.md"
+  printf '%s\n' "$maintenance_marker" > "$tmp/docs/maintenance.md"
 }
 
-write_docs 'The current maintenance release is `v1.0.12`.' 'Current released version: `v1.0.12`' 'Historical v1.0.11 and v1.0.10 release notes remain valid.'
-"$helper" v1.0.12 "$tmp" >/dev/null
+write_docs 'The current maintenance release is `v9.9.9`.' 'Current released version: `v9.9.9`'
+"$helper" v9.9.9 "$tmp" >/dev/null
 
-write_docs 'The current maintenance release is `v1.0.12`.' $'Current released version: `v1.0.12`\nCurrent released version: `v1.0.11`'
-if "$helper" v1.0.12 "$tmp" >/dev/null 2>&1; then exit 1; fi
+write_docs 'The current maintenance release is `v9.9.9`.' $'Current released version: `v9.9.9`\nCurrent released version: `v9.9.8`'
+if "$helper" v9.9.9 "$tmp" >/dev/null 2>&1; then exit 1; fi
 
-write_docs 'The current maintenance release is `v1.0.12`.' 'Current released version: `v1.0.12`' 'Historical v1.0.11 release; v1.0.10 final release provenance.'
-"$helper" v1.0.12 "$tmp" >/dev/null
+write_docs 'The current maintenance release is `v9.9.8`.' 'Current released version: `v9.9.9`'
+if "$helper" v9.9.9 "$tmp" >/dev/null 2>&1; then exit 1; fi
 
-write_docs 'The current maintenance release is `v1.0.10`.' 'Current released version: `v1.0.10`'
-if "$helper" v1.0.12 "$tmp" >/dev/null 2>&1; then exit 1; fi
-
-write_docs '' 'Current released version: `v1.0.12`'
-if "$helper" v1.0.12 "$tmp" >/dev/null 2>&1; then exit 1; fi
+write_docs '' 'Current released version: `v9.9.9`'
+if "$helper" v9.9.9 "$tmp" >/dev/null 2>&1; then exit 1; fi
 
 printf '%s\n' 'verify-release-docs-selftest: passed'

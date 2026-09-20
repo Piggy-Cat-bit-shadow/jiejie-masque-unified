@@ -68,7 +68,7 @@ reordering, and WAN regression coverage exist.
 
 ## WAN queue / congestion findings
 
-The v1.0.14 field observation found a feedback loop: Reno-compatible `default`
+Field observation found a feedback loop: Reno-compatible `default`
 plus a 256-packet Session queue reached about 33 Mbps while overflowing the
 application queue, while CUBIC plus a 1024-packet Session queue reached about
 45 Mbps on the same environment. The fork now uses bounded QUIC DATAGRAM
@@ -92,7 +92,7 @@ For each `default` and `cubic`, restart only CONNECT-IP after changing
 and 500 MB downloads from Mihomo. Repeat at 50/100/150/200 ms and 0/0.1/0.5/1%
 loss. Record throughput, ramp-up time, loaded/p95 RTT, loss recovery, and CPU.
 The harness restores its qdisc when interrupted. No WAN results are fabricated
-by this repository. The v1.0.14 field observation recorded about 33 Mbps with
+by this repository. A field observation recorded about 33 Mbps with
 `default + queue=256`, frequent Session queue overflow, and about 45 Mbps with
 `cubic + queue=1024`. That is evidence for a starting production profile, not a
 universal guarantee: use `cubic + 1024` for new WAN deployments, then A/B

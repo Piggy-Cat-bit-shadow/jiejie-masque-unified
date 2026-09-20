@@ -71,8 +71,8 @@ jiejie-masque keygen
 - `dns_gateway.upstream` 默认是 `127.0.0.1:53`，gateway 只绑定 tunnel address。
 
 示例默认保持 `tun_offload: false`、`tun_tx_gro: false`。如果开启 TX GRO，
-必须同时开启 `tun_offload`，并先在 Linux 环境验证。v1.0.10 修复了 TCP TX GRO
-的 PSH boundary correctness，但默认 offload 行为没有改变。
+必须同时开启 `tun_offload`，并先在 Linux 环境验证。TCP TX GRO 保留 PSH
+boundary correctness，但默认 offload 行为没有改变。
 
 检查配置：
 
@@ -345,5 +345,5 @@ Session NAT cleanup 使用 bounded two-worker executor，cleanup pending 地址�
 立即复用。F-302/F-404 仍需要真实 Linux/VPS reproduction；本手册不把 deferred
 finding 描述成已解决问题。
 
-当前默认分支维护基线为 v1.0.14 之后的持续维护 HEAD；首次生产部署仍应以
+当前正式维护基线为 v1.0.15；首次生产部署仍应以
 真实 Linux VPS 的 doctor、CUBIC baseline 和 WAN A/B 结果为准。
