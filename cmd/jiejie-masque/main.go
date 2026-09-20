@@ -65,7 +65,11 @@ func serveConnectIP() error {
 	if err != nil {
 		return err
 	}
-	if err := hostnet.CheckIPv4Forwarding(); err != nil {
+	serverAddresses, err := c.ServerAddresses()
+	if err != nil {
+		return err
+	}
+	if err := hostnet.CheckForwarding(serverAddresses.Prefixes()); err != nil {
 		return err
 	}
 	resetKey, err := quicstate.LoadOrCreate(c.QUIC.StatelessResetKeyFile)
@@ -101,7 +105,6 @@ func serveConnectIP() error {
 		}
 		return nil
 	}
-	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
 	tun, err := tunnel.Open("masque0", c.Server.MTU, c.Server.TunOffload, c.Server.TunTXGRO)
 	if err != nil {
 		return err
@@ -112,16 +115,16 @@ func serveConnectIP() error {
 	} else {
 		log.Printf("CONNECT-IP TUN mode: plain")
 	}
-	if err = tun.Configure(serverPrefix); err != nil {
+	if err = tun.ConfigureAddresses(serverAddresses.Prefixes()); err != nil {
 		return fmt.Errorf("configure masque0: %w", err)
 	}
 	var dnsGateway *dnsgateway.Gateway
 	if c.DNSGateway.IsEnabled() {
 		dnsTimeout, _ := time.ParseDuration(c.DNSGateway.Timeout)
-		dnsGateway, err = dnsgateway.Start(dnsgateway.Config{
-			ListenAddr: serverPrefix.Addr(), Port: c.DNSGateway.Port, Upstream: c.DNSGateway.Upstream,
+		dnsGateway, err = dnsgateway.StartMany(dnsgateway.Config{
+			ListenAddr: serverAddresses.IPv4.Addr(), Port: c.DNSGateway.Port, Upstream: c.DNSGateway.Upstream,
 			Timeout: dnsTimeout, Concurrency: c.DNSGateway.Concurrency,
-		})
+		}, serverAddresses.Addresses())
 		if err != nil {
 			return fmt.Errorf("start tunnel DNS gateway: %w", err)
 		}
@@ -141,7 +144,7 @@ func serveConnectIP() error {
 	if c.Server.SessionNat.Enabled {
 		pool, _ := netip.ParsePrefix(c.Server.SessionNat.Pool)
 		excluded := make([]netip.Addr, 0, len(clients)+1)
-		excluded = append(excluded, serverPrefix.Addr())
+		excluded = append(excluded, serverAddresses.IPv4.Addr())
 		for _, cl := range clients {
 			excluded = append(excluded, cl.TunnelIPv4.Addr())
 		}
@@ -182,10 +185,10 @@ func serveConnectIP() error {
 	}
 	checkInterval, _ := time.ParseDuration(c.HostNetwork.CheckInterval)
 	probe := hostnet.Probe{
-		TunnelName: "masque0", TunnelPrefix: serverPrefix, TunnelMTU: c.Server.MTU,
+		TunnelName: "masque0", TunnelPrefix: firstPrefix(serverAddresses), TunnelPrefixes: serverAddresses.Prefixes(), TunnelMTU: c.Server.MTU,
 		ExternalInterface: externalInterface,
 		TunnelCheck:       tunnel.CheckInterface,
-		ForwardingCheck:   hostnet.CheckIPv4Forwarding,
+		ForwardingCheck:   func() error { return hostnet.CheckForwarding(serverAddresses.Prefixes()) },
 		NATCheck:          hostnet.CheckNAT,
 	}
 	if err := probe.Check(); err != nil {
@@ -193,7 +196,7 @@ func serveConnectIP() error {
 	}
 	log.Printf("CONNECT-IP QUIC congestion controller: %s", c.QUIC.CongestionController)
 	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		handleRequest(w, r, c, byKey, mgr, tun, packetPool)
+		handleRequest(w, r, c, serverAddresses, byKey, mgr, tun, packetPool)
 	})}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
@@ -318,8 +321,7 @@ func reapIdle(mgr *session.Manager, now time.Time, timeout time.Duration) int {
 	return closed
 }
 
-func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
-	serverPrefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
+func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, serverAddresses config.TunnelAddresses, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
 	parseProtocol, ok := protocolForParse(r.Proto)
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unsupported protocol %q", r.Proto)
@@ -363,17 +365,18 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		log.Printf("CONNECT-IP tunnel establishment failed: %v", err)
 		return
 	}
-	if err = conn.AssignAddresses([]netip.Prefix{client.TunnelIPv4}); err != nil {
+	clientAddresses := config.TunnelAddresses{IPv4: client.TunnelIPv4, IPv6: client.TunnelIPv6}
+	if err = conn.AssignAddresses(clientAddresses.Prefixes()); err != nil {
 		log.Printf("AssignAddresses failed: %v", err)
 		conn.Close()
 		return
 	}
-	if err = conn.AdvertiseRoute([]connectip.IPRoute{{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")}}); err != nil {
+	if err = conn.AdvertiseRoute(fullTunnelRoutes(clientAddresses)); err != nil {
 		log.Printf("AdvertiseRoute failed: %v", err)
 		conn.Close()
 		return
 	}
-	s := session.NewWithContextAndPacketPoolAndQueue(r.Context(), client.TunnelIPv4.Addr(), client.Name, legacyPacketConn{conn}, packetPool, c.Server.OutboundQueueSize, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
+	s := session.NewWithAddressesAndPacketPoolAndQueue(r.Context(), clientAddresses.Addresses(), client.Name, legacyPacketConn{conn}, packetPool, c.Server.OutboundQueueSize, func(x *session.Session) { mgr.RemoveIfCurrent(x) })
 	if mgr.IsShadow() {
 		if err := mgr.Register(s); err != nil {
 			log.Printf("session registration failed: %v", err)
@@ -390,7 +393,7 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 	release()
 	go sessionWriter(s, tun, c.Server.MTU)
 	log.Printf("session=%d established", s.ID)
-	go sessionReader(s, tun, mgr, serverPrefix, c.DNSGateway.IsEnabled(), uint16(c.DNSGateway.Port))
+	go sessionReaderWithAddresses(s, tun, mgr, serverAddresses, c.DNSGateway.IsEnabled(), uint16(c.DNSGateway.Port))
 	select {
 	case <-r.Context().Done():
 	case <-s.Ctx.Done():
@@ -404,6 +407,23 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		reason = "context"
 	}
 	log.Printf("session=%d closed reason=%s", s.ID, reason)
+}
+
+func firstPrefix(a config.TunnelAddresses) netip.Prefix {
+	if a.IPv4.IsValid() {
+		return a.IPv4
+	}
+	return a.IPv6
+}
+func fullTunnelRoutes(a config.TunnelAddresses) []connectip.IPRoute {
+	routes := make([]connectip.IPRoute, 0, 2)
+	if a.IPv4.IsValid() {
+		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")})
+	}
+	if a.IPv6.IsValid() {
+		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("::"), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
+	}
+	return routes
 }
 
 func txGRODrainEnabled(tunTXGRO, canTryOwned, canTryLegacy bool) bool {
@@ -678,6 +698,11 @@ func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int
 	}
 }
 func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) {
+	serverReaderAddresses := tunnelAddressesFromArg(serverPrefix)
+	sessionReaderWithAddresses(s, tun, mgr, serverReaderAddresses, dnsEnabled, dnsPort)
+}
+
+func sessionReaderWithAddresses(s *session.Session, tun *tunnel.Device, mgr *session.Manager, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) {
 	tryReader, canTry := s.Conn.(interface{ TryReadPacket() ([]byte, error) })
 	ownedReader, canReadOwned := s.Conn.(interface {
 		ReadPacketBuffer() (*connectip.PacketBuffer, error)
@@ -708,7 +733,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 			s.Close()
 			return
 		}
-		if !prepareSessionPacket(pkt, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
+		if !prepareSessionPacket(pkt, s, mgr, serverAddresses, dnsEnabled, dnsPort) {
 			release()
 			continue
 		}
@@ -736,7 +761,7 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 					err = pollErr
 					break
 				}
-				if prepareSessionPacket(next, s, mgr, serverPrefix, dnsEnabled, dnsPort) {
+				if prepareSessionPacket(next, s, mgr, serverAddresses, dnsEnabled, dnsPort) {
 					batch = append(batch, next)
 					releases = append(releases, nextRelease)
 				} else {
@@ -767,14 +792,28 @@ func sessionReader(s *session.Session, tun *tunnel.Device, mgr *session.Manager,
 	}
 }
 
-func prepareSessionPacket(pkt []byte, s *session.Session, mgr *session.Manager, serverPrefix netip.Prefix, dnsEnabled bool, dnsPort uint16) bool {
-	src, ok := packet.Source(pkt)
-	if !ok || src != s.VisibleIP {
+func tunnelAddressesFromArg(arg any) config.TunnelAddresses {
+	switch value := arg.(type) {
+	case config.TunnelAddresses:
+		return value
+	case netip.Prefix:
+		if value.Addr().Is4() {
+			return config.TunnelAddresses{IPv4: value}
+		}
+		return config.TunnelAddresses{IPv6: value}
+	default:
+		return config.TunnelAddresses{}
+	}
+}
+
+func prepareSessionPacket(pkt []byte, s *session.Session, mgr *session.Manager, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) bool {
+	info, ok := packet.Parse(pkt)
+	if !ok || !s.OwnsAddress(info.Source) {
 		return false
 	}
-	dst, ok := packet.Destination(pkt)
-	isDNS := dnsEnabled && ok && dst == serverPrefix.Addr() && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
-	if !ok || (!isDNS && serverPrefix.Contains(dst)) || mgr.IsShadowAddress(dst) {
+	dst := info.Destination
+	isDNS := dnsEnabled && containsAddress(serverAddresses, dst) && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
+	if !ok || (!isDNS && containsPrefix(serverAddresses, dst)) || mgr.IsShadowAddress(dst) {
 		return false
 	}
 	select {
@@ -795,6 +834,13 @@ func prepareSessionPacket(pkt []byte, s *session.Session, mgr *session.Manager, 
 		}
 	}
 	return true
+}
+
+func containsPrefix(a config.TunnelAddresses, ip netip.Addr) bool {
+	return (a.IPv4.IsValid() && a.IPv4.Contains(ip)) || (a.IPv6.IsValid() && a.IPv6.Contains(ip))
+}
+func containsAddress(a config.TunnelAddresses, ip netip.Addr) bool {
+	return (a.IPv4.IsValid() && a.IPv4.Addr() == ip) || (a.IPv6.IsValid() && a.IPv6.Addr() == ip)
 }
 func protocolForParse(protocol string) (string, bool) {
 	switch protocol {

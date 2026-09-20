@@ -28,6 +28,8 @@ const maxUDPRequestSize = 4096
 type Gateway struct {
 	udp       *net.UDPConn
 	tcp       net.Listener
+	udps      []*net.UDPConn
+	tcps      []net.Listener
 	cfg       Config
 	wg        sync.WaitGroup
 	mu        sync.Mutex
@@ -41,29 +43,54 @@ type Gateway struct {
 }
 
 func Start(cfg Config) (*Gateway, error) {
-	if !cfg.ListenAddr.Is4() || cfg.Port < 1024 || cfg.Port > 65535 || cfg.Timeout <= 0 || cfg.Concurrency < 1 {
+	if !cfg.ListenAddr.IsValid() {
+		return nil, fmt.Errorf("invalid DNS gateway listen address")
+	}
+	return StartMany(cfg, []netip.Addr{cfg.ListenAddr})
+}
+
+func StartMany(cfg Config, addresses []netip.Addr) (*Gateway, error) {
+	if len(addresses) == 0 || cfg.Port < 1024 || cfg.Port > 65535 || cfg.Timeout <= 0 || cfg.Concurrency < 1 {
 		return nil, fmt.Errorf("invalid DNS gateway configuration")
 	}
 	if _, _, err := net.SplitHostPort(cfg.Upstream); err != nil {
 		return nil, fmt.Errorf("invalid DNS upstream: %w", err)
 	}
-	listen := net.JoinHostPort(cfg.ListenAddr.String(), fmt.Sprint(cfg.Port))
-	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: cfg.ListenAddr.AsSlice(), Port: cfg.Port})
-	if err != nil {
-		return nil, err
+	g := &Gateway{cfg: cfg, clients: make(map[net.Conn]struct{})}
+	for _, address := range addresses {
+		if !address.Is4() && !address.Is6() {
+			return nil, fmt.Errorf("invalid DNS gateway address %s", address)
+		}
+		network := "udp6"
+		tcpNetwork := "tcp6"
+		if address.Is4() {
+			network, tcpNetwork = "udp4", "tcp4"
+		}
+		udp, err := net.ListenUDP(network, &net.UDPAddr{IP: address.AsSlice(), Port: cfg.Port})
+		if err != nil {
+			_ = g.Close()
+			return nil, err
+		}
+		tcp, err := net.Listen(tcpNetwork, net.JoinHostPort(address.String(), fmt.Sprint(cfg.Port)))
+		if err != nil {
+			_ = udp.Close()
+			_ = g.Close()
+			return nil, err
+		}
+		g.udps = append(g.udps, udp)
+		g.tcps = append(g.tcps, tcp)
 	}
-	tcp, err := net.Listen("tcp4", listen)
-	if err != nil {
-		_ = udp.Close()
-		return nil, err
+	g.udp, g.tcp = g.udps[0], g.tcps[0]
+	for _, udp := range g.udps {
+		for range cfg.Concurrency {
+			g.wg.Add(1)
+			go g.serveUDP(udp)
+		}
 	}
-	g := &Gateway{udp: udp, tcp: tcp, cfg: cfg, clients: make(map[net.Conn]struct{})}
-	for range cfg.Concurrency {
+	for _, tcp := range g.tcps {
 		g.wg.Add(1)
-		go g.serveUDP()
+		go g.serveTCP(tcp)
 	}
-	g.wg.Add(1)
-	go g.serveTCP()
 	return g, nil
 }
 
@@ -71,8 +98,17 @@ func (g *Gateway) Close() error {
 	g.closeOnce.Do(func() {
 		g.mu.Lock()
 		g.closing = true
-		err1 := g.udp.Close()
-		err2 := g.tcp.Close()
+		var err1, err2 error
+		for _, udp := range g.udps {
+			if err := udp.Close(); err1 == nil {
+				err1 = err
+			}
+		}
+		for _, tcp := range g.tcps {
+			if err := tcp.Close(); err2 == nil {
+				err2 = err
+			}
+		}
 		for conn := range g.clients {
 			_ = conn.Close()
 		}
@@ -94,13 +130,13 @@ func (g *Gateway) Errors() uint64  { return g.errors.Load() }
 
 func validMessage(b []byte) bool { return len(b) >= 12 }
 
-func (g *Gateway) serveUDP() {
+func (g *Gateway) serveUDP(udp *net.UDPConn) {
 	defer g.wg.Done()
 	// Read one byte beyond the accepted request size so an oversized UDP
 	// datagram is rejected instead of being forwarded as a truncated DNS packet.
 	buf := make([]byte, maxUDPRequestSize+1)
 	for {
-		n, client, err := g.udp.ReadFromUDP(buf)
+		n, client, err := udp.ReadFromUDP(buf)
 		if err != nil {
 			return
 		}
@@ -119,7 +155,7 @@ func (g *Gateway) serveUDP() {
 			continue
 		}
 		g.queries.Add(1)
-		_, _ = g.udp.WriteToUDP(response, client)
+		_, _ = udp.WriteToUDP(response, client)
 	}
 }
 
@@ -146,11 +182,11 @@ func (g *Gateway) exchangeUDP(request []byte) ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (g *Gateway) serveTCP() {
+func (g *Gateway) serveTCP(tcp net.Listener) {
 	defer g.wg.Done()
 	sem := make(chan struct{}, g.cfg.Concurrency)
 	for {
-		conn, err := g.tcp.Accept()
+		conn, err := tcp.Accept()
 		if err != nil {
 			return
 		}

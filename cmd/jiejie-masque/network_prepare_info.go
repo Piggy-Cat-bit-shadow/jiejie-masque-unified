@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"net/netip"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 )
@@ -18,24 +17,49 @@ func networkPrepareInfo(out io.Writer, path, field string) error {
 	}
 	switch field {
 	case "", "tunnel-prefix":
-		prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+		addresses, err := c.ServerAddresses()
 		if err != nil {
-			return fmt.Errorf("invalid server.tunnel_ipv4: %w", err)
+			return err
 		}
+		prefix := firstPrefix(addresses)
 		_, err = fmt.Fprintln(out, prefix.String())
 		return err
-	case "tunnel-address":
-		prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+	case "tunnel-prefixes":
+		addresses, err := c.ServerAddresses()
 		if err != nil {
-			return fmt.Errorf("invalid server.tunnel_ipv4: %w", err)
+			return err
 		}
+		for _, prefix := range addresses.Prefixes() {
+			if _, err = fmt.Fprintln(out, prefix.String()); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "tunnel-addresses":
+		addresses, err := c.ServerAddresses()
+		if err != nil {
+			return err
+		}
+		for _, address := range addresses.Addresses() {
+			if _, err = fmt.Fprintln(out, address); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "tunnel-address":
+		addresses, err := c.ServerAddresses()
+		if err != nil {
+			return err
+		}
+		prefix := firstPrefix(addresses)
 		_, err = fmt.Fprintln(out, prefix.Addr())
 		return err
 	case "tunnel-network":
-		prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+		addresses, err := c.ServerAddresses()
 		if err != nil {
-			return fmt.Errorf("invalid server.tunnel_ipv4: %w", err)
+			return err
 		}
+		prefix := firstPrefix(addresses)
 		_, err = fmt.Fprintln(out, prefix.Masked().String())
 		return err
 	case "dns-port":

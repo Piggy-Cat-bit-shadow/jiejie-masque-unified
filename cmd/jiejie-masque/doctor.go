@@ -37,23 +37,25 @@ type doctorResult struct {
 type doctorRunner func(context.Context, string, ...string) ([]byte, error)
 
 type doctorRuntime struct {
-	checkForwarding func() error
-	checkTunnel     func(string, netip.Prefix, int) error
-	checkNAT        func(string, netip.Prefix) error
-	externalIface   func() (string, error)
-	lookPath        func(string) (string, error)
-	run             doctorRunner
-	readFile        func(string) ([]byte, error)
-	stat            func(string) (fs.FileInfo, error)
+	checkForwarding     func() error
+	checkIPv6Forwarding func() error
+	checkTunnel         func(string, netip.Prefix, int) error
+	checkNAT            func(string, netip.Prefix) error
+	externalIface       func() (string, error)
+	lookPath            func(string) (string, error)
+	run                 doctorRunner
+	readFile            func(string) ([]byte, error)
+	stat                func(string) (fs.FileInfo, error)
 }
 
 func defaultDoctorRuntime() doctorRuntime {
 	return doctorRuntime{
-		checkForwarding: hostnet.CheckIPv4Forwarding,
-		checkTunnel:     tunnel.CheckInterface,
-		checkNAT:        hostnet.CheckNAT,
-		externalIface:   hostnet.DefaultExternalInterface,
-		lookPath:        exec.LookPath,
+		checkForwarding:     hostnet.CheckIPv4Forwarding,
+		checkIPv6Forwarding: hostnet.CheckIPv6Forwarding,
+		checkTunnel:         tunnel.CheckInterface,
+		checkNAT:            hostnet.CheckNAT,
+		externalIface:       hostnet.DefaultExternalInterface,
+		lookPath:            exec.LookPath,
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
@@ -85,16 +87,25 @@ func runDoctor(out io.Writer, c config.Config, rt doctorRuntime) bool {
 
 func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 	results := []doctorResult{{Name: "config", Level: doctorPass}}
-	prefix, err := netip.ParsePrefix(c.Server.TunnelIPv4)
+	addresses, err := c.ServerAddresses()
 	if err != nil {
 		return append(results, doctorResult{Name: "tunnel", Level: doctorFail, Detail: "invalid configured tunnel prefix", Failure: true})
 	}
-	if err := rt.checkForwarding(); err != nil {
-		results = append(results, doctorResult{Name: "ipv4-forwarding", Level: doctorFail, Detail: err.Error(), Failure: true})
-	} else {
-		results = append(results, doctorResult{Name: "ipv4-forwarding", Level: doctorPass})
+	if addresses.IPv4.IsValid() {
+		if err := rt.checkForwarding(); err != nil {
+			results = append(results, doctorResult{Name: "ipv4-forwarding", Level: doctorFail, Detail: err.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ipv4-forwarding", Level: doctorPass})
+		}
 	}
-	if err := rt.checkTunnel("masque0", prefix, c.Server.MTU); err != nil {
+	if addresses.IPv6.IsValid() {
+		if err := rt.checkIPv6Forwarding(); err != nil {
+			results = append(results, doctorResult{Name: "ipv6-forwarding", Level: doctorFail, Detail: err.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ipv6-forwarding", Level: doctorPass})
+		}
+	}
+	if err := rt.checkTunnel("masque0", firstPrefix(addresses), c.Server.MTU); err != nil {
 		results = append(results, doctorResult{Name: "tun", Level: doctorFail, Detail: err.Error(), Failure: true})
 	} else {
 		results = append(results, doctorResult{Name: "tun", Level: doctorPass})
@@ -112,7 +123,7 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 		results = append(results, doctorResult{Name: "external-interface", Level: doctorPass, Detail: "configured override"})
 	}
 	if external != "" {
-		if err := rt.checkNAT(external, prefix); err != nil {
+		if err := rt.checkNAT(external, firstPrefix(addresses)); err != nil {
 			results = append(results, doctorResult{Name: "nat", Level: doctorFail, Detail: err.Error(), Failure: true})
 		} else {
 			results = append(results, doctorResult{Name: "nat", Level: doctorPass})
@@ -120,7 +131,7 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 	} else {
 		results = append(results, doctorResult{Name: "nat", Level: doctorSkip, Detail: "external interface unavailable"})
 	}
-	results = append(results, doctorUFWChecks(c, external, rt)...)
+	results = append(results, doctorUFWChecks(c, external, rt, addresses)...)
 	results = append(results, doctorResetKeyCheck(c.QUIC.StatelessResetKeyFile, rt))
 	results = append(results, doctorUDPBufferChecks(rt)...)
 	return results
@@ -147,7 +158,7 @@ func doctorUDPBufferChecks(rt doctorRuntime) []doctorResult {
 	return []doctorResult{{Name: "udp-buffer-sysctl", Level: doctorPass, Detail: fmt.Sprintf("rmem_max=%d wmem_max=%d", rmem, wmem)}}
 }
 
-func doctorUFWChecks(c config.Config, external string, rt doctorRuntime) []doctorResult {
+func doctorUFWChecks(c config.Config, external string, rt doctorRuntime, addresses config.TunnelAddresses) []doctorResult {
 	if _, err := rt.lookPath("ufw"); err != nil {
 		return []doctorResult{{Name: "ufw", Level: doctorSkip, Detail: "command unavailable"}}
 	}
@@ -169,7 +180,6 @@ func doctorUFWChecks(c config.Config, external string, rt doctorRuntime) []docto
 	if err != nil {
 		return []doctorResult{{Name: "ufw", Level: doctorWarn, Detail: "rule query failed"}}
 	}
-	prefix, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
 	rules := normalizedUFWRules(string(added))
 	check := func(name, want string) doctorResult {
 		if hasUFWRule(rules, want) {
@@ -179,14 +189,24 @@ func doctorUFWChecks(c config.Config, external string, rt doctorRuntime) []docto
 	}
 	results := make([]doctorResult, 0, 3)
 	if c.DNSGateway.IsEnabled() {
-		results = append(results,
-			check("ufw-dns-udp", fmt.Sprintf("allow in on masque0 to %s port %d proto udp comment jiejie-masque-connect-ip-dns", prefix.Addr(), c.DNSGateway.Port)),
-			check("ufw-dns-tcp", fmt.Sprintf("allow in on masque0 to %s port %d proto tcp comment jiejie-masque-connect-ip-dns", prefix.Addr(), c.DNSGateway.Port)),
-		)
+		for _, address := range addresses.Addresses() {
+			name := address.String()
+			if address.Is4() {
+				name = ""
+			}
+			udpName, tcpName := "ufw-dns-"+name+"udp", "ufw-dns-"+name+"tcp"
+			results = append(results, check(udpName, fmt.Sprintf("allow in on masque0 to %s port %d proto udp comment jiejie-masque-connect-ip-dns", address, c.DNSGateway.Port)), check(tcpName, fmt.Sprintf("allow in on masque0 to %s port %d proto tcp comment jiejie-masque-connect-ip-dns", address, c.DNSGateway.Port)))
+		}
 	} else {
 		results = append(results, doctorResult{Name: "ufw-dns", Level: doctorSkip, Detail: "DNS gateway disabled"})
 	}
-	results = append(results, check("ufw-forward", fmt.Sprintf("route allow in on masque0 out on %s from %s comment jiejie-masque-connect-ip-forward", external, prefix.Masked())))
+	for _, prefix := range addresses.Prefixes() {
+		name := "ufw-forward-" + prefix.String()
+		if prefix.Addr().Is4() {
+			name = "ufw-forward"
+		}
+		results = append(results, check(name, fmt.Sprintf("route allow in on masque0 out on %s from %s comment jiejie-masque-connect-ip-forward", external, prefix.Masked())))
+	}
 	return results
 }
 

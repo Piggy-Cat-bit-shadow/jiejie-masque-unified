@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 
@@ -104,14 +105,81 @@ func newIfreq(name string, offload bool) (*unix.Ifreq, error) {
 }
 
 func (d *Device) Configure(prefix netip.Prefix) error {
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
-	if err != nil {
-		return err
+	return d.ConfigureAddresses([]netip.Prefix{prefix})
+}
+
+var configureIPv6Address = func(name string, prefix netip.Prefix) error {
+	cmd := exec.Command("ip", "-6", "addr", "replace", prefix.String(), "dev", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ip -6 addr replace: %w: %s", err, string(out))
 	}
-	defer unix.Close(fd)
-	return configureInterface(d.Name, prefix, d.MTU, func(req uint, ifr *unix.Ifreq) error {
-		return unix.IoctlIfreq(fd, req, ifr)
-	})
+	return nil
+}
+
+func (d *Device) ConfigureAddresses(prefixes []netip.Prefix) error {
+	if len(prefixes) == 0 {
+		return fmt.Errorf("at least one tunnel prefix is required")
+	}
+	var v4, v6 *netip.Prefix
+	for i := range prefixes {
+		p := prefixes[i]
+		if p.Addr().Is4() {
+			if v4 != nil {
+				return fmt.Errorf("multiple IPv4 tunnel prefixes are unsupported")
+			}
+			v4 = &prefixes[i]
+		}
+		if p.Addr().Is6() {
+			if v6 != nil {
+				return fmt.Errorf("multiple IPv6 tunnel prefixes are unsupported")
+			}
+			v6 = &prefixes[i]
+		}
+	}
+	if v4 == nil && v6 == nil {
+		return fmt.Errorf("invalid tunnel prefixes")
+	}
+	if v4 != nil {
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+		if err != nil {
+			return err
+		}
+		err = configureInterface(d.Name, *v4, d.MTU, func(req uint, ifr *unix.Ifreq) error { return unix.IoctlIfreq(fd, req, ifr) })
+		_ = unix.Close(fd)
+		if err != nil {
+			return err
+		}
+	} else {
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+		if err != nil {
+			return err
+		}
+		ifr, err := unix.NewIfreq(d.Name)
+		if err == nil {
+			ifr.SetUint32(uint32(d.MTU))
+			err = unix.IoctlIfreq(fd, unix.SIOCSIFMTU, ifr)
+		}
+		if err == nil {
+			ifr, err = unix.NewIfreq(d.Name)
+		}
+		if err == nil {
+			err = unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, ifr)
+		}
+		if err == nil {
+			ifr.SetUint16(ifr.Uint16() | unix.IFF_UP)
+			err = unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, ifr)
+		}
+		_ = unix.Close(fd)
+		if err != nil {
+			return fmt.Errorf("configure IPv6 TUN interface: %w", err)
+		}
+	}
+	if v6 != nil {
+		if err := configureIPv6Address(d.Name, *v6); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func configureInterface(name string, prefix netip.Prefix, mtu int, ioctl func(uint, *unix.Ifreq) error) error {

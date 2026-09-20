@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 
@@ -79,7 +80,8 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	serverPrefix, _ := parseTunnelAddress(c.Server.TunnelIPv4)
+	serverAddresses, _ := c.ServerAddresses()
+	serverPrefix := firstPrefix(serverAddresses).Addr().String()
 	node := map[string]any{
 		"name": *name, "type": "masque", "server": *server, "port": *port,
 		"private-key": canonicalPrivateKey, "public-key": serverPublicKey,
@@ -92,7 +94,7 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	}
 	if c.DNSGateway.IsEnabled() {
 		node["remote-dns-resolve"] = true
-		node["dns"] = []string{"udp://" + serverPrefix + ":" + strconv.Itoa(c.DNSGateway.Port)}
+		node["dns"] = []string{"udp://" + net.JoinHostPort(serverPrefix, strconv.Itoa(c.DNSGateway.Port))}
 	}
 	b, err := yaml.Marshal([]map[string]any{node})
 	if err != nil {

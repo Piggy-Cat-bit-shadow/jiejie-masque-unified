@@ -78,27 +78,23 @@ func TranslateICMP(b []byte, visible, shadow netip.Addr, toKernel bool) bool {
 	return true
 }
 func Source(b []byte) (netip.Addr, bool) {
-	if _, _, ok := valid(b); !ok {
-		return netip.Addr{}, false
-	}
-	return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	i, ok := Parse(b)
+	return i.Source, ok
 }
 func Destination(b []byte) (netip.Addr, bool) {
-	if _, _, ok := valid(b); !ok {
-		return netip.Addr{}, false
-	}
-	return netip.AddrFrom4([4]byte{b[16], b[17], b[18], b[19]}), true
+	i, ok := Parse(b)
+	return i.Destination, ok
 }
 
 // IsTCPOrUDPDestinationPort is intentionally strict. A non-initial fragment
 // has no trustworthy transport header and must not be used to bypass a local
 // service policy.
 func IsTCPOrUDPDestinationPort(b []byte, port uint16) bool {
-	ihl, total, ok := valid(b)
-	if !ok || (b[9] != 6 && b[9] != 17) || binary.BigEndian.Uint16(b[6:8])&0x1fff != 0 || total < ihl+4 {
+	i, ok := Parse(b)
+	if !ok || (i.Protocol != 6 && i.Protocol != 17) || i.TransportOffset == 0 || len(b) < i.TransportOffset+4 {
 		return false
 	}
-	return binary.BigEndian.Uint16(b[ihl+2:ihl+4]) == port
+	return binary.BigEndian.Uint16(b[i.TransportOffset+2:i.TransportOffset+4]) == port
 }
 func rewrite(b []byte, old, new netip.Addr, src bool) bool {
 	ihl, total, ok := valid(b)

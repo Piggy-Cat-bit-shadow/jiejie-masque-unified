@@ -26,6 +26,7 @@ const DefaultOutboundQueueSize = 1024
 type Session struct {
 	ID            uint64
 	ClientIP      netip.Addr
+	ClientIPs     []netip.Addr
 	VisibleIP     netip.Addr
 	ShadowIP      netip.Addr
 	Identity      string
@@ -44,6 +45,15 @@ type Session struct {
 	queueDropped  atomic.Uint64
 	queueEnqueued atomic.Uint64
 	queueDequeued atomic.Uint64
+}
+
+func (s *Session) OwnsAddress(ip netip.Addr) bool {
+	for _, candidate := range s.ClientIPs {
+		if candidate == ip {
+			return true
+		}
+	}
+	return ip == s.ClientIP
 }
 
 // QueueStats is a lock-free snapshot of a session's outbound handoff queue.
@@ -93,11 +103,18 @@ func NewWithContextAndPacketPool(parent context.Context, ip netip.Addr, identity
 	return NewWithContextAndPacketPoolAndQueue(parent, ip, identity, conn, packetPool, DefaultOutboundQueueSize, onClose)
 }
 func NewWithContextAndPacketPoolAndQueue(parent context.Context, ip netip.Addr, identity string, conn PacketConn, packetPool *PacketPool, queueSize int, onClose func(*Session)) *Session {
+	return NewWithAddressesAndPacketPoolAndQueue(parent, []netip.Addr{ip}, identity, conn, packetPool, queueSize, onClose)
+}
+func NewWithAddressesAndPacketPoolAndQueue(parent context.Context, ips []netip.Addr, identity string, conn PacketConn, packetPool *PacketPool, queueSize int, onClose func(*Session)) *Session {
 	ctx, cancel := context.WithCancel(parent)
 	if queueSize <= 0 {
 		queueSize = DefaultOutboundQueueSize
 	}
-	s := &Session{ClientIP: ip, VisibleIP: ip, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, queueSize), packetPool: packetPool, onClose: onClose}
+	if len(ips) == 0 {
+		panic("session requires at least one client address")
+	}
+	addresses := append([]netip.Addr(nil), ips...)
+	s := &Session{ClientIP: addresses[0], ClientIPs: addresses, VisibleIP: addresses[0], Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, queueSize), packetPool: packetPool, onClose: onClose}
 	s.Touch(time.Now())
 	return s
 }
@@ -507,8 +524,15 @@ func (m *Manager) Replace(s *Session) (old *Session) {
 	m.mu.Lock()
 	m.next++
 	s.Generation = m.next
-	old = m.sessions[s.ClientIP]
-	m.sessions[s.ClientIP] = s
+	for _, ip := range s.ClientIPs {
+		if candidate := m.sessions[ip]; candidate != nil && candidate != s {
+			old = candidate
+			break
+		}
+	}
+	for _, ip := range s.ClientIPs {
+		m.sessions[ip] = s
+	}
 	m.mu.Unlock()
 	if old != nil && old != s {
 		old.Close()
@@ -549,7 +573,11 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		m.mu.Unlock()
 		return false
 	}
-	delete(m.sessions, s.ClientIP)
+	for _, ip := range s.ClientIPs {
+		if m.sessions[ip] == s {
+			delete(m.sessions, ip)
+		}
+	}
 	m.mu.Unlock()
 	return true
 }

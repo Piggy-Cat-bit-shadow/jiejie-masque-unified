@@ -53,14 +53,17 @@ type Client struct {
 	PublicKey  string   `yaml:"public_key"`
 	PublicKeys []string `yaml:"public_keys"`
 	TunnelIPv4 string   `yaml:"tunnel_ipv4"`
+	TunnelIPv6 string   `yaml:"tunnel_ipv6,omitempty"`
 }
 type ResolvedClient struct {
 	Name       string
 	PublicKeys []string
 	TunnelIPv4 netip.Prefix
+	TunnelIPv6 netip.Prefix
 }
 type Server struct {
 	TunnelIPv4         string     `yaml:"tunnel_ipv4"`
+	TunnelIPv6         string     `yaml:"tunnel_ipv6,omitempty"`
 	MTU                int        `yaml:"mtu"`
 	OutboundQueueSize  int        `yaml:"outbound_queue_size,omitempty"`
 	TunOffload         bool       `yaml:"tun_offload,omitempty"`
@@ -68,6 +71,63 @@ type Server struct {
 	SessionIdleTimeout string     `yaml:"session_idle_timeout"`
 	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
 }
+
+// TunnelAddresses is the address set assigned to one CONNECT-IP endpoint.
+// Prefixes are intentionally ordered IPv4 then IPv6 for stable capsule output.
+type TunnelAddresses struct {
+	IPv4 netip.Prefix
+	IPv6 netip.Prefix
+}
+
+func (a TunnelAddresses) Prefixes() []netip.Prefix {
+	out := make([]netip.Prefix, 0, 2)
+	if a.IPv4.IsValid() {
+		out = append(out, a.IPv4)
+	}
+	if a.IPv6.IsValid() {
+		out = append(out, a.IPv6)
+	}
+	return out
+}
+
+func (a TunnelAddresses) Addresses() []netip.Addr {
+	out := make([]netip.Addr, 0, 2)
+	for _, p := range a.Prefixes() {
+		out = append(out, p.Addr())
+	}
+	return out
+}
+
+func (c Config) ServerAddresses() (TunnelAddresses, error) {
+	v4, err := optionalPrefix(c.Server.TunnelIPv4, 4, "server.tunnel_ipv4")
+	if err != nil {
+		return TunnelAddresses{}, err
+	}
+	v6, err := optionalPrefix(c.Server.TunnelIPv6, 6, "server.tunnel_ipv6")
+	if err != nil {
+		return TunnelAddresses{}, err
+	}
+	if !v4.IsValid() && !v6.IsValid() {
+		return TunnelAddresses{}, fmt.Errorf("at least one server tunnel address is required")
+	}
+	return TunnelAddresses{IPv4: v4, IPv6: v6}, nil
+}
+
+func optionalPrefix(value string, family int, field string) (netip.Prefix, error) {
+	if value == "" {
+		return netip.Prefix{}, nil
+	}
+	p, err := netip.ParsePrefix(value)
+	if err != nil || !p.IsValid() || (family == 4 && (!p.Addr().Is4() || p.Bits() > 32)) || (family == 6 && (!p.Addr().Is6() || p.Bits() > 128)) {
+		return netip.Prefix{}, fmt.Errorf("invalid %s", field)
+	}
+	a := p.Addr()
+	if a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() || a.Is4In6() || a.Zone() != "" {
+		return netip.Prefix{}, fmt.Errorf("%s uses a reserved address", field)
+	}
+	return p, nil
+}
+
 type SessionNat struct {
 	Enabled              bool   `yaml:"enabled"`
 	Pool                 string `yaml:"pool"`
@@ -170,7 +230,7 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("quic.congestion_controller must be default or cubic")
 	}
-	if len(c.Clients) > 0 && (len(c.Client.PublicKeys) > 0 || c.Client.PublicKey != "" || c.Client.TunnelIPv4 != "") {
+	if len(c.Clients) > 0 && (len(c.Client.PublicKeys) > 0 || c.Client.PublicKey != "" || c.Client.TunnelIPv4 != "" || c.Client.TunnelIPv6 != "") {
 		return fmt.Errorf("client and clients cannot both be configured")
 	}
 	if c.Server.MTU != 0 && (c.Server.MTU < 576 || c.Server.MTU > 65535) {
@@ -225,6 +285,9 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.Server.SessionNat.Enabled {
+		if c.Server.TunnelIPv6 != "" {
+			return fmt.Errorf("server.session_nat with IPv6 is unsupported; disable session_nat for dual-stack")
+		}
 		pool, e := netip.ParsePrefix(c.Server.SessionNat.Pool)
 		if e != nil || !pool.Addr().Is4() {
 			return fmt.Errorf("invalid session_nat.pool")
@@ -276,9 +339,9 @@ func addIPv4(a [4]byte, n uint32) [4]byte {
 }
 
 func (c Config) ResolvedClients() ([]ResolvedClient, error) {
-	server, e := netip.ParsePrefix(c.Server.TunnelIPv4)
-	if e != nil || !server.Addr().Is4() {
-		return nil, fmt.Errorf("invalid IPv4 prefix %q", c.Server.TunnelIPv4)
+	server, e := c.ServerAddresses()
+	if e != nil {
+		return nil, e
 	}
 	clients := c.Clients
 	if len(clients) == 0 {
@@ -297,17 +360,38 @@ func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 			return nil, fmt.Errorf("duplicate client identity %q", effectiveName)
 		}
 		seenNames[effectiveName] = true
-		p, e := netip.ParsePrefix(cl.TunnelIPv4)
-		if e != nil || !p.Addr().Is4() || p.Bits() != 32 {
+		v4, e := optionalPrefix(cl.TunnelIPv4, 4, fmt.Sprintf("client %q tunnel_ipv4", cl.Name))
+		if e != nil {
+			return nil, e
+		}
+		if v4.IsValid() && v4.Bits() != 32 {
 			return nil, fmt.Errorf("client %q tunnel_ipv4 must be an IPv4 /32", cl.Name)
 		}
-		if !server.Contains(p.Addr()) || p.Addr() == server.Addr() {
-			return nil, fmt.Errorf("client %q tunnel IP is outside server network or equals server", cl.Name)
+		v6, e := optionalPrefix(cl.TunnelIPv6, 6, fmt.Sprintf("client %q tunnel_ipv6", cl.Name))
+		if e != nil {
+			return nil, e
 		}
-		if seenIP[p.Addr()] {
-			return nil, fmt.Errorf("duplicate client tunnel IP %s", p.Addr())
+		if v6.IsValid() && v6.Bits() != 128 {
+			return nil, fmt.Errorf("client %q tunnel_ipv6 must be an IPv6 /128", cl.Name)
 		}
-		seenIP[p.Addr()] = true
+		if !v4.IsValid() && !v6.IsValid() {
+			return nil, fmt.Errorf("client %q must configure tunnel_ipv4, tunnel_ipv6, or both", cl.Name)
+		}
+		if v4.IsValid() && (!server.IPv4.IsValid() || !server.IPv4.Contains(v4.Addr()) || v4.Addr() == server.IPv4.Addr()) {
+			return nil, fmt.Errorf("client %q IPv4 tunnel IP is outside server network or equals server", cl.Name)
+		}
+		if v6.IsValid() && (!server.IPv6.IsValid() || !server.IPv6.Contains(v6.Addr()) || v6.Addr() == server.IPv6.Addr()) {
+			return nil, fmt.Errorf("client %q IPv6 tunnel IP is outside server network or equals server", cl.Name)
+		}
+		for _, ip := range []netip.Addr{addrOrZero(v4), addrOrZero(v6)} {
+			if !ip.IsValid() {
+				continue
+			}
+			if seenIP[ip] {
+				return nil, fmt.Errorf("duplicate client tunnel IP %s", ip)
+			}
+			seenIP[ip] = true
+		}
 		keys := append([]string{}, cl.PublicKeys...)
 		if cl.PublicKey != "" {
 			keys = append(keys, cl.PublicKey)
@@ -319,14 +403,25 @@ func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 			if _, e = auth.ValidatePublicKeyString(key); e != nil {
 				return nil, fmt.Errorf("client %q public key: %w", cl.Name, e)
 			}
-			if previous, exists := seenKeyIP[key]; exists && previous != p.Addr() {
+			primary := addrOrZero(v4)
+			if !primary.IsValid() {
+				primary = v6.Addr()
+			}
+			if previous, exists := seenKeyIP[key]; exists && previous != primary {
 				return nil, fmt.Errorf("public key assigned to multiple tunnel IPs")
 			}
-			seenKeyIP[key] = p.Addr()
+			seenKeyIP[key] = primary
 		}
-		out = append(out, ResolvedClient{Name: cl.Name, PublicKeys: keys, TunnelIPv4: p})
+		out = append(out, ResolvedClient{Name: cl.Name, PublicKeys: keys, TunnelIPv4: v4, TunnelIPv6: v6})
 	}
 	return out, nil
+}
+
+func addrOrZero(p netip.Prefix) netip.Addr {
+	if p.IsValid() {
+		return p.Addr()
+	}
+	return netip.Addr{}
 }
 
 // EffectiveClientName is the in-memory session/quota principal for a client.

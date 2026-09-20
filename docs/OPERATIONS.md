@@ -64,9 +64,9 @@ jiejie-masque keygen
 从 `configs/connect-ip.example.yaml` 开始。必须核对：
 
 - `listen`、TLS certificate/key 和 QUIC stateless reset key path。
-- `server.tunnel_ipv4`、`server.mtu` 与 client tunnel address。
+- `server.tunnel_ipv4` / 可选的 `server.tunnel_ipv6`、`server.mtu` 与 client tunnel address；双栈时同一 client 同时配置 `/32` 和 `/128`。
 - `host_network.external_interface`；留空时程序根据 default route 自动检测。
-- `server.session_nat` 的 pool 必须位于 server network 内，且不能包含 server tunnel address。
+- `server.session_nat` 的 pool 必须位于 server network 内，且不能包含 server tunnel address；它目前只支持 IPv4，启用 IPv6 时必须关闭。
 - `dns_gateway.upstream` 默认是 `127.0.0.1:53`，gateway 只绑定 tunnel address。
 
 示例默认保持 `tun_offload: false`、`tun_tx_gro: false`。如果开启 TX GRO，
@@ -85,7 +85,7 @@ jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
 jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
 ```
 
-`doctor` 会检查配置、IPv4 forwarding、`masque0`、external interface、NAT
+`doctor` 会检查配置、启用地址族的 forwarding、`masque0`、external interface、NAT
 MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset key。
 它只执行查询；缺失 reset key 是 WARN（服务首次启动会创建它），UFW 未安装或未启用
 是 SKIP。任何运行必需项失败时会以非零状态退出并输出 `doctor: FAIL`。

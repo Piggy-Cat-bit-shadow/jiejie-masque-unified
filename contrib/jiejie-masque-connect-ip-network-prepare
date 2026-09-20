@@ -8,6 +8,7 @@ masque_bin=${JIEJIE_MASQUE_BIN:-/usr/local/bin/jiejie-masque}
 nft_bin=${JIEJIE_MASQUE_NFT:-nft}
 ufw_bin=${JIEJIE_MASQUE_UFW:-ufw}
 ip_forward_path=${JIEJIE_MASQUE_IP_FORWARD_PATH:-/proc/sys/net/ipv4/ip_forward}
+ip6_forward_path=${JIEJIE_MASQUE_IP6_FORWARD_PATH:-/proc/sys/net/ipv6/conf/all/forwarding}
 tunnel_interface=${JIEJIE_MASQUE_TUN_INTERFACE:-masque0}
 dns_comment=jiejie-masque-connect-ip-dns
 forward_comment=jiejie-masque-connect-ip-forward
@@ -42,14 +43,31 @@ if [ -z "$external_interface" ]; then
 fi
 
 tunnel_ipv4=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-prefix)
+tunnel_prefixes=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-prefixes)
+tunnel_addresses=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-addresses)
+[ -n "$tunnel_prefixes" ] || tunnel_prefixes=$tunnel_ipv4
 tunnel_address=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-address)
 tunnel_network=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-network)
+[ -n "$tunnel_addresses" ] || tunnel_addresses=$tunnel_address
+tunnel_ipv6_address=$(printf '%s\n' "$tunnel_addresses" | awk '/:/{print; exit}')
+tunnel_ipv6_prefix=$(printf '%s\n' "$tunnel_prefixes" | awk '/:/{print; exit}')
 dns_port=$("$masque_bin" network-prepare-info --config "$config" --field dns-port)
 
-"$nft_bin" add table ip masque_lite 2>/dev/null || true
-"$nft_bin" flush table ip masque_lite
-"$nft_bin" 'add chain ip masque_lite postrouting { type nat hook postrouting priority srcnat; policy accept; }'
-"$nft_bin" add rule ip masque_lite postrouting oifname "$external_interface" ip saddr "$tunnel_ipv4" masquerade
+printf '%s\n' "$tunnel_prefixes" | while IFS= read -r tunnel_prefix; do
+	[ -n "$tunnel_prefix" ] || continue
+	case "$tunnel_prefix" in
+		*:*)
+			# IPv6 uses routed egress by default. Do not invent NAT66 here.
+			if [ "$(cat "$ip6_forward_path")" != "1" ]; then printf '%s\n' 1 > "$ip6_forward_path"; fi
+			;;
+		*)
+			"$nft_bin" add table ip masque_lite 2>/dev/null || true
+			"$nft_bin" flush table ip masque_lite
+			"$nft_bin" 'add chain ip masque_lite postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+			"$nft_bin" add rule ip masque_lite postrouting oifname "$external_interface" ip saddr "$tunnel_prefix" masquerade
+			;;
+	esac
+done
 
 if [ "$(cat "$ip_forward_path")" != "1" ]; then
 	printf '%s\n' 1 > "$ip_forward_path"
@@ -68,10 +86,18 @@ if command -v "$ufw_bin" >/dev/null 2>&1; then
 			desired_dns_udp=""
 			desired_dns_tcp=""
 			desired_forward="route allow in on $tunnel_interface out on $external_interface from $tunnel_network comment $forward_comment"
+			desired_dns_udp_v6=""
+			desired_dns_tcp_v6=""
+			desired_forward_v6=""
 			if [ -n "$dns_port" ]; then
 				desired_dns_udp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto udp comment $dns_comment"
 				desired_dns_tcp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto tcp comment $dns_comment"
+				if [ -n "$tunnel_ipv6_address" ]; then
+					desired_dns_udp_v6="allow in on $tunnel_interface to $tunnel_ipv6_address port $dns_port proto udp comment $dns_comment"
+					desired_dns_tcp_v6="allow in on $tunnel_interface to $tunnel_ipv6_address port $dns_port proto tcp comment $dns_comment"
+				fi
 			fi
+			if [ -n "$tunnel_ipv6_prefix" ]; then desired_forward_v6="route allow in on $tunnel_interface out on $external_interface from $tunnel_ipv6_prefix comment $forward_comment"; fi
 
 			added_rules=$("$ufw_bin" show added) || {
 				echo "jiejie-masque-connect-ip-network-prepare: unable to inspect UFW rules" >&2
@@ -84,6 +110,9 @@ if command -v "$ufw_bin" >/dev/null 2>&1; then
 			if [ -n "$desired_dns_tcp" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_dns_tcp"; then
 				"$ufw_bin" $desired_dns_tcp
 			fi
+			for desired_rule in "$desired_dns_udp_v6" "$desired_dns_tcp_v6" "$desired_forward_v6"; do
+				if [ -n "$desired_rule" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_rule"; then "$ufw_bin" $desired_rule; fi
+			done
 			if ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_forward"; then
 				"$ufw_bin" $desired_forward
 			fi
@@ -103,7 +132,7 @@ if command -v "$ufw_bin" >/dev/null 2>&1; then
 				rule=${rule_line#ufw }
 				rule=$(printf '%s' "$rule" | tr -d "'")
 				case "$rule" in
-					"$desired_dns_udp"|"$desired_dns_tcp"|"$desired_forward") continue ;;
+					"$desired_dns_udp"|"$desired_dns_tcp"|"$desired_forward"|"$desired_dns_udp_v6"|"$desired_dns_tcp_v6"|"$desired_forward_v6") continue ;;
 					esac
 				# Project comments contain no whitespace, so word splitting here
 				# preserves the exact UFW rule arguments without eval.
