@@ -446,7 +446,9 @@ func TestSessionBatchWriterThrottlesRepeatedClosedNotifications(t *testing.T) {
 	conn := &batchWriterTestConn{writable: closed}
 	s := newWriterTestSession(ctx, conn)
 	done := make(chan bool, 1)
-	go func() { done <- newSessionPacketWriter(conn).writeBatch(s, nil, []*session.PacketBuffer{writerTestPacket(10)}) }()
+	go func() {
+		done <- newSessionPacketWriter(conn).writeBatch(s, nil, []*session.PacketBuffer{writerTestPacket(10)})
+	}()
 	time.AfterFunc(45*time.Millisecond, cancel)
 	select {
 	case <-done:
