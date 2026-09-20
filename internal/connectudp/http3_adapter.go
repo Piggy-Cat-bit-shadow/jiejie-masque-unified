@@ -27,7 +27,11 @@ func (a http3HandlerAdapter) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		RequestURI:    r.RequestURI,
 	}
 	req = req.WithContext(r.Context())
-	streamer, _ := w.(http3.HTTPStreamer)
+	streamer, ok := w.(http3.HTTPStreamer)
+	if !ok {
+		stdhttp.Error(w, "CONNECT-UDP requires an HTTP/3 stream", stdhttp.StatusInternalServerError)
+		return
+	}
 	a.handler.ServeHTTP(http3ResponseWriter{ResponseWriter: w, streamer: streamer}, req)
 }
 

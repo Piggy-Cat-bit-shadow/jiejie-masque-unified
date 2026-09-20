@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 
 	mh "github.com/metacubex/http"
@@ -87,7 +88,13 @@ func (r *TCPRelay) RelayContext(ctx context.Context, w mh.ResponseWriter, target
 		w.WriteHeader(statusForDialError(err))
 		return
 	}
-	stream := w.(http3.HTTPStreamer).HTTPStream()
+	streamer, ok := w.(http3.HTTPStreamer)
+	if !ok || streamer.HTTPStream() == nil {
+		_ = conn.Close()
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	stream := streamer.HTTPStream()
 	flow.SetCloseResource(func() {
 		_ = conn.Close()
 		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))

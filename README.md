@@ -133,7 +133,7 @@ jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
 
 ## 客户端与配置提示
 
-- CONNECT-IP 需要 Linux TUN、`CAP_NET_ADMIN`、对应地址族的 forwarding 和 network prepare；配置 `server.tunnel_ipv6` 与 client `tunnel_ipv6` 后可启用 IPv6 或 dual-stack。
+- CONNECT-IP 需要 Linux TUN、`CAP_NET_ADMIN`、对应地址族的 forwarding 和 network prepare；配置 `server.tunnel_ipv6` 与 client `tunnel_ipv6` 后可启用 IPv6 或 dual-stack。IPv6 tunnel connectivity 不自动代表公网 IPv6 egress；ULA 配置默认不广告 `::/0`，只有 operator 已路由 public IPv6 prefix 时才可显式启用 `server.advertise_ipv6_default_route`。
 - CONNECT-UDP 不需要 TUN 或 `CAP_NET_ADMIN`，公网部署必须保持认证开启。
 - CONNECT-UDP 使用 `auth.users` 与 `password_env`，不要把密码直接提交到 YAML。
 - CONNECT-IP client private key 是 SEC1 EC DER Base64；server endpoint public key 是 PKIX/SPKI DER Base64；client authentication public key 是 raw uncompressed P-256 point Base64，三者不要混用。

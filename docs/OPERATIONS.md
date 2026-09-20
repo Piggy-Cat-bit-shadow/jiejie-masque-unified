@@ -64,7 +64,8 @@ jiejie-masque keygen
 从 `configs/connect-ip.example.yaml` 开始。必须核对：
 
 - `listen`、TLS certificate/key 和 QUIC stateless reset key path。
-- `server.tunnel_ipv4` / 可选的 `server.tunnel_ipv6`、`server.mtu` 与 client tunnel address；双栈时同一 client 同时配置 `/32` 和 `/128`。
+- `server.tunnel_ipv4` / 可选的 `server.tunnel_ipv6`、`server.mtu` 与 client tunnel address；双栈时同一 client 同时配置 `/32` 和 `/128`。启用 IPv6 tunnel 时 MTU 至少为 1280。
+- `server.advertise_ipv6_default_route` 默认关闭。ULA/私有 IPv6 只提供 tunnel connectivity，不等于公网 IPv6 egress；只有 operator 已将 public IPv6 prefix 路由到 TUN 时才允许打开该选项。
 - `host_network.external_interface`；留空时程序根据 default route 自动检测。
 - `server.session_nat` 的 pool 必须位于 server network 内，且不能包含 server tunnel address；它目前只支持 IPv4，启用 IPv6 时必须关闭。
 - `dns_gateway.upstream` 默认是 `127.0.0.1:53`，gateway 只绑定 tunnel address。
@@ -85,7 +86,7 @@ jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
 jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
 ```
 
-`doctor` 会检查配置、启用地址族的 forwarding、`masque0`、external interface、NAT
+`doctor` 会检查配置、启用地址族的 forwarding、`masque0` 的每个 IPv4/IPv6 prefix、external interface、NAT
 MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset key。
 它只执行查询；缺失 reset key 是 WARN（服务首次启动会创建它），UFW 未安装或未启用
 是 SKIP。任何运行必需项失败时会以非零状态退出并输出 `doctor: FAIL`。
@@ -103,7 +104,8 @@ diagnostics:
 
 默认关闭。目录由服务创建为 0700，单个 `.sqlog` 文件为 0600；文件名只含
 QUIC connection ID 和 perspective，不含 client identity、证书、公钥或目标地址。
-抓取完成后应关闭并轮换/清理 qlog，避免磁盘无限增长。
+启用 qlog 时启动会先验证目录可创建和可写；systemd unit 使用 `LogsDirectory=` 提供
+最小写权限。qlog 是临时诊断工具，会产生大量磁盘数据，抓取完成后应关闭并轮换/清理。
 
 新部署的跨境/高 RTT 链路建议先使用 example 中的 `cubic` 与
 `outbound_queue_size: 1024`，并保留 `mtu: 1280`、`tun_offload: false`、
@@ -343,4 +345,5 @@ Session NAT cleanup 使用 bounded two-worker executor，cleanup pending 地址�
 立即复用。F-302/F-404 仍需要真实 Linux/VPS reproduction；本手册不把 deferred
 finding 描述成已解决问题。
 
-当前正式 release 是 v1.0.10；本次 release 未部署 production。
+当前默认分支维护基线为 v1.0.14 之后的持续维护 HEAD；首次生产部署仍应以
+真实 Linux VPS 的 doctor、CUBIC baseline 和 WAN A/B 结果为准。

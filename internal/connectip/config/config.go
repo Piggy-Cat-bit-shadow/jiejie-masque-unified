@@ -62,14 +62,15 @@ type ResolvedClient struct {
 	TunnelIPv6 netip.Prefix
 }
 type Server struct {
-	TunnelIPv4         string     `yaml:"tunnel_ipv4"`
-	TunnelIPv6         string     `yaml:"tunnel_ipv6,omitempty"`
-	MTU                int        `yaml:"mtu"`
-	OutboundQueueSize  int        `yaml:"outbound_queue_size,omitempty"`
-	TunOffload         bool       `yaml:"tun_offload,omitempty"`
-	TunTXGRO           bool       `yaml:"tun_tx_gro,omitempty"`
-	SessionIdleTimeout string     `yaml:"session_idle_timeout"`
-	SessionNat         SessionNat `yaml:"session_nat,omitempty"`
+	TunnelIPv4                string     `yaml:"tunnel_ipv4"`
+	TunnelIPv6                string     `yaml:"tunnel_ipv6,omitempty"`
+	AdvertiseIPv6DefaultRoute bool       `yaml:"advertise_ipv6_default_route,omitempty"`
+	MTU                       int        `yaml:"mtu"`
+	OutboundQueueSize         int        `yaml:"outbound_queue_size,omitempty"`
+	TunOffload                bool       `yaml:"tun_offload,omitempty"`
+	TunTXGRO                  bool       `yaml:"tun_tx_gro,omitempty"`
+	SessionIdleTimeout        string     `yaml:"session_idle_timeout"`
+	SessionNat                SessionNat `yaml:"session_nat,omitempty"`
 }
 
 // TunnelAddresses is the address set assigned to one CONNECT-IP endpoint.
@@ -235,6 +236,21 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MTU != 0 && (c.Server.MTU < 576 || c.Server.MTU > 65535) {
 		return fmt.Errorf("server.mtu must be between 576 and 65535")
+	}
+	if c.Server.TunnelIPv6 != "" && c.Server.MTU != 0 && c.Server.MTU < 1280 {
+		return fmt.Errorf("server.mtu must be at least 1280 when IPv6 tunnel addressing is enabled")
+	}
+	if c.Server.AdvertiseIPv6DefaultRoute {
+		addresses, err := c.ServerAddresses()
+		if err != nil {
+			return err
+		}
+		if !addresses.IPv6.IsValid() {
+			return fmt.Errorf("server.advertise_ipv6_default_route requires server.tunnel_ipv6")
+		}
+		if addresses.IPv6.Addr().IsPrivate() {
+			return fmt.Errorf("server.advertise_ipv6_default_route requires a routed public IPv6 prefix; ULA/private IPv6 cannot provide public egress")
+		}
 	}
 	if c.Server.OutboundQueueSize != 0 && (c.Server.OutboundQueueSize < 64 || c.Server.OutboundQueueSize > 4096) {
 		return fmt.Errorf("server.outbound_queue_size must be between 64 and 4096")
@@ -412,7 +428,7 @@ func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 			}
 			seenKeyIP[key] = primary
 		}
-		out = append(out, ResolvedClient{Name: cl.Name, PublicKeys: keys, TunnelIPv4: v4, TunnelIPv6: v6})
+		out = append(out, ResolvedClient{Name: effectiveName, PublicKeys: keys, TunnelIPv4: v4, TunnelIPv6: v6})
 	}
 	return out, nil
 }

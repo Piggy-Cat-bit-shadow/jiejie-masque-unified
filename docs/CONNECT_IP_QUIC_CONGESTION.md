@@ -33,7 +33,7 @@ HTTP/3 control stream and CONNECT-IP data plane
 
 `github.com/metacubex/quic-go` is replaced by
 `github.com/Piggy-Cat-bit-shadow/quic-go` commit
-`b6c72f4e72efb1a668cfa3dd29cf594350d59348`.
+`607c23f0eaf06c992a72f9e3fbc0649b01df6a28`.
 It is based on canonical quic-go v0.62.0 commit
 `793f74d8e03368c5aded128af6f48d21dbb47f73`; the fork
 adds the project's DATAGRAM/ownership integration and selected congestion-control
@@ -80,7 +80,7 @@ These are bounded buffers, not an unlimited backlog; the project keeps MTU
 ## WAN A/B procedure and queue guidance
 
 Do not use localhost throughput to choose a production controller. Keep MTU
-1280, outbound queue 256, DNS, and client build fixed. On a disposable Linux
+1280, outbound queue 1024, DNS, and client build fixed. On a disposable Linux
 test path, use the existing reversible harness in a separate terminal:
 
 ```bash
@@ -117,5 +117,6 @@ The service emits an identity-free 30-second dataplane snapshot containing
 Session queue depth/high-water/enqueue/dequeue/drop counters, TUN packet/byte
 and batch counters, heap allocation and GC count. It also logs the effective
 UDP `SO_RCVBUF`/`SO_SNDBUF` after bind. The lower QUIC fork's DATAGRAM send
-queue is bounded at 32 and applies backpressure rather than silently dropping;
+queue is bounded at 512 send / 256 receive and applies documented backpressure
+or bounded drop rather than silently growing;
 the Session queue is the intentional drop boundary.

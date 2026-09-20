@@ -19,6 +19,18 @@ func TestTargetPolicyRejectsPrivateAndLocalAddresses(t *testing.T) {
 	}
 }
 
+func TestTargetPolicyRejectsInvalidPortsBeforeResolution(t *testing.T) {
+	p := TargetPolicy{lookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+		t.Fatal("DNS lookup must not run for an invalid port")
+		return nil, nil
+	}}
+	for _, target := range []string{"example.test:0", "example.test:65536", "example.test:-1", "example.test:not-a-port"} {
+		if _, err := p.ResolveTargets(context.Background(), target); err == nil {
+			t.Fatalf("accepted invalid target port %q", target)
+		}
+	}
+}
+
 func TestTargetPolicyAllowsExplicitPrivateAndPublic(t *testing.T) {
 	if got, err := (TargetPolicy{AllowPrivate: true}).ResolveTarget(context.Background(), "tcp", "127.0.0.1:443"); err != nil || got != "127.0.0.1:443" {
 		t.Fatalf("explicit private = %q, %v", got, err)

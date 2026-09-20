@@ -167,9 +167,9 @@ QUIC startup reports requested/effective UDP socket buffers where the platform
 allows inspection. Insufficient tuning is observable and non-fatal. The service
 also emits a rate-limited, identity-free 30-second snapshot of active Session
 queue depth/high-water/enqueue/dequeue/drop, TUN packet/byte and batch counters,
-and basic heap/GC state. The public fork API does not expose QUIC per-connection
-packet/loss/pacing counters, so those remain a documented observability boundary
-rather than invented application metrics. The systemd watchdog is a runtime
+and basic heap/GC state. The maintained fork also exposes an identity-free QUIC
+runtime snapshot for loss, pacing, reordering, and queue pressure; the service
+aggregates it without logging packet identity or payload. The systemd watchdog is a runtime
 heartbeat only; it does not prove QUIC event-loop
 progress, packet forwarding, or remote reachability. The independent host
 network deep probe covers forwarding/TUN/nft-NAT checks at its 30-second

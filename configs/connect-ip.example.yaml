@@ -36,6 +36,9 @@ server:
   tunnel_ipv4: 10.200.0.1/16
   # Optional IPv6 tunnel network. Omit it for IPv4-only deployments.
   # tunnel_ipv6: fd00:200::1/64
+  # Keep false for ULA/internal IPv6. Set true only when the VPS operator has
+  # routed a public IPv6 prefix to the TUN path; this advertises ::/0 to clients.
+  advertise_ipv6_default_route: false
   mtu: 1280
   # Optional Linux IFF_VNET_HDR RX GSO split path. Keep disabled until tested.
   tun_offload: false

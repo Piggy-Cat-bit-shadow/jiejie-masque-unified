@@ -39,6 +39,22 @@ func TestProbeChecksAllDataPlaneInvariants(t *testing.T) {
 	}
 }
 
+func TestProbeChecksEveryConfiguredPrefix(t *testing.T) {
+	q := healthyProbe()
+	q.TunnelPrefixes = []netip.Prefix{netip.MustParsePrefix("10.200.0.1/30"), netip.MustParsePrefix("2001:db8:200::1/64")}
+	var checked []netip.Prefix
+	q.TunnelCheck = func(_ string, prefix netip.Prefix, _ int) error {
+		checked = append(checked, prefix)
+		return nil
+	}
+	if err := q.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if len(checked) != 2 || checked[0] != q.TunnelPrefixes[0] || checked[1] != q.TunnelPrefixes[1] {
+		t.Fatalf("checked prefixes = %v", checked)
+	}
+}
+
 func TestSupervisorRequiresTwoConsecutiveFailures(t *testing.T) {
 	p := healthyProbe()
 	var unhealthy atomic.Bool

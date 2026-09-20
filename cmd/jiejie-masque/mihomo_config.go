@@ -80,21 +80,33 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	serverAddresses, _ := c.ServerAddresses()
-	serverPrefix := firstPrefix(serverAddresses).Addr().String()
+	serverAddresses, err := c.ServerAddresses()
+	if err != nil {
+		return err
+	}
 	node := map[string]any{
 		"name": *name, "type": "masque", "server": *server, "port": *port,
 		"private-key": canonicalPrivateKey, "public-key": serverPublicKey,
-		"ip": client.TunnelIPv4.String(), "mtu": c.Server.MTU, "udp": true,
+		"mtu": c.Server.MTU, "udp": true,
 		"ip-stack":              map[string]any{"mode": "mips", "congestion-controller": "bbr3"},
 		"congestion-controller": "bbr", "bbr-profile": "standard",
+	}
+	if client.TunnelIPv4.IsValid() {
+		node["ip"] = client.TunnelIPv4.String()
+	}
+	if client.TunnelIPv6.IsValid() {
+		node["ipv6"] = client.TunnelIPv6.String()
 	}
 	if *sni != "" {
 		node["sni"] = *sni
 	}
 	if c.DNSGateway.IsEnabled() {
 		node["remote-dns-resolve"] = true
-		node["dns"] = []string{"udp://" + net.JoinHostPort(serverPrefix, strconv.Itoa(c.DNSGateway.Port))}
+		dns := make([]string, 0, len(serverAddresses.Addresses()))
+		for _, address := range serverAddresses.Addresses() {
+			dns = append(dns, "udp://"+net.JoinHostPort(address.String(), strconv.Itoa(c.DNSGateway.Port)))
+		}
+		node["dns"] = dns
 	}
 	b, err := yaml.Marshal([]map[string]any{node})
 	if err != nil {

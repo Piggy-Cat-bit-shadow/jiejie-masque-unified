@@ -27,6 +27,9 @@ func TestParseProxyRequestStatuses(t *testing.T) {
 		{"authority", func() *mh.Request { r := request(good.URL.Path); r.Host = "other.test"; return r }(), 400},
 		{"missing host", request("/.well-known/masque/udp//443/"), 400},
 		{"bad port", request("/.well-known/masque/udp/example.com/nope/"), 400},
+		{"zero port", request("/.well-known/masque/udp/example.com/0/"), 400},
+		{"high port", request("/.well-known/masque/udp/example.com/65536/"), 400},
+		{"negative port", request("/.well-known/masque/udp/example.com/-1/"), 400},
 	} {
 		_, e := ParseProxyRequest(tc.r, tmpl)
 		if e == nil || e.(*ProxyRequestParseError).HTTPStatus != tc.code {

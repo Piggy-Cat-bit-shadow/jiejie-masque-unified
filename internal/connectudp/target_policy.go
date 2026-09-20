@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -155,6 +156,10 @@ func (p TargetPolicy) ResolveTargets(ctx context.Context, target string) ([]stri
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || host == "" || port == "" {
 		return nil, fmt.Errorf("invalid target")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return nil, fmt.Errorf("target port must be between 1 and 65535")
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
 		ip = ip.Unmap()

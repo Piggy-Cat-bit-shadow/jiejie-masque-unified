@@ -23,16 +23,20 @@ type Probe struct {
 
 func (p Probe) Check() error {
 	if err := p.ForwardingCheck(); err != nil {
-		return fmt.Errorf("IPv4 forwarding: %w", err)
-	}
-	if err := p.TunnelCheck(p.TunnelName, p.TunnelPrefix, p.TunnelMTU); err != nil {
-		return fmt.Errorf("TUN: %w", err)
+		return fmt.Errorf("IP forwarding: %w", err)
 	}
 	prefixes := p.TunnelPrefixes
 	if len(prefixes) == 0 {
 		prefixes = []netip.Prefix{p.TunnelPrefix}
 	}
 	for _, prefix := range prefixes {
+		family := "IPv4"
+		if prefix.Addr().Is6() {
+			family = "IPv6"
+		}
+		if err := p.TunnelCheck(p.TunnelName, prefix, p.TunnelMTU); err != nil {
+			return fmt.Errorf("TUN %s (%s): %w", family, prefix, err)
+		}
 		if err := p.NATCheck(p.ExternalInterface, prefix); err != nil {
 			return fmt.Errorf("host MASQUERADE rule (%s): %w", prefix, err)
 		}

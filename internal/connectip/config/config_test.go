@@ -213,6 +213,10 @@ func TestEffectiveClientIdentityValidation(t *testing.T) {
 	if _, err := twoUnnamed.ResolvedClients(); err != nil {
 		t.Fatalf("unnamed clients were rejected: %v", err)
 	}
+	resolved, err := twoUnnamed.ResolvedClients()
+	if err != nil || resolved[0].Name != "client-1" || resolved[1].Name != "client-2" {
+		t.Fatalf("canonical unnamed identities = %#v, err=%v", resolved, err)
+	}
 	if got := EffectiveClientName(0, ""); got != "client-1" {
 		t.Fatalf("generated identity = %q", got)
 	}
@@ -248,6 +252,37 @@ func TestEffectiveClientIdentityValidation(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantError=%t", err, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestIPv6MTUValidation(t *testing.T) {
+	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
+	base := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{key}, TunnelIPv6: "2001:db8:200::2/128"}, Server: Server{TunnelIPv6: "2001:db8:200::1/64", MTU: 1280}}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid IPv6 MTU rejected: %v", err)
+	}
+	for _, mtu := range []int{1279} {
+		bad := base
+		bad.Server.MTU = mtu
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("IPv6 MTU %d was accepted", mtu)
+		}
+	}
+	v4 := base
+	v4.Server.TunnelIPv6 = ""
+	v4.Client.TunnelIPv6 = ""
+	v4.Server.TunnelIPv4 = "10.200.0.1/24"
+	v4.Client.TunnelIPv4 = "10.200.0.2/32"
+	v4.Server.MTU = 576
+	if err := v4.Validate(); err != nil {
+		t.Fatalf("IPv4 MTU 576 rejected: %v", err)
+	}
+}
+
+func TestIPv6DefaultRouteRequiresRoutedPublicPrefix(t *testing.T) {
+	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv6: "fd00:200::2/128"}, Server: Server{TunnelIPv6: "fd00:200::1/64", MTU: 1280, AdvertiseIPv6DefaultRoute: true}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("ULA IPv6 default route was accepted")
 	}
 }
 

@@ -98,10 +98,10 @@ func ParseProxyRequest(r *mh.Request, template *uritemplate.Template) (*ProxyReq
 		targetHost = "[" + targetHost + "]"
 	}
 	targetPort, err := strconv.Atoi(targetPortStr)
-	if err != nil {
+	if err != nil || targetPort < 1 || targetPort > 65535 {
 		return nil, &ProxyRequestParseError{
 			HTTPStatus: 400,
-			Err:        fmt.Errorf("failed to decode target_port: %w", err),
+			Err:        fmt.Errorf("target_port must be between 1 and 65535"),
 		}
 	}
 	return &ProxyRequest{

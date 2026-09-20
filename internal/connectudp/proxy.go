@@ -3,6 +3,7 @@ package connectudp
 import (
 	"context"
 	"errors"
+	"fmt"
 	mh "github.com/metacubex/http"
 	"io"
 	"log"
@@ -179,7 +180,13 @@ func (s *Proxy) ProxyConnectedSocket(w mh.ResponseWriter, _ *ProxyRequest, conn 
 	}
 	ownedPool := s.sharedOwnedPoolLocked()
 
-	str := w.(http3.HTTPStreamer).HTTPStream()
+	streamer, ok := w.(http3.HTTPStreamer)
+	if !ok || streamer.HTTPStream() == nil {
+		conn.Close()
+		w.WriteHeader(http.StatusInternalServerError)
+		return fmt.Errorf("CONNECT-UDP requires an HTTP/3 stream")
+	}
+	str := streamer.HTTPStream()
 	entry := proxyEntry{str: str, conn: conn}
 	flow.SetCloseResource(func() { _ = entry.Close() })
 

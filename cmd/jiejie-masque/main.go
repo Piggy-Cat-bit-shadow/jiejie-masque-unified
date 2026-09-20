@@ -65,6 +65,9 @@ func serveConnectIP() error {
 	if err != nil {
 		return err
 	}
+	if err := validateQLogDirectory(c.Diagnostics.QLog); err != nil {
+		return err
+	}
 	serverAddresses, err := c.ServerAddresses()
 	if err != nil {
 		return err
@@ -79,11 +82,6 @@ func serveConnectIP() error {
 	clients, err := c.ResolvedClients()
 	if err != nil {
 		return err
-	}
-	for i := range clients {
-		if clients[i].Name == "" {
-			clients[i].Name = config.EffectiveClientName(i, clients[i].Name)
-		}
 	}
 	byKey := make(map[string]config.ResolvedClient)
 	for _, cl := range clients {
@@ -372,7 +370,7 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		conn.Close()
 		return
 	}
-	if err = conn.AdvertiseRoute(fullTunnelRoutes(clientAddresses)); err != nil {
+	if err = conn.AdvertiseRoute(fullTunnelRoutes(clientAddresses, c.Server.AdvertiseIPv6DefaultRoute)); err != nil {
 		log.Printf("AdvertiseRoute failed: %v", err)
 		conn.Close()
 		return
@@ -416,12 +414,12 @@ func firstPrefix(a config.TunnelAddresses) netip.Prefix {
 	}
 	return a.IPv6
 }
-func fullTunnelRoutes(a config.TunnelAddresses) []connectip.IPRoute {
+func fullTunnelRoutes(a config.TunnelAddresses, advertiseIPv6DefaultRoute bool) []connectip.IPRoute {
 	routes := make([]connectip.IPRoute, 0, 2)
 	if a.IPv4.IsValid() {
 		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")})
 	}
-	if a.IPv6.IsValid() {
+	if a.IPv6.IsValid() && advertiseIPv6DefaultRoute {
 		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("::"), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
 	}
 	return routes

@@ -104,6 +104,37 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 	}
 }
 
+func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
+	privateKey, publicKey, err := generateClientKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := writeTestServerCertificate(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	configText := "mode: connect-ip\nlisten: 127.0.0.1:4434\ntls:\n  cert: " + certPath + "\n  key: unused\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  tunnel_ipv6: 2001:db8:200::1/64\n  mtu: 1280\n" +
+		"dns_gateway:\n  enabled: true\n  port: 5353\n  upstream: 127.0.0.1:53\n" +
+		"clients:\n  - public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n    tunnel_ipv6: 2001:db8:200::2/128\n"
+	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := mihomoConfigTo(&output, []string{"--config", configPath, "--server", "example.com", "--private-key", privateKey}); err != nil {
+		t.Fatal(err)
+	}
+	var nodes []map[string]any
+	if err := yaml.Unmarshal(output.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	if nodes[0]["ip"] != "10.200.0.2/32" || nodes[0]["ipv6"] != "2001:db8:200::2/128" {
+		t.Fatalf("dual-stack addresses = %#v", nodes[0])
+	}
+	dns, ok := nodes[0]["dns"].([]any)
+	if !ok || len(dns) != 2 || dns[0] != "udp://10.200.0.1:5353" || dns[1] != "udp://[2001:db8:200::1]:5353" {
+		t.Fatalf("dual-stack DNS = %#v", nodes[0]["dns"])
+	}
+}
+
 func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
 	privateKey, publicKey, err := generateClientKey()
 	if err != nil {

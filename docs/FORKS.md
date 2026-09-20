@@ -4,7 +4,7 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `45a73d788ea1c60ee4819edb0daa10abb5e14989`
+- Pinned commit: `607c23f0eaf06c992a72f9e3fbc0649b01df6a28`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the pinned fork: owned DATAGRAM buffers, retained receive
@@ -34,7 +34,7 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `e810d2607e791b6af9394264a4a4e3125f02fc3c`
+- Pinned commit: `ff8a7b5f1c62a900e2ad424726d5407acb414d38`
 - License: MIT
 - Used interfaces: owned packet-buffer send, borrowed packet-buffer receive,
   bounded DATAGRAM ownership, and CONNECT-IP address/route handling.
@@ -50,5 +50,5 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
   state-machine expansion) and `a96891b` (client-side `NewClientConn`). The
   current service is server-side and does not need either compatibility change.
 - `5f75fe3` only updates local test stream mocks for the retained `CancelWrite`
-  interface; `e810d26` then aligns this module's quic-go replacement with the
+  interface; the later `ff8a7b5` refreshes this module's quic-go replacement with the
   synchronized quic-go fork. Neither changes the CONNECT-IP production API.

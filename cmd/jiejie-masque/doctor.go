@@ -105,10 +105,16 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 			results = append(results, doctorResult{Name: "ipv6-forwarding", Level: doctorPass})
 		}
 	}
-	if err := rt.checkTunnel("masque0", firstPrefix(addresses), c.Server.MTU); err != nil {
-		results = append(results, doctorResult{Name: "tun", Level: doctorFail, Detail: err.Error(), Failure: true})
-	} else {
-		results = append(results, doctorResult{Name: "tun", Level: doctorPass})
+	for _, prefix := range addresses.Prefixes() {
+		name := "ipv4-tun"
+		if prefix.Addr().Is6() {
+			name = "ipv6-tun"
+		}
+		if err := rt.checkTunnel("masque0", prefix, c.Server.MTU); err != nil {
+			results = append(results, doctorResult{Name: name, Level: doctorFail, Detail: err.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: name, Level: doctorPass, Detail: prefix.String()})
+		}
 	}
 	external := c.HostNetwork.ExternalInterface
 	if external == "" {
@@ -123,10 +129,18 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 		results = append(results, doctorResult{Name: "external-interface", Level: doctorPass, Detail: "configured override"})
 	}
 	if external != "" {
-		if err := rt.checkNAT(external, firstPrefix(addresses)); err != nil {
-			results = append(results, doctorResult{Name: "nat", Level: doctorFail, Detail: err.Error(), Failure: true})
-		} else {
-			results = append(results, doctorResult{Name: "nat", Level: doctorPass})
+		for _, prefix := range addresses.Prefixes() {
+			name := "ipv4-nat"
+			if prefix.Addr().Is6() {
+				name = "ipv6-egress"
+			}
+			if err := rt.checkNAT(external, prefix); err != nil {
+				results = append(results, doctorResult{Name: name, Level: doctorFail, Detail: err.Error(), Failure: true})
+			} else if prefix.Addr().Is6() && !c.Server.AdvertiseIPv6DefaultRoute {
+				results = append(results, doctorResult{Name: name, Level: doctorWarn, Detail: "tunnel IPv6 is configured; public IPv6 egress is not advertised"})
+			} else {
+				results = append(results, doctorResult{Name: name, Level: doctorPass})
+			}
 		}
 	} else {
 		results = append(results, doctorResult{Name: "nat", Level: doctorSkip, Detail: "external interface unavailable"})
