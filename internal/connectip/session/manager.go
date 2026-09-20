@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/metacubex/quic-go"
 )
 
 type PacketConn interface {
@@ -79,6 +81,35 @@ type AggregateQueueStats struct {
 	Enqueued  uint64
 	Dequeued  uint64
 	Dropped   uint64
+}
+
+// AggregateRuntimeStats is an identity-free aggregation of the QUIC runtime
+// snapshots exposed by active CONNECT-IP sessions.
+type AggregateRuntimeStats struct {
+	Connections                  uint64
+	CongestionWindows            uint64
+	BytesInFlight                uint64
+	PacingRate                   uint64
+	PacketsLost                  uint64
+	BytesLost                    uint64
+	SpuriousLosses               uint64
+	MaxPacketReordering          uint64
+	MaxTimeReordering            time.Duration
+	DatagramQueueDepth           uint64
+	DatagramQueueHighWater       uint64
+	DatagramBlocked              uint64
+	DatagramBlockedDuration      time.Duration
+	SendQueueDepth               uint64
+	SendQueueHighWater           uint64
+	SendQueueHardBlocks          uint64
+	SendQueueHardBlockedDuration time.Duration
+	ReceivedPacketQueueDrops     uint64
+	ReceivedDatagramQueueDrops   uint64
+	MinRTT                       time.Duration
+	LatestRTT                    time.Duration
+	SmoothedRTT                  time.Duration
+	CurrentPMTU                  uint64
+	GSOConnections               uint64
 }
 
 func (s *Session) SetCloseReason(reason string) {
@@ -674,6 +705,44 @@ func (m *Manager) AggregateQueueStats() AggregateQueueStats {
 		out.Enqueued += stats.Enqueued
 		out.Dequeued += stats.Dequeued
 		out.Dropped += stats.Dropped
+	}
+	return out
+}
+
+func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
+	var out AggregateRuntimeStats
+	for _, s := range m.Snapshot() {
+		provider, ok := s.Conn.(interface{ RuntimeStats() quic.RuntimeStats })
+		if !ok {
+			continue
+		}
+		stats := provider.RuntimeStats()
+		out.Connections++
+		out.CongestionWindows += stats.CongestionWindow
+		out.BytesInFlight += stats.BytesInFlight
+		out.PacingRate += stats.PacingRate
+		out.PacketsLost += stats.PacketsLost
+		out.BytesLost += stats.BytesLost
+		out.SpuriousLosses += stats.SpuriousLosses
+		out.MaxPacketReordering = max(out.MaxPacketReordering, stats.MaxPacketReordering)
+		out.MaxTimeReordering = max(out.MaxTimeReordering, stats.MaxTimeReordering)
+		out.DatagramQueueDepth += stats.DatagramSendQueueDepth
+		out.DatagramQueueHighWater += stats.DatagramSendQueueHighWater
+		out.DatagramBlocked += stats.DatagramSendBlocked
+		out.DatagramBlockedDuration += stats.DatagramSendBlockedDuration
+		out.SendQueueDepth += stats.SendQueueDepth
+		out.SendQueueHighWater += stats.SendQueueHighWater
+		out.SendQueueHardBlocks += stats.SendQueueHardBlocks
+		out.SendQueueHardBlockedDuration += stats.SendQueueHardBlockedDuration
+		out.ReceivedPacketQueueDrops += stats.ReceivedPacketQueueDrops
+		out.ReceivedDatagramQueueDrops += stats.ReceivedDatagramQueueDrops
+		out.MinRTT = max(out.MinRTT, stats.MinRTT)
+		out.LatestRTT = max(out.LatestRTT, stats.LatestRTT)
+		out.SmoothedRTT = max(out.SmoothedRTT, stats.SmoothedRTT)
+		out.CurrentPMTU = max(out.CurrentPMTU, stats.CurrentPMTU)
+		if stats.GSO {
+			out.GSOConnections++
+		}
 	}
 	return out
 }

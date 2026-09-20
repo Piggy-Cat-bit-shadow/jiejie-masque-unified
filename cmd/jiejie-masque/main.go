@@ -250,10 +250,11 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			return
 		case <-ticker.C:
 			q := mgr.AggregateQueueStats()
+			qs := mgr.AggregateRuntimeStats()
 			t := tun.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, mem.HeapAlloc, mem.NumGC)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d blocked=%d/%s send_queue=%d/%d hard_block=%d/%s rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
 		}
 	}
 }
@@ -441,6 +442,8 @@ func sessionDrainEnabled(canTryOwned, canTryLegacy bool) bool {
 // legacyPacketConn adapts the v0.62 connect-ip-go ReadPacket buffer API to
 // the session layer's established packet-ownership contract.
 type legacyPacketConn struct{ *connectip.Conn }
+
+func (c legacyPacketConn) RuntimeStats() quic.RuntimeStats { return c.Conn.RuntimeStats() }
 
 func (c legacyPacketConn) ReadPacket() ([]byte, error) {
 	buf := make([]byte, 64*1024)
