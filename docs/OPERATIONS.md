@@ -90,6 +90,31 @@ MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset k
 它只执行查询；缺失 reset key 是 WARN（服务首次启动会创建它），UFW 未安装或未启用
 是 SKIP。任何运行必需项失败时会以非零状态退出并输出 `doctor: FAIL`。
 
+### 高 RTT 吞吐与 UDP socket buffer
+
+新部署的跨境/高 RTT 链路建议先使用 example 中的 `cubic` 与
+`outbound_queue_size: 1024`，并保留 `mtu: 1280`、`tun_offload: false`、
+`tun_tx_gro: false`。省略字段时，程序兼容性 fallback 仍是 `default` 与
+256；不要把这个 fallback 与生产 tuning recommendation 混淆。
+
+服务启动后会输出 UDP socket 的 effective `SO_RCVBUF`/`SO_SNDBUF`，而不是只
+输出请求值。Linux 主机只检查、不自动修改全局 sysctl：
+
+```sh
+sysctl net.core.rmem_max net.core.wmem_max
+ss -u -l -n -m
+```
+
+高 BDP QUIC 主机建议至少检查 `net.core.rmem_max` 与 `net.core.wmem_max` 是否
+达到 16 MiB（`16777216`），并确认服务日志中的 effective buffer 没有被内核
+上限压低。按发行版和其他服务的约束谨慎设置；jiejie-masque 不会自动写入
+sysctl，也不会要求 `SO_RCVBUFFORCE`/`SO_SNDBUFFORCE` capability。
+
+吞吐复现时使用服务每 30 秒的 identity-free dataplane snapshot 判断是 TUN、
+Session queue、QUIC backpressure、socket buffer 还是 CPU/GC 先饱和。日志包含
+queue depth/high-water/drop、TUN RX/TX packets/bytes/batch、heap 与 GC；不会记录
+destination、client identity 或每 packet 日志。
+
 ### network prepare
 
 CONNECT-IP network prepare helper 的 external interface 优先级是：

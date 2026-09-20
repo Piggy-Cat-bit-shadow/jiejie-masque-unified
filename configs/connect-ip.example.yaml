@@ -7,9 +7,9 @@ tls:
   key: /etc/jiejie-masque/connect-ip/server.key
 quic:
   stateless_reset_key_file: /var/lib/jiejie-masque-connect-ip/stateless-reset.key
-  # default preserves the pinned MetaCubeX/quic-go behavior; cubic selects its
-  # native CUBIC sender before CONNECT-IP data-plane streams begin.
-  congestion_controller: default
+  # Field-tested WAN starting point. "default" remains the library fallback;
+  # cubic selects the native non-Reno CUBIC sender before data streams begin.
+  congestion_controller: cubic
 host_network:
   # Optional; otherwise the default-route interface is detected.
   external_interface: eth0
@@ -32,9 +32,9 @@ server:
   # Optional Linux IFF_VNET_HDR RX GSO split path. Keep disabled until tested.
   tun_offload: false
   tun_tx_gro: false
-  # 256 packets absorbs a scheduling burst while bounding per-session latency
-  # and memory (about 320 KiB at MTU 1280).
-  outbound_queue_size: 256
+  # 1024 packets is about 1.25 MiB at MTU 1280. It covers more of a typical
+  # high-RTT WAN BDP without making memory unbounded; validate per deployment.
+  outbound_queue_size: 1024
   session_idle_timeout: 1h
   session_nat:
     enabled: true

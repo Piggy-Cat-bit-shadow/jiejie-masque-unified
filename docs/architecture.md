@@ -29,10 +29,10 @@ security、compatibility、ownership 或 shutdown bug 修改；没有可复现�
 | CONNECT-UDP Context ID | 1 byte |
 | CONNECT-UDP UDP read area | 1501 bytes |
 
-生产默认值包括一分钟 flow/session reaping、一个小时 idle
-timeouts, CONNECT-UDP limits of 256 global and 64 per user, and a 256-packet
-CONNECT-IP outbound queue. The example configs are the compatibility source
-for these defaults.
+生产兼容 fallback 包括一分钟 flow/session reaping、一个小时 idle timeouts、
+CONNECT-UDP limits of 256 global and 64 per user，以及 256-packet CONNECT-IP
+outbound queue。CONNECT-IP example 现在明确使用 field-tested WAN starting point
+`cubic` 与 queue 1024；省略字段时的 fallback 行为不变。
 
 When session NAT is enabled, a removed shadow address enters a pending-cleanup
 state before it can be allocated again. Conntrack cleanup runs on two fixed
@@ -163,8 +163,13 @@ QUIC UDP GSO remains enabled. Congestion controller values are `default` and
 `cubic`; `default` preserves baseline behavior, and BBR is not implemented.
 
 QUIC startup reports requested/effective UDP socket buffers where the platform
-allows inspection. Insufficient tuning is observable and non-fatal. The
-systemd watchdog is a runtime heartbeat only; it does not prove QUIC event-loop
+allows inspection. Insufficient tuning is observable and non-fatal. The service
+also emits a rate-limited, identity-free 30-second snapshot of active Session
+queue depth/high-water/enqueue/dequeue/drop, TUN packet/byte and batch counters,
+and basic heap/GC state. The public fork API does not expose QUIC per-connection
+packet/loss/pacing counters, so those remain a documented observability boundary
+rather than invented application metrics. The systemd watchdog is a runtime
+heartbeat only; it does not prove QUIC event-loop
 progress, packet forwarding, or remote reachability. The independent host
 network deep probe covers forwarding/TUN/nft-NAT checks at its 30-second
 interval and requires two consecutive failures before becoming fatal.

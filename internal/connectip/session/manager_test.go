@@ -50,6 +50,23 @@ func TestRecordDequeuedNPreservesQueueStatistics(t *testing.T) {
 	s.Close()
 }
 
+func TestAggregateQueueStatsIsIdentityFree(t *testing.T) {
+	m := NewManager()
+	a := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, nil, 2, nil)
+	b := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.3"), "b", &fakeConn{}, nil, 4, nil)
+	m.Replace(a)
+	m.Replace(b)
+	if !a.TryEnqueue(&PacketBuffer{Data: []byte{1}}) || !b.TryEnqueue(&PacketBuffer{Data: []byte{2}}) {
+		t.Fatal("failed to enqueue test packets")
+	}
+	stats := m.AggregateQueueStats()
+	if stats.Sessions != 2 || stats.Capacity != 6 || stats.Depth != 2 || stats.Enqueued != 2 {
+		t.Fatalf("aggregate stats = %+v", stats)
+	}
+	a.Close()
+	b.Close()
+}
+
 func TestPerClientReservationCapAndRelease(t *testing.T) {
 	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 4, nil)
 	m.SetMaxSessionsPerClient(2)

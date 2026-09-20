@@ -47,6 +47,13 @@ TUN/queue 默认行为。
 
 ## Validation boundaries
 
+本次后续 throughput audit 补充了 identity-free 30 秒 dataplane snapshot、TUN
+RX/TX 与 batch 计数，以及启动时 effective UDP socket buffer 日志。审计确认
+下层 QUIC DATAGRAM send queue 满时会阻塞施加 backpressure；Session outbound
+queue 才是当前明确的主动丢包边界。example 的新部署建议为 `cubic + 1024`，而
+library/config omission fallback 仍保持 `default + 256`，避免未经迁移改变已有
+部署行为。
+
 - F-302 harness 是 partial kernel-state reproducer，不是完整 daemon-restart
   proof；privileged Linux validation 仍待执行。
 - privileged Linux F-404 harness、真实 Surge E2E、真实 production UFW-host

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +122,29 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 	}
 	results = append(results, doctorUFWChecks(c, external, rt)...)
 	results = append(results, doctorResetKeyCheck(c.QUIC.StatelessResetKeyFile, rt))
+	results = append(results, doctorUDPBufferChecks(rt)...)
 	return results
+}
+
+const recommendedUDPBufferMax = 16 << 20
+
+func doctorUDPBufferChecks(rt doctorRuntime) []doctorResult {
+	readMax := func(path string) (int64, error) {
+		b, err := rt.readFile(path)
+		if err != nil {
+			return 0, err
+		}
+		return strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	}
+	rmem, rerr := readMax("/proc/sys/net/core/rmem_max")
+	wmem, werr := readMax("/proc/sys/net/core/wmem_max")
+	if rerr != nil || werr != nil {
+		return []doctorResult{{Name: "udp-buffer-sysctl", Level: doctorSkip, Detail: "Linux /proc sysctl values unavailable"}}
+	}
+	if rmem < recommendedUDPBufferMax || wmem < recommendedUDPBufferMax {
+		return []doctorResult{{Name: "udp-buffer-sysctl", Level: doctorWarn, Detail: fmt.Sprintf("rmem_max=%d wmem_max=%d; 16777216 recommended for high-BDP WAN", rmem, wmem)}}
+	}
+	return []doctorResult{{Name: "udp-buffer-sysctl", Level: doctorPass, Detail: fmt.Sprintf("rmem_max=%d wmem_max=%d", rmem, wmem)}}
 }
 
 func doctorUFWChecks(c config.Config, external string, rt doctorRuntime) []doctorResult {

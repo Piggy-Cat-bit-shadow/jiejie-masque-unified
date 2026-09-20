@@ -8,6 +8,11 @@ import (
 )
 
 type Device struct{}
+type Stats struct {
+	RXPackets, RXBytes        uint64
+	TXPackets, TXBytes        uint64
+	RXBatches, RXBatchPackets uint64
+}
 
 const MaxGSOBatch = 128
 const MaxTXGROBatch = 32
@@ -27,3 +32,4 @@ func (*Device) ReadBatch([][]byte, []int, int) (int, error) {
 	return 0, fmt.Errorf("TUN unavailable")
 }
 func (*Device) WriteBatch([][]byte) (int, error) { return 0, fmt.Errorf("TUN unavailable") }
+func (*Device) Stats() Stats                     { return Stats{} }

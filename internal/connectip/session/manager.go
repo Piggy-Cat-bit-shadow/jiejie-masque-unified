@@ -57,6 +57,19 @@ type QueueStats struct {
 	Dropped   uint64
 }
 
+// AggregateQueueStats is an identity-free snapshot for operational logging.
+// It intentionally aggregates active sessions instead of exposing client
+// names or tunnel addresses.
+type AggregateQueueStats struct {
+	Sessions  uint64
+	Capacity  uint64
+	Depth     uint64
+	HighWater uint64
+	Enqueued  uint64
+	Dequeued  uint64
+	Dropped   uint64
+}
+
 func (s *Session) SetCloseReason(reason string) {
 	if reason != "" {
 		s.closeReason.Store(reason)
@@ -619,6 +632,21 @@ func (m *Manager) CleanupStats() CleanupStats {
 	stats := executor.stats()
 	stats.Quarantined = quarantined
 	return stats
+}
+
+func (m *Manager) AggregateQueueStats() AggregateQueueStats {
+	var out AggregateQueueStats
+	for _, s := range m.Snapshot() {
+		stats := s.QueueStats()
+		out.Sessions++
+		out.Capacity += stats.Capacity
+		out.Depth += stats.Depth
+		out.HighWater += stats.HighWater
+		out.Enqueued += stats.Enqueued
+		out.Dequeued += stats.Dequeued
+		out.Dropped += stats.Dropped
+	}
+	return out
 }
 
 func (m *Manager) CloseCleanup() {

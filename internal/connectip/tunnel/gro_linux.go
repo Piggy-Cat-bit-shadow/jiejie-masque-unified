@@ -207,6 +207,8 @@ func (d *Device) WriteBatch(packets [][]byte) (int, error) {
 			return written, err
 		}
 		written += n
+		d.txPackets.Add(uint64(j - i))
+		d.txBytes.Add(uint64(n))
 		i = j
 	}
 	return written, nil

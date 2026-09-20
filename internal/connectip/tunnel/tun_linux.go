@@ -9,19 +9,26 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
 
 type Device struct {
-	f          *os.File
-	Name       string
-	MTU        int
-	offload    bool
-	txGRO      bool
-	txGROBuf   []byte
-	txGROMu    sync.Mutex
-	readBuffer [65545]byte
+	f              *os.File
+	Name           string
+	MTU            int
+	offload        bool
+	txGRO          bool
+	txGROBuf       []byte
+	txGROMu        sync.Mutex
+	readBuffer     [65545]byte
+	rxPackets      atomic.Uint64
+	rxBytes        atomic.Uint64
+	txPackets      atomic.Uint64
+	txBytes        atomic.Uint64
+	rxBatches      atomic.Uint64
+	rxBatchPackets atomic.Uint64
 }
 
 type tunFDOps struct {
@@ -149,10 +156,24 @@ func configureInterface(name string, prefix netip.Prefix, mtu int, ioctl func(ui
 	return nil
 }
 
-func (d *Device) Read(p []byte) (int, error) { return d.f.Read(p) }
+func (d *Device) Read(p []byte) (int, error) {
+	n, err := d.f.Read(p)
+	if err == nil {
+		d.rxPackets.Add(1)
+		d.rxBytes.Add(uint64(n))
+		d.rxBatches.Add(1)
+		d.rxBatchPackets.Add(1)
+	}
+	return n, err
+}
 func (d *Device) Write(p []byte) (int, error) {
 	if !d.offload {
-		return d.f.Write(p)
+		n, err := d.f.Write(p)
+		if err == nil {
+			d.txPackets.Add(1)
+			d.txBytes.Add(uint64(n))
+		}
+		return n, err
 	}
 	var header [10]byte
 	raw, err := d.f.SyscallConn()
@@ -170,7 +191,19 @@ func (d *Device) Write(p []byte) (int, error) {
 	if n != len(header)+len(p) {
 		return 0, io.ErrShortWrite
 	}
+	d.txPackets.Add(1)
+	d.txBytes.Add(uint64(len(p)))
 	return len(p), nil
+}
+
+type Stats struct {
+	RXPackets, RXBytes        uint64
+	TXPackets, TXBytes        uint64
+	RXBatches, RXBatchPackets uint64
+}
+
+func (d *Device) Stats() Stats {
+	return Stats{RXPackets: d.rxPackets.Load(), RXBytes: d.rxBytes.Load(), TXPackets: d.txPackets.Load(), TXBytes: d.txBytes.Load(), RXBatches: d.rxBatches.Load(), RXBatchPackets: d.rxBatchPackets.Load()}
 }
 func (d *Device) Close() error         { return d.f.Close() }
 func (d *Device) OffloadEnabled() bool { return d.offload }

@@ -59,7 +59,7 @@ drop-in dependency nor a permissible "minimal native factory" patch. It is not
 included. `bbr` fails config validation explicitly rather than silently falling
 back to CUBIC; there is no BBR profile setting in this build.
 
-## WAN A/B procedure
+## WAN A/B procedure and queue guidance
 
 Do not use localhost throughput to choose a production controller. Keep MTU
 1280, outbound queue 256, DNS, and client build fixed. On a disposable Linux
@@ -74,5 +74,31 @@ For each `default` and `cubic`, restart only CONNECT-IP after changing
 and 500 MB downloads from Mihomo. Repeat at 50/100/150/200 ms and 0/0.1/0.5/1%
 loss. Record throughput, ramp-up time, loaded/p95 RTT, loss recovery, and CPU.
 The harness restores its qdisc when interrupted. No WAN results are fabricated
-by this repository; until equivalent measurements exist, the production
-recommendation is `default`.
+by this repository. The v1.0.14 field observation recorded about 33 Mbps with
+`default + queue=256`, frequent Session queue overflow, and about 45 Mbps with
+`cubic + queue=1024`. That is evidence for a starting production profile, not a
+universal guarantee: use `cubic + 1024` for new WAN deployments, then A/B
+against `default + 256`, `cubic + 256`, `cubic + 512`, `cubic + 2048` on the
+actual path. Keep the queue bounded; 1024 at MTU 1280 is about 1.25 MiB per
+session and 2048 is about 2.5 MiB.
+
+For a repeatable full matrix, use `scripts/benchmark-connect-ip-matrix.sh` with
+an operator-provided Mihomo/HTTP download runner. It covers 20/50/100/150/200
+ms, 0/0.1/0.5/1% loss, both controllers, and queues 256/512/1024/2048, writing
+one CSV row per case. Set `CONFIGURE_CMD` if a disposable deployment needs to
+render/restart its server between cases. The runner should report peak and
+average Mbps, ramp-up, retransmissions/loss, CPU, memory, and loaded RTT; the
+service snapshot supplies queue high-water/drop and TUN counters.
+
+The configuration/library fallback remains `default` and 256 when fields are
+omitted. This distinction preserves compatibility for existing deployments;
+the example is an explicit production-oriented recommendation. The server
+side outer QUIC sender controls download ramp-up; Mihomo's inner BBR settings
+cannot replace it.
+
+The service emits an identity-free 30-second dataplane snapshot containing
+Session queue depth/high-water/enqueue/dequeue/drop counters, TUN packet/byte
+and batch counters, heap allocation and GC count. It also logs the effective
+UDP `SO_RCVBUF`/`SO_SNDBUF` after bind. The lower QUIC fork's DATAGRAM send
+queue is bounded at 32 and applies backpressure rather than silently dropping;
+the Session queue is the intentional drop boundary.

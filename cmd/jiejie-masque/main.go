@@ -14,6 +14,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -131,6 +132,11 @@ func serveConnectIP() error {
 		return err
 	}
 	defer packetConn.Close()
+	if buffers, berr := readSocketBufferSizes(packetConn); berr != nil {
+		log.Printf("CONNECT-IP UDP socket buffers unavailable: %v", berr)
+	} else {
+		log.Printf("CONNECT-IP UDP socket buffers: rcv=%d send=%d bytes (effective; requested quic-go target is 7340032)", buffers.Receive, buffers.Send)
+	}
 	var mgr *session.Manager
 	if c.Server.SessionNat.Enabled {
 		pool, _ := netip.ParsePrefix(c.Server.SessionNat.Pool)
@@ -193,6 +199,7 @@ func serveConnectIP() error {
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopReaper := context.WithCancel(context.Background())
 	defer stopReaper()
+	go connectIPDiagnostics(appCtx, mgr, tun)
 	idleTimeout, _ := time.ParseDuration(c.Server.SessionIdleTimeout)
 	if idleTimeout > 0 {
 		go sessionReaper(appCtx, mgr, idleTimeout)
@@ -226,6 +233,26 @@ func serveConnectIP() error {
 		_ = s.Close()
 	}
 	return runErr
+}
+
+// connectIPDiagnostics emits identity-free, rate-limited dataplane counters.
+// It is intentionally a periodic snapshot: packet-level logging would itself
+// distort the WAN path being diagnosed.
+func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel.Device) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			q := mgr.AggregateQueueStats()
+			t := tun.Stats()
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, mem.HeapAlloc, mem.NumGC)
+		}
+	}
 }
 
 func isServerClosed(err error) bool {

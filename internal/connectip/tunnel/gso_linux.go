@@ -52,6 +52,10 @@ func (d *Device) ReadBatch(bufs [][]byte, sizes []int, offset int) (int, error) 
 		n, err := d.f.Read(bufs[0][offset:])
 		if err == nil {
 			sizes[0] = n
+			d.rxPackets.Add(1)
+			d.rxBytes.Add(uint64(n))
+			d.rxBatches.Add(1)
+			d.rxBatchPackets.Add(1)
 			return 1, nil
 		}
 		return 0, err
@@ -67,6 +71,14 @@ func (d *Device) ReadBatch(bufs [][]byte, sizes []int, offset int) (int, error) 
 	for i := 0; i < packets; i++ {
 		if sizes[i] > d.MTU {
 			return 0, fmt.Errorf("%w: split packet exceeds configured MTU", ErrMalformedGSO)
+		}
+	}
+	if packets > 0 {
+		d.rxPackets.Add(uint64(packets))
+		d.rxBatches.Add(1)
+		d.rxBatchPackets.Add(uint64(packets))
+		for i := 0; i < packets; i++ {
+			d.rxBytes.Add(uint64(sizes[i]))
 		}
 	}
 	return packets, nil
