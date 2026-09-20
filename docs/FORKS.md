@@ -3,12 +3,21 @@
 ## quic-go
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
-- Pinned commit: `509e22e92ae01477de7088738910f77da2631897`
+- Sync branch: `sync/quic-go-v062-runtime`
+- Pinned commit: `e30fdc68bb6520e11da6e507a47d0596bbaf909d`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the pinned fork: owned DATAGRAM buffers, retained receive
   budget, reusable borrowed parsing, native CUBIC selector, and the existing
   qlog/ECN/PMTU behavior used by CONNECT-IP.
+- Sync baseline: the fork's existing MetaCubeX v0.62-compatible line, including
+  the local DATAGRAM ownership and early-datagram lifecycle patches.
+- Adopted upstream runtime fix: `fcb5bedb` (`CONNECTION_CLOSE` packet sizing
+  accounts for 1-RTT AEAD overhead), applied as commit `e30fdc68`.
+- Audited but deferred: `ea5cf308`, `c834ffae`, and `c6efd617` (Extended
+  CONNECT and HTTP/3 `:path` parsing changes). They alter request-target
+  semantics and need a separate compatibility review against this fork's
+  MASQUE request-template behavior.
 - This performance pass adds no unreviewed BBRv3 code to the fork. The current
   fork still selects native CUBIC through the existing connection hook; a
   future pluggable-controller change must be made and tested in the fork first,
@@ -22,7 +31,22 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 ## connect-ip-go
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
-- Pinned commit: `e645a82498ea70e3411b99e7a338ac740629abdd`
+- Sync branch: `sync/connect-ip-v0.3.0`
+- Pinned commit: `e810d2607e791b6af9394264a4a4e3125f02fc3c`
 - License: MIT
 - Used interfaces: owned packet-buffer send, borrowed packet-buffer receive,
   bounded DATAGRAM ownership, and CONNECT-IP address/route handling.
+- Sync baseline: local fork HEAD `31093245...`, preserving the local terminal
+  error normalization, bounded capsule queue, packet-buffer APIs, and test
+  timing adjustments.
+- Replayed upstream v0.3.0 commits, in order: `cfcf8156` (require FQDNs in
+  DNS_ASSIGN), `05c211713` (bound received address/route capsule entries), and
+  `03f17e07` (serialize capsule writes and stream close). The latter two
+  required manual conflict resolution in `conn.go`; local lifecycle and
+  ownership behavior was retained.
+- Post-v0.3 commits audited but deferred: `ea7d9f3` (ADDRESS_REQUEST API and
+  state-machine expansion) and `a96891b` (client-side `NewClientConn`). The
+  current service is server-side and does not need either compatibility change.
+- `5f75fe3` only updates local test stream mocks for the retained `CancelWrite`
+  interface; `e810d26` then aligns this module's quic-go replacement with the
+  synchronized quic-go fork. Neither changes the CONNECT-IP production API.

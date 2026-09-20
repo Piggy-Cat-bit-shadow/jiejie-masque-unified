@@ -246,8 +246,8 @@ quic-go:                           b6c72f4e72efb1a668cfa3dd29cf594350d59348
   pseudo-version:                  v0.61.1-0.20260906040817-b6c72f4e72ef
 canonical quic-go v0.62.0 base:     793f74d8e03368c5aded128af6f48d21dbb47f73
 connect-ip upstream base:           d3a7d1e00045eff63224417142ffeff50c999680
-current connect-ip-go version: v0.0.0-20260906041020-e645a82498ea
-current quic-go replacement version: v0.61.1-0.20260906101854-509e22e92ae0
+current connect-ip-go version: v0.0.0-20260920100550-e810d2607e79
+current quic-go replacement version: v0.61.1-0.20260920100120-e30fdc68bb65
 ```
 
 The main module and connect-ip-go both replace the MetaCubeX quic-go module
