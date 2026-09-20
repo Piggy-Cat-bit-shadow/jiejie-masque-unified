@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/metacubex/quic-go"
 )
 
 type fakeConn struct{ closed int }
@@ -15,6 +17,13 @@ type fakeConn struct{ closed int }
 func (f *fakeConn) ReadPacket() ([]byte, error)        { return nil, errors.New("closed") }
 func (f *fakeConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
 func (f *fakeConn) Close() error                       { f.closed++; return nil }
+
+type runtimeStatsConn struct {
+	fakeConn
+	stats quic.RuntimeStats
+}
+
+func (f *runtimeStatsConn) RuntimeStats() quic.RuntimeStats { return f.stats }
 func TestManagerConcurrentIPsAndTakeover(t *testing.T) {
 	m := NewManager()
 	a := New(netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
@@ -62,6 +71,31 @@ func TestAggregateQueueStatsIsIdentityFree(t *testing.T) {
 	stats := m.AggregateQueueStats()
 	if stats.Sessions != 2 || stats.Capacity != 6 || stats.Depth != 2 || stats.Enqueued != 2 {
 		t.Fatalf("aggregate stats = %+v", stats)
+	}
+	a.Close()
+	b.Close()
+}
+
+func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
+	m := NewManager()
+	a := New(netip.MustParseAddr("10.200.0.4"), "a", &runtimeStatsConn{stats: quic.RuntimeStats{
+		CongestionController: "cubic", CongestionState: "Open", CongestionWindow: 10,
+		MinRTT: 20 * time.Millisecond, LatestRTT: 40 * time.Millisecond,
+		SmoothedRTT: 30 * time.Millisecond, CurrentPMTU: 1350,
+	}}, nil)
+	b := New(netip.MustParseAddr("10.200.0.5"), "b", &runtimeStatsConn{stats: quic.RuntimeStats{
+		CongestionController: "cubic", CongestionState: "Recovery", CongestionWindow: 20,
+		MinRTT: 10 * time.Millisecond, LatestRTT: 50 * time.Millisecond,
+		SmoothedRTT: 35 * time.Millisecond, CurrentPMTU: 1280,
+	}}, nil)
+	m.Replace(a)
+	m.Replace(b)
+	stats := m.AggregateRuntimeStats()
+	if stats.Connections != 2 || stats.CongestionController != "cubic" || stats.CongestionState != "mixed" {
+		t.Fatalf("aggregate identity = %+v", stats)
+	}
+	if stats.CongestionWindows != 30 || stats.MinRTT != 10*time.Millisecond || stats.LatestRTT != 50*time.Millisecond || stats.SmoothedRTT != 35*time.Millisecond || stats.CurrentPMTU != 1280 {
+		t.Fatalf("aggregate metrics = %+v", stats)
 	}
 	a.Close()
 	b.Close()

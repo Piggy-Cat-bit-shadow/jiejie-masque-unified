@@ -133,10 +133,12 @@ func serveConnectIP() error {
 		return err
 	}
 	defer packetConn.Close()
+	var preSocketBuffers socketBufferSizes
 	if buffers, berr := readSocketBufferSizes(packetConn); berr != nil {
 		log.Printf("CONNECT-IP UDP socket buffers unavailable: %v", berr)
 	} else {
-		log.Printf("CONNECT-IP UDP socket buffers: rcv=%d send=%d bytes (effective; requested quic-go target is 7340032)", buffers.Receive, buffers.Send)
+		preSocketBuffers = buffers
+		log.Printf("CONNECT-IP UDP socket buffers before quic-go tuning: rcv=%d send=%d bytes", buffers.Receive, buffers.Send)
 	}
 	var mgr *session.Manager
 	if c.Server.SessionNat.Enabled {
@@ -171,6 +173,11 @@ func serveConnectIP() error {
 	ql, err := transport.Listen(http3.ConfigureTLSConfig(tc), qc)
 	if err != nil {
 		return err
+	}
+	if postSocketBuffers, berr := readSocketBufferSizes(packetConn); berr != nil {
+		log.Printf("CONNECT-IP UDP socket buffers after quic-go tuning unavailable: %v", berr)
+	} else {
+		log.Printf("%s", formatSocketBufferLog(preSocketBuffers, postSocketBuffers, 7340032))
 	}
 	defer ql.Close()
 	defer transport.Close()
@@ -252,7 +259,7 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			t := tun.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d blocked=%d/%s send_queue=%d/%d hard_block=%d/%s rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d blocked=%d/%s send_queue=%d/%d hard_block=%d/%s rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
 		}
 	}
 }

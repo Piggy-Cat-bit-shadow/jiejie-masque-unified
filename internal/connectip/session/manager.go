@@ -87,6 +87,8 @@ type AggregateQueueStats struct {
 // snapshots exposed by active CONNECT-IP sessions.
 type AggregateRuntimeStats struct {
 	Connections                  uint64
+	CongestionController         string
+	CongestionState              string
 	CongestionWindows            uint64
 	BytesInFlight                uint64
 	PacingRate                   uint64
@@ -718,6 +720,16 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		}
 		stats := provider.RuntimeStats()
 		out.Connections++
+		if out.CongestionController == "" {
+			out.CongestionController = stats.CongestionController
+		} else if out.CongestionController != stats.CongestionController {
+			out.CongestionController = "mixed"
+		}
+		if out.CongestionState == "" {
+			out.CongestionState = stats.CongestionState
+		} else if out.CongestionState != stats.CongestionState {
+			out.CongestionState = "mixed"
+		}
 		out.CongestionWindows += stats.CongestionWindow
 		out.BytesInFlight += stats.BytesInFlight
 		out.PacingRate += stats.PacingRate
@@ -736,10 +748,14 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.SendQueueHardBlockedDuration += stats.SendQueueHardBlockedDuration
 		out.ReceivedPacketQueueDrops += stats.ReceivedPacketQueueDrops
 		out.ReceivedDatagramQueueDrops += stats.ReceivedDatagramQueueDrops
-		out.MinRTT = max(out.MinRTT, stats.MinRTT)
+		if stats.MinRTT > 0 && (out.MinRTT == 0 || stats.MinRTT < out.MinRTT) {
+			out.MinRTT = stats.MinRTT
+		}
 		out.LatestRTT = max(out.LatestRTT, stats.LatestRTT)
 		out.SmoothedRTT = max(out.SmoothedRTT, stats.SmoothedRTT)
-		out.CurrentPMTU = max(out.CurrentPMTU, stats.CurrentPMTU)
+		if stats.CurrentPMTU > 0 && (out.CurrentPMTU == 0 || stats.CurrentPMTU < out.CurrentPMTU) {
+			out.CurrentPMTU = stats.CurrentPMTU
+		}
 		if stats.GSO {
 			out.GSOConnections++
 		}

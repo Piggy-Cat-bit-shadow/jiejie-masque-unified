@@ -7,7 +7,7 @@ prepare_helper=contrib/jiejie-masque-connect-ip-network-prepare
 need() { grep -q -F -- "$2" "$1" || { echo "missing $2 in $1" >&2; exit 1; }; }
 absent() { ! grep -q -F -- "$2" "$1" || { echo "forbidden $2 in $1" >&2; exit 1; }; }
 
-for value in 'Type=notify' 'User=masque-lite' 'EnvironmentFile=' 'check-config' 'network-prepare' 'CAP_NET_ADMIN' 'LimitNOFILE=65536' 'TimeoutStopSec=5s' 'WatchdogSec=' 'StateDirectory='; do need "$ip" "$value"; done
+for value in 'Type=notify' 'User=masque-lite' 'EnvironmentFile=' 'check-config' 'network-prepare' 'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE' 'AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE' 'LimitNOFILE=65536' 'TimeoutStopSec=5s' 'WatchdogSec=' 'StateDirectory='; do need "$ip" "$value"; done
 for value in 'Type=notify' 'User=masque' 'EnvironmentFile=' 'check-config' 'LimitNOFILE=65536' 'TimeoutStopSec=5s' 'WatchdogSec=' 'NotifyAccess=main' 'StateDirectory='; do need "$udp" "$value"; done
 absent "$udp" 'CAP_NET_ADMIN'
 absent "$udp" 'network-prepare'

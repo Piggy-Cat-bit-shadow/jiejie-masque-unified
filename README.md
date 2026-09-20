@@ -1,7 +1,7 @@
 # jiejie-masque
 
-The current maintenance release is `v1.0.15`.
-当前正式维护版本：`v1.0.15`。
+The current maintenance release is `v1.0.16`.
+当前正式维护版本：`v1.0.16`。
 
 jiejie-masque 是面向 Linux 的统一 MASQUE 服务端，在单一静态 Linux amd64 二进制中提供 CONNECT-IP、CONNECT-UDP 和 CONNECT-TCP。项目强调协议正确性、可控资源、明确 ownership、长期运行稳定性和可验证发布链。
 
@@ -43,7 +43,7 @@ IPv6 tunnel connectivity 不等于 public IPv6 egress。默认不会为 IPv6 宣
 
 ## 安装与运行
 
-从 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases) 下载 v1.0.15 Linux amd64 binary，先校验 `.sha256`，再安装：
+从 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/releases) 下载 v1.0.16 Linux amd64 binary，先校验 `.sha256`，再安装：
 
 ```sh
 chmod +x jiejie-masque-linux-amd64
@@ -71,7 +71,7 @@ sudo /usr/local/libexec/jiejie-masque-connect-ip-network-prepare \
 
 network prepare 负责最小权限的 TUN、forwarding、route、NAT 和 active UFW 规则；custom firewall 仍需管理员自行接入。普通 Internet 转发需要 `FORWARD`，tunnel-local DNS 需要从 TUN 到 tunnel gateway:5353 的 `INPUT` 规则。
 
-systemd unit 位于 `contrib/`。CONNECT-IP 使用 `CAP_NET_ADMIN`、`CAP_NET_RAW` 和 `LogsDirectory=jiejie-masque`；CONNECT-UDP 不需要 TUN 管理能力。qlog 启用时，服务启动会验证目录可创建、可写，连接文件使用 0600，且不记录 client identity、target 或 tunnel address。
+systemd unit 位于 `contrib/`。CONNECT-IP 使用 `CAP_NET_ADMIN`、`CAP_NET_BIND_SERVICE`、`CAP_NET_RAW` 和 `LogsDirectory=jiejie-masque`；CONNECT-UDP 不需要 TUN 管理能力。qlog 启用时，服务启动会验证目录可创建、可写，连接文件使用 0600，且不记录 client identity、target 或 tunnel address。
 
 ## 安全模型
 
@@ -89,7 +89,7 @@ systemd unit 位于 `contrib/`。CONNECT-IP 使用 `CAP_NET_ADMIN`、`CAP_NET_RA
 - [QUIC / congestion 说明](docs/CONNECT_IP_QUIC_CONGESTION.md)：CUBIC 默认、runtime diagnostics、实验性能力和验证边界。
 - [fork provenance](docs/FORKS.md)：当前维护 quic-go 与 connect-ip-go 来源及 pin。
 - [维护规范](docs/maintenance.md)：当前 release、依赖、CI gates、release procedure 和限制。
-- [当前 release notes](docs/RELEASE_NOTES_v1.0.15.md)：仅描述当前正式版本状态。
+- [当前 release notes](docs/RELEASE_NOTES_v1.0.16.md)：仅描述当前正式版本状态。
 
 ## 当前限制
 

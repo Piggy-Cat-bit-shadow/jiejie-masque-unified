@@ -11,7 +11,7 @@ jiejie-masque 有两个独立运行模式：
 - `connect-ip`：Linux TUN、P-256 client authentication、Session NAT、tunnel-local DNS。
 - `connect-udp`：RFC 9298 CONNECT-UDP、HTTP/3 DATAGRAM、UDP relay，以及同一服务中的 CONNECT-TCP stream relay。
 
-CONNECT-IP 需要 `CAP_NET_ADMIN` 与 network prepare；CONNECT-UDP 不需要
+CONNECT-IP 需要 `CAP_NET_ADMIN`、绑定 UDP 443 所需的 `CAP_NET_BIND_SERVICE` 与 network prepare；CONNECT-UDP 不需要
 `CAP_NET_ADMIN`，也不应获得该 capability。
 
 ## 2. 安装
@@ -112,8 +112,9 @@ QUIC connection ID 和 perspective，不含 client identity、证书、公钥或
 `tun_tx_gro: false`。省略字段时，程序兼容性 fallback 仍是 `default` 与
 1024；显式配置 `default` 与 256 可作为旧 profile 的回滚值。
 
-服务启动后会输出 UDP socket 的 effective `SO_RCVBUF`/`SO_SNDBUF`，而不是只
-输出请求值。Linux 主机只检查、不自动修改全局 sysctl：
+服务启动后会先输出 bind 后、quic-go 调优前的 `SO_RCVBUF`/`SO_SNDBUF`，再输出
+`Transport.Listen` 完成后的 post-tuning effective 值；不要把 pre 值当作最终值。
+Linux 主机只检查、不自动修改全局 sysctl：
 
 ```sh
 sysctl net.core.rmem_max net.core.wmem_max
@@ -126,9 +127,11 @@ ss -u -l -n -m
 sysctl，也不会要求 `SO_RCVBUFFORCE`/`SO_SNDBUFFORCE` capability。
 
 吞吐复现时使用服务每 30 秒的 identity-free dataplane snapshot 判断是 TUN、
-Session queue、QUIC backpressure、socket buffer 还是 CPU/GC 先饱和。日志包含
-queue depth/high-water/drop、TUN RX/TX packets/bytes/batch、heap 与 GC；不会记录
-destination、client identity 或每 packet 日志。
+Session queue、QUIC backpressure、socket buffer 还是 CPU/GC 先饱和。QUIC 部分
+包含 controller/state、cwnd、inflight、pacing、RTT、loss、reordering、PMTU、GSO
+和各队列压力；多连接聚合对 additive counters 求和，对 PMTU/MinRTT 取非零最小值，
+对 latest/smoothed RTT 取保守最大值，controller/state 不一致时为 `mixed`。
+不会记录 destination、client identity 或每 packet 日志。
 
 ### network prepare
 
@@ -267,7 +270,7 @@ sudo nft list ruleset
 
 仓库提供两个 unit：
 
-- `jiejie-masque-connect-ip.service`：`User=masque-lite`，拥有 `CAP_NET_ADMIN`，执行 network prepare。
+- `jiejie-masque-connect-ip.service`：`User=masque-lite`，拥有 `CAP_NET_ADMIN` 与 `CAP_NET_BIND_SERVICE`，执行 network prepare。
 - `jiejie-masque-connect-udp.service`：`User=masque`，无 `CAP_NET_ADMIN`。
 
 安装、检查并启动：
@@ -345,5 +348,5 @@ Session NAT cleanup 使用 bounded two-worker executor，cleanup pending 地址�
 立即复用。F-302/F-404 仍需要真实 Linux/VPS reproduction；本手册不把 deferred
 finding 描述成已解决问题。
 
-当前正式维护基线为 v1.0.15；首次生产部署仍应以
+当前正式维护基线为 v1.0.16；首次生产部署仍应以
 真实 Linux VPS 的 doctor、CUBIC baseline 和 WAN A/B 结果为准。

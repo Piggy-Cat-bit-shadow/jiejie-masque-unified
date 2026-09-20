@@ -4,6 +4,14 @@ Status: pre-production code audit. Production defaults remain unchanged:
 CUBIC, MTU 1280, session outbound queue 1024, QUIC DATAGRAM send/receive
 queues 512/256, `tun_offload: false`, and `tun_tx_gro: false`.
 
+The v1.0.16 VPS follow-up closed two deployment-observability gaps: the
+CONNECT-IP unit now has the bind-only `CAP_NET_BIND_SERVICE` capability, and
+server-side CONNECT-IP streams expose the maintained fork's identity-free QUIC
+runtime snapshot. Socket logs explicitly show pre-tuning and post-
+`Transport.Listen` values. Multi-connection telemetry is aggregate-only: sums
+for additive counters, minimum non-zero PMTU/MinRTT, conservative maximum
+latest/smoothed RTT, and `mixed` controller/state when active connections differ.
+
 ## Scope and path model
 
 The server-to-client path is:

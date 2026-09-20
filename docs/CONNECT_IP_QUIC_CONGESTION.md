@@ -115,8 +115,14 @@ replace it.
 
 The service emits an identity-free 30-second dataplane snapshot containing
 Session queue depth/high-water/enqueue/dequeue/drop counters, TUN packet/byte
-and batch counters, heap allocation and GC count. It also logs the effective
-UDP `SO_RCVBUF`/`SO_SNDBUF` after bind. The lower QUIC fork's DATAGRAM send
+and batch counters, heap allocation and GC count. It logs UDP
+`SO_RCVBUF`/`SO_SNDBUF` both before and after `Transport.Listen`; the post-tuning
+line is the effective value. The lower QUIC fork's runtime snapshot includes
+controller/state, cwnd, inflight, pacing, RTT, loss, reordering, PMTU, GSO and
+queue pressure. Aggregation sums additive counters, uses minimum non-zero
+PMTU/MinRTT, conservative maximum latest/smoothed RTT, and reports `mixed`
+when controller/state differ; it never logs connection identity or payload.
+The lower QUIC fork's DATAGRAM send
 queue is bounded at 512 send / 256 receive and applies documented backpressure
 or bounded drop rather than silently growing;
 the Session queue is the intentional drop boundary.
