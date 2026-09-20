@@ -110,22 +110,28 @@ func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
 
 func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T) {
 	m := NewManager()
-	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20, GSOBatchBreakShortPacket: 4, PackedPacketSizeBuckets: [8]uint64{0, 2}}}
+	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20, PacketsLost: 4, SpuriousLosses: 2, ReorderingEvents: 8, SendQueueHardBlockedDuration: 5 * time.Millisecond, GSOBatchBreakShortPacket: 4, GSOMultiSegmentWrites: 8, GSOSegmentsTotal: 32, PackedPacketSizeBuckets: [8]uint64{0, 2}}}
 	a := New(netip.MustParseAddr("10.200.0.20"), "a", aConn, func(s *Session) { m.RemoveIfCurrent(s) })
 	m.Replace(a)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 || got.GSOBatchBreakShortPacket != 4 || got.PackedPacketSizeBuckets[1] != 2 {
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 || got.PacketsLost != 4 || got.SpuriousLosses != 2 || got.ReorderingEvents != 8 || got.SendQueueHardBlockedDuration != 5*time.Millisecond || got.GSOBatchBreakShortPacket != 4 || got.GSOMultiSegmentWrites != 8 || got.GSOSegmentsTotal != 32 || got.PackedPacketSizeBuckets[1] != 2 {
 		t.Fatalf("initial cumulative counters = %+v", got)
 	}
 
 	aConn.stats.PacketsPacked = 110
 	aConn.stats.UDPWrites = 11
 	aConn.stats.ReceivedPackets = 22
+	aConn.stats.PacketsLost = 6
+	aConn.stats.SpuriousLosses = 3
+	aConn.stats.ReorderingEvents = 12
+	aConn.stats.SendQueueHardBlockedDuration = 9 * time.Millisecond
 	aConn.stats.GSOBatchBreakShortPacket = 7
+	aConn.stats.GSOMultiSegmentWrites = 9
+	aConn.stats.GSOSegmentsTotal = 36
 	aConn.stats.PackedPacketSizeBuckets[1] = 5
-	bConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 7, UDPWrites: 2, ReceivedPackets: 3}}
+	bConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 7, UDPWrites: 2, ReceivedPackets: 3, PacketsLost: 1, SpuriousLosses: 1, ReorderingEvents: 3, SendQueueHardBlockedDuration: 4 * time.Millisecond, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 8}}
 	b := New(netip.MustParseAddr("10.200.0.21"), "b", bConn, func(s *Session) { m.RemoveIfCurrent(s) })
 	m.Replace(b)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 || got.GSOBatchBreakShortPacket != 7 || got.PackedPacketSizeBuckets[1] != 5 {
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 || got.PacketsLost != 7 || got.SpuriousLosses != 4 || got.ReorderingEvents != 15 || got.SendQueueHardBlockedDuration != 13*time.Millisecond || got.GSOBatchBreakShortPacket != 7 || got.GSOMultiSegmentWrites != 11 || got.GSOSegmentsTotal != 44 || got.PackedPacketSizeBuckets[1] != 5 {
 		t.Fatalf("cumulative counters after join = %+v", got)
 	}
 
@@ -133,15 +139,15 @@ func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T)
 	aConn.stats.UDPWrites = 13
 	aConn.stats.ReceivedPackets = 24
 	a.Close()
-	if got := m.AggregateRuntimeStats(); got.Connections != 1 || got.PacketsPacked != 132 || got.UDPWrites != 15 || got.QUICPacketsReceived != 27 {
+	if got := m.AggregateRuntimeStats(); got.Connections != 1 || got.PacketsPacked != 132 || got.UDPWrites != 15 || got.QUICPacketsReceived != 27 || got.PacketsLost != 7 || got.SpuriousLosses != 4 || got.ReorderingEvents != 15 || got.SendQueueHardBlockedDuration != 13*time.Millisecond || got.GSOMultiSegmentWrites != 11 || got.GSOSegmentsTotal != 44 {
 		t.Fatalf("cumulative counters after exit = %+v", got)
 	}
 
 	b.Close()
-	cConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 4, UDPWrites: 1, ReceivedPackets: 2}}
+	cConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 4, UDPWrites: 1, ReceivedPackets: 2, PacketsLost: 2, SpuriousLosses: 1, ReorderingEvents: 4, SendQueueHardBlockedDuration: 6 * time.Millisecond, GSOAttempts: 3, SingleSegmentGSOAttempts: 1, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 8}}
 	c := New(netip.MustParseAddr("10.200.0.22"), "c", cConn, func(s *Session) { m.RemoveIfCurrent(s) })
 	m.Replace(c)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 136 || got.UDPWrites != 16 || got.QUICPacketsReceived != 29 {
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 136 || got.UDPWrites != 16 || got.QUICPacketsReceived != 29 || got.PacketsLost != 9 || got.SpuriousLosses != 5 || got.ReorderingEvents != 19 || got.SendQueueHardBlockedDuration != 19*time.Millisecond || got.GSOAttempts != 3 || got.SingleSegmentGSOAttempts != 1 || got.GSOMultiSegmentWrites != 13 || got.GSOSegmentsTotal != 52 {
 		t.Fatalf("cumulative counters after replacement generation = %+v", got)
 	}
 	c.Close()

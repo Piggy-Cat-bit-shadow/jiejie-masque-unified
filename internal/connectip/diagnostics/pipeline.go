@@ -103,12 +103,13 @@ type RuntimeStats struct {
 }
 
 type DATAGRAMWriterStats struct {
-	TryCalls       uint64 `json:"try_batch_calls"`
-	PartialAccepts uint64 `json:"partial_accepts"`
-	ZeroAccepts    uint64 `json:"zero_accepts"`
-	WritableWaits  uint64 `json:"writable_wait_events"`
-	WritableWaitNS uint64 `json:"writable_wait_duration_ns"`
-	Cancelled      uint64 `json:"writable_cancelled"`
+	TryCalls            uint64 `json:"try_batch_calls"`
+	PartialAccepts      uint64 `json:"partial_accepts"`
+	ZeroAccepts         uint64 `json:"zero_accepts"`
+	WritableWaits       uint64 `json:"writable_wait_events"`
+	WritableWaitNS      uint64 `json:"writable_wait_duration_ns"`
+	WritableWaitNSDelta uint64 `json:"writable_wait_duration_delta_ns"`
+	Cancelled           uint64 `json:"writable_cancelled"`
 }
 
 type GSOStats struct {
@@ -118,6 +119,10 @@ type GSOStats struct {
 	GSOSegments              CounterStats `json:"gso_segments"`
 	GSOAttempts              CounterStats `json:"gso_attempts"`
 	SingleSegment            CounterStats `json:"single_segment_attempts"`
+	MultiSegmentWrites       CounterStats `json:"multi_segment_kernel_writes"`
+	KernelFallbacks          CounterStats `json:"kernel_fallbacks"`
+	SendErrors               CounterStats `json:"send_errors"`
+	SegmentsTotal            CounterStats `json:"segments_total"`
 	SegmentsPerWrite         float64      `json:"segments_per_write_avg"`
 	SegmentsP50              uint64       `json:"segments_per_write_p50"`
 	SegmentsP90              uint64       `json:"segments_per_write_p90"`
@@ -158,6 +163,7 @@ type QUICStats struct {
 	PacketsLost          uint64 `json:"packets_lost"`
 	BytesLost            uint64 `json:"bytes_lost"`
 	SpuriousLosses       uint64 `json:"spurious_losses"`
+	ReorderingEvents     uint64 `json:"reordering_events"`
 	LossEvents           uint64 `json:"loss_events"`
 	LossByPacket         uint64 `json:"loss_by_packet_threshold"`
 	LossByTime           uint64 `json:"loss_by_time_threshold"`
@@ -232,12 +238,16 @@ type SendQueueStats struct {
 }
 
 type TUNStats struct {
-	RXPackets      uint64 `json:"rx_packets"`
-	RXBytes        uint64 `json:"rx_bytes"`
-	TXPackets      uint64 `json:"tx_packets"`
-	TXBytes        uint64 `json:"tx_bytes"`
-	RXBatches      uint64 `json:"rx_batches"`
-	RXBatchPackets uint64 `json:"rx_batch_packets"`
+	RXPackets      uint64  `json:"rx_packets"`
+	RXBytes        uint64  `json:"rx_bytes"`
+	TXPackets      uint64  `json:"tx_packets"`
+	TXBytes        uint64  `json:"tx_bytes"`
+	RXBatches      uint64  `json:"rx_batches"`
+	RXBatchPackets uint64  `json:"rx_batch_packets"`
+	RXBytesDelta   uint64  `json:"rx_bytes_delta"`
+	TXBytesDelta   uint64  `json:"tx_bytes_delta"`
+	RXMbps         float64 `json:"rx_mbps"`
+	TXMbps         float64 `json:"tx_mbps"`
 }
 
 type StageStats struct {

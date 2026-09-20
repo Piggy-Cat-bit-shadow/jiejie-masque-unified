@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -24,11 +25,12 @@ var version = "dev"
 var commit = "unknown"
 var connectIPGoCommit = "unknown"
 var quicGoCommit = "unknown"
+var buildTime = "unknown"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		if len(os.Args) > 2 && os.Args[2] == "--verbose" {
-			fmt.Printf("jiejie-masque %s\nmain_commit=%s\nconnect_ip_go_commit=%s\nquic_go_commit=%s\n", version, commit, connectIPGoCommit, quicGoCommit)
+			fmt.Printf("jiejie-masque %s\nmain_commit=%s\nconnect_ip_go_commit=%s\nquic_go_commit=%s\nbuild_time=%s\ngo_version=%s\n", version, commit, connectIPGoCommit, quicGoCommit, buildTime, runtime.Version())
 		} else {
 			fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
 		}

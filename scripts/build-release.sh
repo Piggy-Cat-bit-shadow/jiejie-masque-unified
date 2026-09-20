@@ -33,9 +33,10 @@ test "${connect_commit:0:12}" = "$connect_module_sha"
 test "${quic_commit:0:12}" = "$quic_module_sha"
 
 output=${OUTPUT:-dist/jiejie-masque-linux-amd64}
+build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 mkdir -p "$(dirname "$output")"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
-  -ldflags="-s -w -buildid= -X main.version=$version -X main.commit=$commit -X main.connectIPGoCommit=$connect_commit -X main.quicGoCommit=$quic_commit" \
+  -ldflags="-s -w -buildid= -X main.version=$version -X main.commit=$commit -X main.connectIPGoCommit=$connect_commit -X main.quicGoCommit=$quic_commit -X main.buildTime=$build_time" \
   -o "$output" ./cmd/jiejie-masque
 bytes=$(stat -c '%s' "$output" 2>/dev/null || stat -f '%z' "$output")
 sha=$(sha256sum "$output" | awk '{print $1}')
@@ -72,6 +73,7 @@ connect_ip_go_version=$connect_version
 connect_ip_go_commit=$connect_commit
 quic_go_version=$quic_version
 quic_go_commit=$quic_commit
+build_time=$build_time
 go_version=$go_version
 binary_sha256=$sha
 EOF

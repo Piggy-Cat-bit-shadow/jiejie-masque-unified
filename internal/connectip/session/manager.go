@@ -106,6 +106,7 @@ type AggregateRuntimeStats struct {
 	AdaptiveTimeThreshold        time.Duration
 	MaxPacketReordering          uint64
 	MaxTimeReordering            time.Duration
+	ReorderingEvents             uint64
 	DatagramQueueDepth           uint64
 	DatagramQueueHighWater       uint64
 	DatagramBlocked              uint64
@@ -131,6 +132,10 @@ type AggregateRuntimeStats struct {
 	GSOSegments                  uint64
 	GSOAttempts                  uint64
 	SingleSegmentGSOAttempts     uint64
+	GSOMultiSegmentWrites        uint64
+	GSOKernelFallbacks           uint64
+	GSOSendErrors                uint64
+	GSOSegmentsTotal             uint64
 	GSOBatchBreakShortPacket     uint64
 	GSOBatchBreakPacing          uint64
 	GSOBatchBreakCwnd            uint64
@@ -843,6 +848,7 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.AdaptiveTimeThreshold = max(out.AdaptiveTimeThreshold, stats.AdaptiveTimeThreshold)
 		out.MaxPacketReordering = max(out.MaxPacketReordering, stats.MaxPacketReordering)
 		out.MaxTimeReordering = max(out.MaxTimeReordering, stats.MaxTimeReordering)
+		out.ReorderingEvents += stats.ReorderingEvents
 		out.DatagramQueueDepth += stats.DatagramSendQueueDepth
 		out.DatagramQueueHighWater += stats.DatagramSendQueueHighWater
 		out.DatagramBlocked += stats.DatagramSendBlocked
@@ -868,6 +874,10 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.GSOSegments += stats.GSOSegments
 		out.GSOAttempts += stats.GSOAttempts
 		out.SingleSegmentGSOAttempts += stats.SingleSegmentGSOAttempts
+		out.GSOMultiSegmentWrites += stats.GSOMultiSegmentWrites
+		out.GSOKernelFallbacks += stats.GSOKernelFallbacks
+		out.GSOSendErrors += stats.GSOSendErrors
+		out.GSOSegmentsTotal += stats.GSOSegmentsTotal
 		out.GSOBatchBreakShortPacket += stats.GSOBatchBreakShortPacket
 		out.GSOBatchBreakPacing += stats.GSOBatchBreakPacing
 		out.GSOBatchBreakCwnd += stats.GSOBatchBreakCwnd
@@ -979,6 +989,11 @@ func (m *Manager) observeRuntimeStatsLocked(generation uint64, current quic.Runt
 	add(&t.GSOSegments, current.GSOSegments, previous.GSOSegments)
 	add(&t.GSOAttempts, current.GSOAttempts, previous.GSOAttempts)
 	add(&t.SingleSegmentGSOAttempts, current.SingleSegmentGSOAttempts, previous.SingleSegmentGSOAttempts)
+	add(&t.ReorderingEvents, current.ReorderingEvents, previous.ReorderingEvents)
+	add(&t.GSOMultiSegmentWrites, current.GSOMultiSegmentWrites, previous.GSOMultiSegmentWrites)
+	add(&t.GSOKernelFallbacks, current.GSOKernelFallbacks, previous.GSOKernelFallbacks)
+	add(&t.GSOSendErrors, current.GSOSendErrors, previous.GSOSendErrors)
+	add(&t.GSOSegmentsTotal, current.GSOSegmentsTotal, previous.GSOSegmentsTotal)
 	add(&t.GSOBatchBreakShortPacket, current.GSOBatchBreakShortPacket, previous.GSOBatchBreakShortPacket)
 	add(&t.GSOBatchBreakPacing, current.GSOBatchBreakPacing, previous.GSOBatchBreakPacing)
 	add(&t.GSOBatchBreakCwnd, current.GSOBatchBreakCwnd, previous.GSOBatchBreakCwnd)
@@ -1057,6 +1072,9 @@ func applyRuntimeCounterTotals(out *AggregateRuntimeStats, t AggregateRuntimeSta
 	out.UDPWrites, out.UDPWireBytes, out.GSOBytes = t.UDPWrites, t.UDPWireBytes, t.GSOBytes
 	out.GSOWrites, out.NonGSOWrites, out.GSOSegments = t.GSOWrites, t.NonGSOWrites, t.GSOSegments
 	out.GSOAttempts, out.SingleSegmentGSOAttempts = t.GSOAttempts, t.SingleSegmentGSOAttempts
+	out.ReorderingEvents = t.ReorderingEvents
+	out.GSOMultiSegmentWrites, out.GSOKernelFallbacks = t.GSOMultiSegmentWrites, t.GSOKernelFallbacks
+	out.GSOSendErrors, out.GSOSegmentsTotal = t.GSOSendErrors, t.GSOSegmentsTotal
 	out.GSOBatchBreakShortPacket = t.GSOBatchBreakShortPacket
 	out.GSOBatchBreakPacing = t.GSOBatchBreakPacing
 	out.GSOBatchBreakCwnd = t.GSOBatchBreakCwnd
