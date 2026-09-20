@@ -12,6 +12,9 @@ HTTP/3 `ConnContext` callback, after QUIC accept and before HTTP/3 opens its
 control stream or accepts CONNECT-IP request/data streams. It is never changed
 per packet. `default` performs no setter call and is the rollback path.
 
+For CONNECT-IP WAN deployments, the project now defaults to `cubic`. The
+Reno-compatible `default` mode remains available as an explicit rollback.
+
 ```
 QUIC connection accepted
         |
@@ -63,6 +66,17 @@ that does not make an unvalidated QUIC port production-ready. This project
 therefore keeps BBR out of the production build until pacing, loss, ECN,
 reordering, and WAN regression coverage exist.
 
+## WAN queue / congestion findings
+
+The v1.0.14 field observation found a feedback loop: Reno-compatible `default`
+plus a 256-packet Session queue reached about 33 Mbps while overflowing the
+application queue, while CUBIC plus a 1024-packet Session queue reached about
+45 Mbps on the same environment. The fork now uses bounded QUIC DATAGRAM
+queues of 512 send / 256 receive and HTTP/3 stream DATAGRAM queue 256.
+
+These are bounded buffers, not an unlimited backlog; the project keeps MTU
+1280 and TUN offload/TX GRO disabled by default.
+
 ## WAN A/B procedure and queue guidance
 
 Do not use localhost throughput to choose a production controller. Keep MTU
@@ -94,11 +108,10 @@ render/restart its server between cases. The runner should report peak and
 average Mbps, ramp-up, retransmissions/loss, CPU, memory, and loaded RTT; the
 service snapshot supplies queue high-water/drop and TUN counters.
 
-The configuration/library fallback remains `default` and 256 when fields are
-omitted. This distinction preserves compatibility for existing deployments;
-the example is an explicit production-oriented recommendation. The server
-side outer QUIC sender controls download ramp-up; Mihomo's inner BBR settings
-cannot replace it.
+The configuration fallback is now `cubic` and 1024 when fields are omitted;
+explicit `default` and 256 remain valid rollback values. The server-side outer
+QUIC sender controls download ramp-up; Mihomo's inner BBR settings cannot
+replace it.
 
 The service emits an identity-free 30-second dataplane snapshot containing
 Session queue depth/high-water/enqueue/dequeue/drop counters, TUN packet/byte

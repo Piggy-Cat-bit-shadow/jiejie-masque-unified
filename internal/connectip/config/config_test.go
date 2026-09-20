@@ -41,13 +41,13 @@ func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
 	if c.Server.SessionIdleTimeout != "1h" {
 		t.Fatalf("default idle timeout = %q", c.Server.SessionIdleTimeout)
 	}
-	if c.Server.OutboundQueueSize != 256 {
+	if c.Server.OutboundQueueSize != 1024 {
 		t.Fatalf("default outbound queue size = %d", c.Server.OutboundQueueSize)
 	}
 	if c.Server.TunOffload {
 		t.Fatal("TUN offload must default to disabled")
 	}
-	if c.QUIC.CongestionController != "default" {
+	if c.QUIC.CongestionController != "cubic" {
 		t.Fatalf("default congestion controller = %q", c.QUIC.CongestionController)
 	}
 	if c.QUIC.StatelessResetKeyFile != DefaultStatelessResetKeyFile {
@@ -124,7 +124,7 @@ func TestLoadAppliesSessionAndDNSDefaultsBeforeValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Server.MTU != 1280 || c.Server.OutboundQueueSize != 256 {
+	if c.Server.MTU != 1280 || c.Server.OutboundQueueSize != 1024 {
 		t.Fatalf("server defaults = mtu %d queue %d", c.Server.MTU, c.Server.OutboundQueueSize)
 	}
 	if c.Server.SessionNat.MaxSessions != 120 || c.Server.SessionNat.ReuseDelay != "30m" {

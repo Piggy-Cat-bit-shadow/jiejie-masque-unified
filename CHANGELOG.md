@@ -3,6 +3,13 @@
 本文是面向用户的中文版本演进摘要。历史 `docs/RELEASE_NOTES_*.md` 文件属于
 release provenance，不在这里覆盖重写。
 
+## Unreleased
+
+- CONNECT-IP 默认使用 native CUBIC，Session outbound queue 默认调整为 1024。
+- 当前使用的 quic-go fork 将 bounded QUIC DATAGRAM queue 调整为 512/256，
+  HTTP/3 stream DATAGRAM queue 调整为 256。
+- 保持 MTU 1280、TUN offload/TX-GRO 默认关闭，不引入未经 WAN 验证的 BBR。
+
 ## v1.0.14
 
 这是一次已验证 userspace dataplane efficiency 与 maintenance/correctness

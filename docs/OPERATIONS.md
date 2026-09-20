@@ -108,7 +108,7 @@ QUIC connection ID 和 perspective，不含 client identity、证书、公钥或
 新部署的跨境/高 RTT 链路建议先使用 example 中的 `cubic` 与
 `outbound_queue_size: 1024`，并保留 `mtu: 1280`、`tun_offload: false`、
 `tun_tx_gro: false`。省略字段时，程序兼容性 fallback 仍是 `default` 与
-256；不要把这个 fallback 与生产 tuning recommendation 混淆。
+1024；显式配置 `default` 与 256 可作为旧 profile 的回滚值。
 
 服务启动后会输出 UDP socket 的 effective `SO_RCVBUF`/`SO_SNDBUF`，而不是只
 输出请求值。Linux 主机只检查、不自动修改全局 sysctl：

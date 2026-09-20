@@ -178,7 +178,7 @@ CONNECT-TCP 使用 stream relay 和 TargetPolicy。client request EOF 会对 tar
 <details>
 <summary><strong>点击展开：QUIC / HTTP/3 队列与 retained budget</strong></summary>
 
-当前冻结的主要上限为：QUIC DATAGRAM send queue 32、receive queue 128、HTTP/3 stream DATAGRAM queue 32、CONNECT-IP retained receive budget 64、CONNECT-IP outbound queue 默认 256。bounded queue 的目标是让 pressure 可观察、内存可控，而不是把无限 backlog 隐藏起来。
+当前冻结的主要上限为：QUIC DATAGRAM send queue 512、receive queue 256、HTTP/3 stream DATAGRAM queue 256、CONNECT-IP retained receive budget 64、CONNECT-IP outbound queue 默认 1024。bounded queue 的目标是让 pressure 可观察、内存可控，而不是把无限 backlog 隐藏起来。
 
 </details>
 

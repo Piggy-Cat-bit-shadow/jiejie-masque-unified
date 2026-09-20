@@ -111,13 +111,13 @@ func Load(path string) (Config, error) {
 		c.QUIC.StatelessResetKeyFile = DefaultStatelessResetKeyFile
 	}
 	if c.QUIC.CongestionController == "" {
-		c.QUIC.CongestionController = "default"
+		c.QUIC.CongestionController = "cubic"
 	}
 	if c.Server.SessionIdleTimeout == "" {
 		c.Server.SessionIdleTimeout = "1h"
 	}
 	if c.Server.OutboundQueueSize == 0 {
-		c.Server.OutboundQueueSize = 256
+		c.Server.OutboundQueueSize = 1024
 	}
 	if c.HostNetwork.CheckInterval == "" {
 		c.HostNetwork.CheckInterval = "30s"

@@ -18,10 +18,10 @@ security、compatibility、ownership 或 shutdown bug 修改；没有可复现�
 
 | Component | Limit or layout |
 | --- | --- |
-| QUIC DATAGRAM send queue | 32 |
-| QUIC DATAGRAM receive queue | 128 |
-| HTTP/3 stream DATAGRAM receive queue | 32 |
-| CONNECT-IP session outbound queue | 256 by default |
+| QUIC DATAGRAM send queue | 512 |
+| QUIC DATAGRAM receive queue | 256 |
+| HTTP/3 stream DATAGRAM receive queue | 256 |
+| CONNECT-IP session outbound queue | 1024 by default |
 | CONNECT-IP retained receive budget | 64 |
 | CONNECT-IP PacketPool headroom | 9 bytes |
 | CONNECT-UDP owned backing | 1510 bytes |
@@ -30,9 +30,9 @@ security、compatibility、ownership 或 shutdown bug 修改；没有可复现�
 | CONNECT-UDP UDP read area | 1501 bytes |
 
 生产兼容 fallback 包括一分钟 flow/session reaping、一个小时 idle timeouts、
-CONNECT-UDP limits of 256 global and 64 per user，以及 256-packet CONNECT-IP
-outbound queue。CONNECT-IP example 现在明确使用 field-tested WAN starting point
-`cubic` 与 queue 1024；省略字段时的 fallback 行为不变。
+CONNECT-UDP limits of 256 global and 64 per user，以及 1024-packet CONNECT-IP
+outbound queue。CONNECT-IP production default is native CUBIC; explicit
+`default` remains the Reno-compatible rollback path。
 
 When session NAT is enabled, a removed shadow address enters a pending-cleanup
 state before it can be allocated again. Conntrack cleanup runs on two fixed
@@ -160,8 +160,8 @@ UDP dial fallback, and TCP dial work.
 
 TUN offload and TCP TX GRO default to false. UDP GRO/USO is not supported.
 QUIC UDP GSO remains enabled. Congestion controller values are `default` and
-`cubic`; `default` preserves baseline behavior. BBRv3 is an IETF Experimental
-draft, but is not implemented in this fork and is not production-recommended.
+`cubic`; CONNECT-IP production defaults to `cubic`, while `default` preserves
+the Reno-compatible rollback behavior. BBR is not implemented.
 
 QUIC startup reports requested/effective UDP socket buffers where the platform
 allows inspection. Insufficient tuning is observable and non-fatal. The service

@@ -17,10 +17,11 @@ type PacketConn interface {
 	Close() error
 }
 
-// DefaultOutboundQueueSize holds roughly 320 KiB at the safe 1280 MTU. It is
-// deliberately bounded: it absorbs normal QUIC scheduling bursts without
-// turning a stalled client into a large, latency-inducing buffer.
-const DefaultOutboundQueueSize = 256
+// DefaultOutboundQueueSize holds roughly 1.25 MiB at the safe 1280 MTU. It
+// remains bounded, but is large enough to absorb pacing / scheduler bursts on
+// high-RTT WAN paths before inner TCP packets are dropped and trigger a second
+// congestion-control feedback loop.
+const DefaultOutboundQueueSize = 1024
 
 type Session struct {
 	ID            uint64
