@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "codex/**"
+      - "sync/**"
     tags:
       - "v*"
   pull_request:
@@ -105,8 +106,32 @@ jobs:
       - name: Public repository privacy policy
         run: bash scripts/verify-public-repo.sh
 
+      - name: Resolve Git metadata range
+        id: git-metadata-range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_AFTER: ${{ github.event.after }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${DEFAULT_BRANCH}" ]]; then
+            git fetch origin "${DEFAULT_BRANCH}" --no-tags
+          fi
+          range=$(GIT_METADATA_EVENT="$EVENT_NAME" \
+            GIT_METADATA_BEFORE="$EVENT_BEFORE" \
+            GIT_METADATA_AFTER="$EVENT_AFTER" \
+            GIT_METADATA_BASE_SHA="$PR_BASE_SHA" \
+            GIT_METADATA_DEFAULT_BRANCH="$DEFAULT_BRANCH" \
+            GIT_METADATA_HEAD="$HEAD_SHA" \
+            scripts/resolve-git-metadata-range.sh)
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+          echo "git metadata range: $range" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Future Git metadata privacy policy
-        run: bash scripts/verify-git-metadata.sh v1.0.13..HEAD
+        run: bash scripts/verify-git-metadata.sh "${{ steps.git-metadata-range.outputs.range }}"
 
       - name: Public repository privacy self-test
         run: bash scripts/verify-public-repo-selftest.sh
@@ -122,7 +147,7 @@ jobs:
 
       - name: Shell check
         run: |
-          bash -n scripts/verify-deps.sh scripts/verify-git-metadata.sh scripts/verify-git-metadata-selftest.sh scripts/reproduce-conntrack-session-reuse.sh
+          bash -n scripts/verify-deps.sh scripts/resolve-git-metadata-range.sh scripts/verify-git-metadata.sh scripts/verify-git-metadata-selftest.sh scripts/reproduce-conntrack-session-reuse.sh
           bash -n scripts/verify-public-repo.sh scripts/verify-public-repo-selftest.sh scripts/verify-systemd-contract.sh scripts/test-connect-ip-network-prepare.sh scripts/build-release.sh scripts/verify-release-docs.sh scripts/verify-release-docs-selftest.sh scripts/verify-workflow-contract.sh scripts/verify-dependency-provenance.sh scripts/verify-dependency-provenance-selftest.sh
           sh -n contrib/jiejie-masque-connect-ip-network-prepare
           bash -n scripts/verify-release-tag.sh scripts/verify-release-tag-selftest.sh

@@ -6,12 +6,14 @@ See `go.mod` and `NOTICE` for dependency and license notices. Runtime dependenci
 
 The CONNECT-IP congestion-control selector uses the MIT-licensed
 `github.com/Piggy-Cat-bit-shadow/quic-go` fork at commit
-`e30fdc68bb6520e11da6e507a47d0596bbaf909d`, based on canonical MIT-licensed
+`45a73d788ea1c60ee4819edb0daa10abb5e14989`, based on canonical MIT-licensed
 `github.com/quic-go/quic-go` v0.62.0 commit
 `793f74d8e03368c5aded128af6f48d21dbb47f73`. The fork exposes only
 the project-maintained DATAGRAM and ownership integration plus selected
 congestion-control support used by this project; it contains no BBR code. See
 `docs/CONNECT_IP_QUIC_CONGESTION.md` for the upstream and license provenance.
+The `45a73d78` follow-up is lint-only Go 1.27 cleanup and adds no runtime
+behavior.
 
 The CONNECT-IP library is pinned to the MIT-licensed project fork
 `github.com/Piggy-Cat-bit-shadow/connect-ip-go` commit

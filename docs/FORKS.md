@@ -4,7 +4,7 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `e30fdc68bb6520e11da6e507a47d0596bbaf909d`
+- Pinned commit: `45a73d788ea1c60ee4819edb0daa10abb5e14989`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the pinned fork: owned DATAGRAM buffers, retained receive
@@ -14,6 +14,8 @@
   the local DATAGRAM ownership and early-datagram lifecycle patches.
 - Adopted upstream runtime fix: `fcb5bedb` (`CONNECTION_CLOSE` packet sizing
   accounts for 1-RTT AEAD overhead), applied as commit `e30fdc68`.
+- Follow-up `45a73d78` is lint-only Go 1.27 cleanup in
+  `http3/conn_test.go`; it changes no runtime behavior.
 - Audited but deferred: `ea5cf308`, `c834ffae`, and `c6efd617` (Extended
   CONNECT and HTTP/3 `:path` parsing changes). They alter request-target
   semantics and need a separate compatibility review against this fork's
