@@ -321,6 +321,48 @@ func TestSessionBatchWriterTransfersAcceptedPrefixes(t *testing.T) {
 	conn.releaseTransferred()
 }
 
+func TestSessionBatchWriterWaitsAfterShortAcceptedPrefix(t *testing.T) {
+	writable := make(chan struct{})
+	conn := &batchWriterTestConn{acceptedPerBatch: 1, writable: writable}
+	s := newWriterTestSession(context.Background(), conn)
+	packets := make([]*session.PacketBuffer, 32)
+	for i := range packets {
+		packets[i] = writerTestPacket(byte(i))
+	}
+	done := make(chan struct{})
+	go func() { newSessionPacketWriter(conn).writeBatch(s, nil, packets); close(done) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn.mu.Lock()
+		calls := conn.batchCalls
+		conn.mu.Unlock()
+		if calls > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	conn.mu.Lock()
+	calls, owners := conn.batchCalls, len(conn.owners)
+	conn.mu.Unlock()
+	if calls != 1 || owners != 1 {
+		t.Fatalf("before writable: batch calls=%d transferred owners=%d, want 1 and 1", calls, owners)
+	}
+	close(writable)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch writer did not resume after writable notification")
+	}
+	conn.mu.Lock()
+	calls, owners = conn.batchCalls, len(conn.owners)
+	conn.mu.Unlock()
+	if calls != len(packets) || owners != len(packets) {
+		t.Fatalf("after writable: batch calls=%d transferred owners=%d, want %d", calls, owners, len(packets))
+	}
+	s.Close()
+	conn.releaseTransferred()
+}
+
 func TestSessionBatchWriterCancellationUnblocksFullQueue(t *testing.T) {
 	conn := &batchWriterTestConn{writable: make(chan struct{})}
 	s := newWriterTestSession(context.Background(), conn)

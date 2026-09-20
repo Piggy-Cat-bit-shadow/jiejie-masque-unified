@@ -298,7 +298,6 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 				setRuntimeStage(&snapshot, diagnostics.QUICPacketSent, runtimeStats.SendQueueDequeueBytes, runtimeStats.SendQueueDequeue, counterDelta(runtimeStats.SendQueueDequeueBytes, previousRuntime.SendQueueDequeueBytes), counterDelta(runtimeStats.SendQueueDequeue, previousRuntime.SendQueueDequeue), elapsed)
 				setRuntimeStage(&snapshot, diagnostics.UDPWrite, runtimeStats.UDPWireBytes, runtimeStats.UDPWrites, counterDelta(runtimeStats.UDPWireBytes, previousRuntime.UDPWireBytes), counterDelta(runtimeStats.UDPWrites, previousRuntime.UDPWrites), elapsed)
 				setRuntimeStage(&snapshot, diagnostics.UDPWire, runtimeStats.UDPWireBytes, runtimeStats.UDPWrites, counterDelta(runtimeStats.UDPWireBytes, previousRuntime.UDPWireBytes), counterDelta(runtimeStats.UDPWrites, previousRuntime.UDPWrites), elapsed)
-				previousRuntime = runtimeStats
 				if baseline {
 					snapshot.Warmup = true
 					for stage, stats := range snapshot.Stages {
@@ -310,25 +309,51 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 				snapshot.RefreshGaps()
 				queueStats := mgr.AggregateQueueStats()
 				tunStats := tun.Stats()
-				snapshot.Runtime = map[string]any{
-					"quic": map[string]any{
-						"connections": runtimeStats.Connections, "cc": runtimeStats.CongestionController,
-						"cc_state": runtimeStats.CongestionState, "cwnd_bytes": runtimeStats.CongestionWindows,
-						"bytes_in_flight": runtimeStats.BytesInFlight, "pacing_bytes_per_second": runtimeStats.PacingRate,
-						"packets_lost": runtimeStats.PacketsLost, "bytes_lost": runtimeStats.BytesLost,
-						"spurious_losses": runtimeStats.SpuriousLosses, "packet_reordering": runtimeStats.MaxPacketReordering,
-						"packets_received": runtimeStats.QUICPacketsReceived, "bytes_received": runtimeStats.QUICBytesReceived,
-						"time_reordering": runtimeStats.MaxTimeReordering.String(), "min_rtt": runtimeStats.MinRTT.String(),
-						"latest_rtt": runtimeStats.LatestRTT.String(), "smoothed_rtt": runtimeStats.SmoothedRTT.String(),
-						"pmtu": runtimeStats.CurrentPMTU, "gso_connections": runtimeStats.GSOConnections,
+				snapshot.Runtime = diagnostics.RuntimeStats{
+					QUIC: diagnostics.QUICStats{
+						Connections: runtimeStats.Connections, CC: runtimeStats.CongestionController, CCState: runtimeStats.CongestionState,
+						CWNDBytes: runtimeStats.CongestionWindows, BytesInFlight: runtimeStats.BytesInFlight,
+						PacingBytesPerSecond: runtimeStats.PacingRate, PacketsLost: runtimeStats.PacketsLost,
+						BytesLost: runtimeStats.BytesLost, SpuriousLosses: runtimeStats.SpuriousLosses,
+						MaxPacketReordering: runtimeStats.MaxPacketReordering, PacketsReceived: runtimeStats.QUICPacketsReceived,
+						BytesReceived: runtimeStats.QUICBytesReceived, MaxTimeReordering: runtimeStats.MaxTimeReordering.String(),
+						MinRTT: runtimeStats.MinRTT.String(), LatestRTT: runtimeStats.LatestRTT.String(),
+						SmoothedRTT: runtimeStats.SmoothedRTT.String(), PMTU: runtimeStats.CurrentPMTU,
+						GSOConnections: runtimeStats.GSOConnections,
 					},
-					"queues": map[string]any{
-						"session":    queueStats,
-						"datagram":   map[string]any{"depth": runtimeStats.DatagramQueueDepth, "high_water": runtimeStats.DatagramQueueHighWater, "blocked_events": runtimeStats.DatagramBlocked, "blocked_duration": runtimeStats.DatagramBlockedDuration.String()},
-						"send_queue": map[string]any{"depth": runtimeStats.SendQueueDepth, "high_water": runtimeStats.SendQueueHighWater, "hard_block_events": runtimeStats.SendQueueHardBlocks, "hard_block_duration": runtimeStats.SendQueueHardBlockedDuration.String()},
+					Scheduler: diagnostics.SchedulerStats{
+						Turns:                     schedulerCounter(runtimeStats.SchedulerTurns, previousRuntime.SchedulerTurns, baseline),
+						TXTurns:                   schedulerCounter(runtimeStats.TXTurns, previousRuntime.TXTurns, baseline),
+						TXPackets:                 schedulerCounter(runtimeStats.TXPackets, previousRuntime.TXPackets, baseline),
+						TXBytes:                   schedulerCounter(runtimeStats.TXBytes, previousRuntime.TXBytes, baseline),
+						RXTurns:                   schedulerCounter(runtimeStats.RXTurns, previousRuntime.RXTurns, baseline),
+						RXPackets:                 schedulerCounter(runtimeStats.RXPackets, previousRuntime.RXPackets, baseline),
+						TXTurnEndedDueToRXPending: schedulerCounter(runtimeStats.TXTurnEndedDueToRXPending, previousRuntime.TXTurnEndedDueToRXPending, baseline),
+						SendScheduleRequests:      schedulerCounter(runtimeStats.SendScheduleRequests, previousRuntime.SendScheduleRequests, baseline),
+						SendScheduleCoalesced:     schedulerCounter(runtimeStats.SendScheduleCoalesced, previousRuntime.SendScheduleCoalesced, baseline),
+						YieldPacing:               schedulerCounter(runtimeStats.YieldPacing, previousRuntime.YieldPacing, baseline),
+						YieldCWND:                 schedulerCounter(runtimeStats.YieldCwnd, previousRuntime.YieldCwnd, baseline),
+						YieldSendQueue:            schedulerCounter(runtimeStats.YieldSendQueue, previousRuntime.YieldSendQueue, baseline),
+						YieldNoData:               schedulerCounter(runtimeStats.YieldNoData, previousRuntime.YieldNoData, baseline),
+						YieldPTO:                  schedulerCounter(runtimeStats.YieldPTO, previousRuntime.YieldPTO, baseline),
+						YieldOther:                schedulerCounter(runtimeStats.YieldOther, previousRuntime.YieldOther, baseline),
 					},
-					"tun": tunStats,
+					Queues: diagnostics.QueueStats{
+						Session: diagnostics.SessionQueueStats{Sessions: queueStats.Sessions, Capacity: queueStats.Capacity,
+							Depth: queueStats.Depth, HighWater: queueStats.HighWater, Enqueued: queueStats.Enqueued,
+							Dequeued: queueStats.Dequeued, Dropped: queueStats.Dropped},
+						DATAGRAM: diagnostics.DATAGRAMQueueStats{Depth: runtimeStats.DatagramQueueDepth,
+							HighWater: runtimeStats.DatagramQueueHighWater, BlockedEvents: runtimeStats.DatagramBlocked,
+							BlockedDuration: runtimeStats.DatagramBlockedDuration.String()},
+						SendQueue: diagnostics.SendQueueStats{Depth: runtimeStats.SendQueueDepth,
+							HighWater: runtimeStats.SendQueueHighWater, HardBlockEvents: runtimeStats.SendQueueHardBlocks,
+							HardBlockedDuration: runtimeStats.SendQueueHardBlockedDuration.String()},
+					},
+					TUN: diagnostics.TUNStats{RXPackets: tunStats.RXPackets, RXBytes: tunStats.RXBytes,
+						TXPackets: tunStats.TXPackets, TXBytes: tunStats.TXBytes,
+						RXBatches: tunStats.RXBatches, RXBatchPackets: tunStats.RXBatchPackets},
 				}
+				previousRuntime = runtimeStats
 				if cfg.Format == "json" {
 					if encoded, err := snapshot.JSON(); err == nil {
 						log.Printf("CONNECT-IP pipeline: %s", encoded)
@@ -365,6 +390,13 @@ func counterDelta(now, before uint64) uint64 {
 		return now
 	}
 	return now - before
+}
+
+func schedulerCounter(total, previous uint64, baseline bool) diagnostics.CounterStats {
+	if baseline {
+		return diagnostics.CounterStats{Total: total}
+	}
+	return diagnostics.CounterStats{Total: total, Delta: counterDelta(total, previous)}
 }
 
 func isServerClosed(err error) bool {
@@ -732,8 +764,14 @@ func newSessionPacketWriter(conn session.PacketConn) sessionPacketWriter {
 
 func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter, packets []*session.PacketBuffer) bool {
 	pending := packets
+	var ownedScratch [sessionWriterDrainMax]connectip.OwnedPacketBuffer
 	for len(pending) > 0 {
-		items := make([]connectip.OwnedPacketBuffer, len(pending))
+		var items []connectip.OwnedPacketBuffer
+		if len(pending) <= len(ownedScratch) {
+			items = ownedScratch[:len(pending)]
+		} else {
+			items = make([]connectip.OwnedPacketBuffer, len(pending))
+		}
 		for i, pkt := range pending {
 			items[i] = connectip.OwnedPacketBuffer{Buffer: pkt.Buffer, Offset: session.PacketPoolHeadroom, Length: len(pkt.Data), Owner: pkt}
 		}
@@ -784,9 +822,9 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 		if len(pending) == 0 {
 			return true
 		}
-		if accepted > 0 {
-			continue
-		}
+		// A short prefix means the bounded transport queue ran out of room.
+		// Let its writable notification drive progress instead of repeatedly
+		// probing a known-full queue from this goroutine.
 		select {
 		case <-s.Ctx.Done():
 			releaseSessionPackets(s, pending)

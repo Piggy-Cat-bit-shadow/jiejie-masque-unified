@@ -120,6 +120,21 @@ type AggregateRuntimeStats struct {
 	PacketsPacked                uint64
 	PackedBytes                  uint64
 	PacingWakeups                uint64
+	SendScheduleRequests         uint64
+	SendScheduleCoalesced        uint64
+	SchedulerTurns               uint64
+	TXTurns                      uint64
+	TXPackets                    uint64
+	TXBytes                      uint64
+	RXTurns                      uint64
+	RXPackets                    uint64
+	TXTurnEndedDueToRXPending    uint64
+	YieldPacing                  uint64
+	YieldCwnd                    uint64
+	YieldSendQueue               uint64
+	YieldNoData                  uint64
+	YieldPTO                     uint64
+	YieldOther                   uint64
 	ReceivedPacketQueueDrops     uint64
 	QUICPacketsReceived          uint64
 	QUICBytesReceived            uint64
@@ -778,6 +793,21 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.PacketsPacked += stats.PacketsPacked
 		out.PackedBytes += stats.PackedBytes
 		out.PacingWakeups += stats.PacingWakeups
+		out.SendScheduleRequests += stats.SendScheduleRequests
+		out.SendScheduleCoalesced += stats.SendScheduleCoalesced
+		out.SchedulerTurns += stats.SchedulerTurns
+		out.TXTurns += stats.TXTurns
+		out.TXPackets += stats.TXPackets
+		out.TXBytes += stats.TXBytes
+		out.RXTurns += stats.RXTurns
+		out.RXPackets += stats.RXPackets
+		out.TXTurnEndedDueToRXPending += stats.TXTurnEndedDueToRXPending
+		out.YieldPacing += stats.YieldPacing
+		out.YieldCwnd += stats.YieldCwnd
+		out.YieldSendQueue += stats.YieldSendQueue
+		out.YieldNoData += stats.YieldNoData
+		out.YieldPTO += stats.YieldPTO
+		out.YieldOther += stats.YieldOther
 		out.ReceivedPacketQueueDrops += stats.ReceivedPacketQueueDrops
 		out.QUICPacketsReceived += stats.ReceivedPackets
 		out.QUICBytesReceived += stats.ReceivedBytes

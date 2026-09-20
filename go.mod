@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.8
 
 require (
-	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260920135453-2bd33182359b
+	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260920143330-456dcef1ecc9
 	github.com/dunglas/httpsfv v1.1.1
 	github.com/metacubex/http v0.1.7
 	github.com/metacubex/quic-go v0.61.1-0.20260906020448-5dd41cf92b47
@@ -19,7 +19,7 @@ require (
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior. The replacement is
 // a project-maintained fork carrying required DATAGRAM/ownership integration
 // plus selected congestion-control support for the CONNECT-IP server.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920134900-7e1e7973b076
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260920143224-7f9c2206d310
 
 require (
 	github.com/metacubex/cpu v0.1.0 // indirect

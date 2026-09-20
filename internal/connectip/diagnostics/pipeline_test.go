@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +54,8 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 	p := &Probe{}
 	p.Add(UDPWire, 1, 1280)
 	s, _ := p.Snapshot(nil, time.Second)
+	s.Runtime.Scheduler.TXTurnEndedDueToRXPending.Total = 7
+	s.RefreshGaps()
 	b, err := s.JSON()
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +64,30 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 		t.Fatalf("empty JSON: %s", b)
 	}
 	for _, forbidden := range []string{"client", "destination", "payload", "private_key"} {
-		if string(b) == forbidden {
+		if strings.Contains(string(b), forbidden) {
 			t.Fatalf("unexpected sensitive field %q", forbidden)
 		}
 	}
+	if !strings.Contains(string(b), `"downstream"`) || !strings.Contains(string(b), `"upstream"`) || !strings.Contains(string(b), `"scheduler"`) || !strings.Contains(string(b), `"tx_turn_ended_due_to_rx_pending":{"total":7,"delta":0}`) {
+		t.Fatalf("missing typed pipeline sections: %s", b)
+	}
+}
+
+func BenchmarkProbeAdd(b *testing.B) {
+	b.Run("off", func(b *testing.B) {
+		var p *Probe
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			p.Add(QUICPacketPacked, 1, 1200)
+		}
+	})
+	b.Run("on", func(b *testing.B) {
+		p := &Probe{}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			p.Add(QUICPacketPacked, 1, 1200)
+		}
+	})
 }

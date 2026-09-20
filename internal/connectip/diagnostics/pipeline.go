@@ -62,10 +62,124 @@ type Stats struct {
 	IntervalSeconds float64               `json:"interval_seconds"`
 	Warmup          bool                  `json:"warmup,omitempty"`
 	Stages          map[string]StageStats `json:"stages"`
+	Downstream      DirectionStats        `json:"downstream"`
+	Upstream        DirectionStats        `json:"upstream"`
 	LargestGap      Gap                   `json:"largest_pipeline_gap,omitempty"`
 	DownstreamGap   Gap                   `json:"downstream_gap,omitempty"`
 	UpstreamGap     Gap                   `json:"upstream_gap,omitempty"`
-	Runtime         any                   `json:"runtime,omitempty"`
+	Runtime         RuntimeStats          `json:"runtime,omitempty"`
+}
+
+type DirectionStats struct {
+	TunRead                 StageStats `json:"tun_read,omitempty"`
+	TunDispatch             StageStats `json:"tun_dispatch,omitempty"`
+	SessionEnqueue          StageStats `json:"session_enqueue,omitempty"`
+	SessionDequeue          StageStats `json:"session_dequeue,omitempty"`
+	SessionWriterSubmit     StageStats `json:"session_writer_submit,omitempty"`
+	ConnectIPDatagramSubmit StageStats `json:"connectip_datagram_submit,omitempty"`
+	HTTP3DatagramSubmit     StageStats `json:"http3_datagram_submit,omitempty"`
+	QUICDatagramEnqueue     StageStats `json:"quic_datagram_enqueue,omitempty"`
+	QUICDatagramDequeue     StageStats `json:"quic_datagram_dequeue,omitempty"`
+	QUICPacketPacked        StageStats `json:"quic_packet_packed,omitempty"`
+	QUICPacketSent          StageStats `json:"quic_packet_sent,omitempty"`
+	UDPWrite                StageStats `json:"udp_write,omitempty"`
+	UDPWire                 StageStats `json:"udp_wire,omitempty"`
+	UDPRead                 StageStats `json:"udp_read,omitempty"`
+	QUICPacketReceived      StageStats `json:"quic_packet_received,omitempty"`
+	HTTP3DatagramReceived   StageStats `json:"http3_datagram_received,omitempty"`
+	ConnectIPPacketReceived StageStats `json:"connectip_packet_received,omitempty"`
+	SessionReader           StageStats `json:"session_reader,omitempty"`
+	TunWrite                StageStats `json:"tun_write,omitempty"`
+}
+
+type RuntimeStats struct {
+	QUIC      QUICStats      `json:"quic"`
+	Scheduler SchedulerStats `json:"scheduler"`
+	Queues    QueueStats     `json:"queues"`
+	TUN       TUNStats       `json:"tun"`
+}
+
+type QUICStats struct {
+	Connections          uint64 `json:"connections"`
+	CC                   string `json:"cc"`
+	CCState              string `json:"cc_state"`
+	CWNDBytes            uint64 `json:"cwnd_bytes"`
+	BytesInFlight        uint64 `json:"bytes_in_flight"`
+	PacingBytesPerSecond uint64 `json:"pacing_bytes_per_second"`
+	PacketsLost          uint64 `json:"packets_lost"`
+	BytesLost            uint64 `json:"bytes_lost"`
+	SpuriousLosses       uint64 `json:"spurious_losses"`
+	MaxPacketReordering  uint64 `json:"max_packet_reordering"`
+	PacketsReceived      uint64 `json:"packets_received"`
+	BytesReceived        uint64 `json:"bytes_received"`
+	MaxTimeReordering    string `json:"max_time_reordering"`
+	MinRTT               string `json:"min_rtt"`
+	LatestRTT            string `json:"latest_rtt"`
+	SmoothedRTT          string `json:"smoothed_rtt"`
+	PMTU                 uint64 `json:"pmtu"`
+	GSOConnections       uint64 `json:"gso_connections"`
+}
+
+type SchedulerStats struct {
+	Turns                     CounterStats `json:"turns"`
+	TXTurns                   CounterStats `json:"tx_turns"`
+	TXPackets                 CounterStats `json:"tx_packets"`
+	TXBytes                   CounterStats `json:"tx_bytes"`
+	RXTurns                   CounterStats `json:"rx_turns"`
+	RXPackets                 CounterStats `json:"rx_packets"`
+	TXTurnEndedDueToRXPending CounterStats `json:"tx_turn_ended_due_to_rx_pending"`
+	SendScheduleRequests      CounterStats `json:"send_schedule_requests"`
+	SendScheduleCoalesced     CounterStats `json:"send_schedule_coalesced"`
+	YieldPacing               CounterStats `json:"yield_pacing"`
+	YieldCWND                 CounterStats `json:"yield_cwnd"`
+	YieldSendQueue            CounterStats `json:"yield_send_queue"`
+	YieldNoData               CounterStats `json:"yield_no_data"`
+	YieldPTO                  CounterStats `json:"yield_pto"`
+	YieldOther                CounterStats `json:"yield_other"`
+}
+
+type CounterStats struct {
+	Total uint64 `json:"total"`
+	Delta uint64 `json:"delta"`
+}
+
+type QueueStats struct {
+	Session   SessionQueueStats  `json:"session"`
+	DATAGRAM  DATAGRAMQueueStats `json:"datagram"`
+	SendQueue SendQueueStats     `json:"send_queue"`
+}
+
+type SessionQueueStats struct {
+	Sessions  uint64 `json:"sessions"`
+	Capacity  uint64 `json:"capacity"`
+	Depth     uint64 `json:"depth"`
+	HighWater uint64 `json:"high_water"`
+	Enqueued  uint64 `json:"enqueued"`
+	Dequeued  uint64 `json:"dequeued"`
+	Dropped   uint64 `json:"dropped"`
+}
+
+type DATAGRAMQueueStats struct {
+	Depth           uint64 `json:"depth"`
+	HighWater       uint64 `json:"high_water"`
+	BlockedEvents   uint64 `json:"blocked_events"`
+	BlockedDuration string `json:"blocked_duration"`
+}
+
+type SendQueueStats struct {
+	Depth               uint64 `json:"depth"`
+	HighWater           uint64 `json:"high_water"`
+	HardBlockEvents     uint64 `json:"hard_block_events"`
+	HardBlockedDuration string `json:"hard_blocked_duration"`
+}
+
+type TUNStats struct {
+	RXPackets      uint64 `json:"rx_packets"`
+	RXBytes        uint64 `json:"rx_bytes"`
+	TXPackets      uint64 `json:"tx_packets"`
+	TXBytes        uint64 `json:"tx_bytes"`
+	RXBatches      uint64 `json:"rx_batches"`
+	RXBatchPackets uint64 `json:"rx_batch_packets"`
 }
 
 type StageStats struct {
@@ -175,6 +289,7 @@ func (p *Probe) Snapshot(previous map[Stage]Point, elapsed time.Duration) (Stats
 	}
 	out.DownstreamGap = largestAdjacentGap(downstreamStages[:], rates)
 	out.UpstreamGap = largestAdjacentGap(upstreamStages[:], rates)
+	out.refreshDirections()
 	out.LargestGap = out.DownstreamGap
 	if out.LargestGap.Ratio == 0 || (out.UpstreamGap.Ratio > 0 && out.UpstreamGap.Ratio < out.LargestGap.Ratio) {
 		out.LargestGap = out.UpstreamGap
@@ -209,6 +324,24 @@ func (s *Stats) RefreshGaps() {
 	s.LargestGap = s.DownstreamGap
 	if s.LargestGap.Ratio == 0 || (s.UpstreamGap.Ratio > 0 && s.UpstreamGap.Ratio < s.LargestGap.Ratio) {
 		s.LargestGap = s.UpstreamGap
+	}
+	s.refreshDirections()
+}
+
+func (s *Stats) refreshDirections() {
+	stage := func(name Stage) StageStats { return s.Stages[string(name)] }
+	s.Downstream = DirectionStats{
+		TunRead: stage(TunRead), TunDispatch: stage(TunDispatchSuccess),
+		SessionEnqueue: stage(SessionEnqueue), SessionDequeue: stage(SessionDequeue),
+		SessionWriterSubmit: stage(SessionWriterSubmit), ConnectIPDatagramSubmit: stage(ConnectIPDatagramSubmit),
+		HTTP3DatagramSubmit: stage(HTTP3DatagramSubmit), QUICDatagramEnqueue: stage(QUICDatagramEnqueue),
+		QUICDatagramDequeue: stage(QUICDatagramDequeue), QUICPacketPacked: stage(QUICPacketPacked),
+		QUICPacketSent: stage(QUICPacketSent), UDPWrite: stage(UDPWrite), UDPWire: stage(UDPWire),
+	}
+	s.Upstream = DirectionStats{
+		UDPRead: stage(UDPRead), QUICPacketReceived: stage(QUICPacketReceived),
+		HTTP3DatagramReceived: stage(HTTP3DatagramReceived), ConnectIPPacketReceived: stage(ConnectIPPacketReceived),
+		SessionReader: stage(SessionReader), TunWrite: stage(TunWrite),
 	}
 }
 
