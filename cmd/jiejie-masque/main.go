@@ -823,6 +823,7 @@ func newSessionPacketWriter(conn session.PacketConn) sessionPacketWriter {
 func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter, packets []*session.PacketBuffer) bool {
 	pending := packets
 	var ownedScratch [sessionWriterDrainMax]connectip.OwnedPacketBuffer
+	noProgressWakeups := 0
 	for len(pending) > 0 {
 		var items []connectip.OwnedPacketBuffer
 		if len(pending) <= len(ownedScratch) {
@@ -880,15 +881,17 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 		if len(pending) == 0 {
 			return true
 		}
+		if accepted > 0 {
+			noProgressWakeups = 0
+		}
 		// A short prefix means the bounded transport queue ran out of room.
 		// Let its writable notification drive progress instead of repeatedly
 		// probing a known-full queue from this goroutine.
-		select {
-		case <-s.Ctx.Done():
+		if !waitDatagramWritable(s.Ctx, w.batch.DatagramWritable(), noProgressWakeups) {
 			releaseSessionPackets(s, pending)
 			return false
-		case <-w.batch.DatagramWritable():
 		}
+		noProgressWakeups++
 	}
 	return true
 }
@@ -900,6 +903,7 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 // interface safe for implementations that leave rejected ownership to us.
 func (w sessionPacketWriter) write(s *session.Session, pkt *session.PacketBuffer) ([]byte, error) {
 	if w.try != nil {
+		noProgressWakeups := 0
 		for {
 			icmp, accepted, err := w.try.TryWritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
 			if err != nil {
@@ -909,12 +913,11 @@ func (w sessionPacketWriter) write(s *session.Session, pkt *session.PacketBuffer
 			if accepted {
 				return icmp, nil
 			}
-			select {
-			case <-s.Ctx.Done():
+			if !waitDatagramWritable(s.Ctx, w.try.DatagramWritable(), noProgressWakeups) {
 				s.ReleasePacket(pkt)
 				return nil, s.Ctx.Err()
-			case <-w.try.DatagramWritable():
 			}
+			noProgressWakeups++
 		}
 	}
 	if w.owned != nil {
@@ -932,6 +935,31 @@ func (w sessionPacketWriter) write(s *session.Session, pkt *session.PacketBuffer
 	icmp, err := w.conn.WritePacket(pkt.Data)
 	s.ReleasePacket(pkt)
 	return icmp, err
+}
+
+const datagramWritablePollInterval = 10 * time.Millisecond
+
+// waitDatagramWritable tolerates transports that don't implement notifications
+// and prevents a broken/already-closed notifier from creating an unbounded
+// immediate retry loop. Proper generation channels still wake the first wait
+// immediately, preserving the Try-then-Writable lost-wakeup contract.
+func waitDatagramWritable(ctx context.Context, writable <-chan struct{}, noProgressWakeups int) bool {
+	if writable == nil || noProgressWakeups > 0 {
+		timer := time.NewTimer(datagramWritablePollInterval)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-writable:
+		return true
+	}
 }
 
 type tunPacketWriter interface {

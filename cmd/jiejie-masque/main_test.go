@@ -169,8 +169,9 @@ func (c *writerTestConn) snapshot() (writes [][]byte, calls int) {
 
 type tryWritableTestConn struct {
 	writerTestConn
-	attempts atomic.Int32
-	writable chan struct{}
+	attempts    atomic.Int32
+	writable    chan struct{}
+	nilWritable bool
 }
 
 type batchWriterTestConn struct {
@@ -178,6 +179,8 @@ type batchWriterTestConn struct {
 	acceptedPerBatch int
 	batchCalls       int
 	writable         chan struct{}
+	nilWritable      bool
+	acceptAfterCall  int
 }
 
 func (c *batchWriterTestConn) TryWritePacketBuffersOwnedBatch(packets []connectip.OwnedPacketBuffer) (int, [][]byte, error) {
@@ -185,6 +188,9 @@ func (c *batchWriterTestConn) TryWritePacketBuffersOwnedBatch(packets []connecti
 	defer c.mu.Unlock()
 	c.batchCalls++
 	accepted := min(c.acceptedPerBatch, len(packets))
+	if c.acceptAfterCall > 0 && c.batchCalls >= c.acceptAfterCall {
+		accepted = len(packets)
+	}
 	for _, packet := range packets[:accepted] {
 		c.owners = append(c.owners, packet.Owner)
 	}
@@ -192,6 +198,9 @@ func (c *batchWriterTestConn) TryWritePacketBuffersOwnedBatch(packets []connecti
 }
 
 func (c *batchWriterTestConn) DatagramWritable() <-chan struct{} {
+	if c.nilWritable {
+		return nil
+	}
 	if c.writable != nil {
 		return c.writable
 	}
@@ -208,7 +217,12 @@ func (c *tryWritableTestConn) TryWritePacketBufferOwned(buf []byte, offset, leng
 	return icmp, err == nil, err
 }
 
-func (c *tryWritableTestConn) DatagramWritable() <-chan struct{} { return c.writable }
+func (c *tryWritableTestConn) DatagramWritable() <-chan struct{} {
+	if c.nilWritable {
+		return nil
+	}
+	return c.writable
+}
 func (c *writerTestConn) releaseTransferred() {
 	c.mu.Lock()
 	owners := c.owners
@@ -376,6 +390,96 @@ func TestSessionBatchWriterWaitsAfterShortAcceptedPrefix(t *testing.T) {
 	}
 	s.Close()
 	conn.releaseTransferred()
+}
+
+func TestSessionBatchWriterPollsWhenWritableChannelIsNil(t *testing.T) {
+	conn := &batchWriterTestConn{nilWritable: true, acceptAfterCall: 2}
+	s := newWriterTestSession(context.Background(), conn)
+	packet := writerTestPacket(7)
+	done := make(chan bool, 1)
+	go func() { done <- newSessionPacketWriter(conn).writeBatch(s, nil, []*session.PacketBuffer{packet}) }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("batch writer failed while retrying nil writable notifier")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("batch writer remained blocked on nil writable notifier")
+	}
+	conn.mu.Lock()
+	calls, owners := conn.batchCalls, len(conn.owners)
+	conn.mu.Unlock()
+	if calls != 2 || owners != 1 {
+		t.Fatalf("retry calls=%d transferred owners=%d, want 2 and 1", calls, owners)
+	}
+	s.Close()
+	conn.releaseTransferred()
+}
+
+func TestSessionBatchWriterDoesNotSpinOnClosedWritableChannel(t *testing.T) {
+	closed := make(chan struct{})
+	close(closed)
+	conn := &batchWriterTestConn{writable: closed, acceptAfterCall: 2}
+	s := newWriterTestSession(context.Background(), conn)
+	packet := writerTestPacket(8)
+	done := make(chan bool, 1)
+	go func() { done <- newSessionPacketWriter(conn).writeBatch(s, nil, []*session.PacketBuffer{packet}) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("writer failed to retry a closed generation notification")
+	}
+	conn.mu.Lock()
+	calls := conn.batchCalls
+	conn.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("batch calls=%d, want one ready retry", calls)
+	}
+	s.Close()
+	conn.releaseTransferred()
+}
+
+func TestSessionBatchWriterThrottlesRepeatedClosedNotifications(t *testing.T) {
+	closed := make(chan struct{})
+	close(closed)
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := &batchWriterTestConn{writable: closed}
+	s := newWriterTestSession(ctx, conn)
+	done := make(chan bool, 1)
+	go func() { done <- newSessionPacketWriter(conn).writeBatch(s, nil, []*session.PacketBuffer{writerTestPacket(10)}) }()
+	time.AfterFunc(45*time.Millisecond, cancel)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch writer ignored cancellation with a closed notifier")
+	}
+	conn.mu.Lock()
+	calls := conn.batchCalls
+	conn.mu.Unlock()
+	if calls < 2 || calls > 8 {
+		t.Fatalf("calls=%d, want bounded retries during cancellation", calls)
+	}
+	s.Close()
+}
+
+func TestSingleWriterPollsNilWritableAndHonorsCancellation(t *testing.T) {
+	conn := &tryWritableTestConn{nilWritable: true}
+	s := newWriterTestSession(context.Background(), conn)
+	pkt := writerTestPacket(9)
+	if _, err := newSessionPacketWriter(conn).write(s, pkt); err != nil {
+		t.Fatalf("single-packet retry: %v", err)
+	}
+	if got := conn.attempts.Load(); got != 2 {
+		t.Fatalf("try attempts=%d, want 2", got)
+	}
+	conn.releaseTransferred()
+	s.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if waitDatagramWritable(ctx, nil, 0) {
+		t.Fatal("nil writable wait ignored canceled context")
+	}
 }
 
 func TestSessionBatchWriterCancellationUnblocksFullQueue(t *testing.T) {

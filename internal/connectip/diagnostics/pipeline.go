@@ -58,13 +58,14 @@ const histogramBuckets = 8
 // Stats is a machine-readable interval snapshot. Rates are calculated from
 // monotonic counter deltas; no identity, address, target, or payload is kept.
 type Stats struct {
+	SchemaVersion   int                   `json:"schema_version"`
 	Timestamp       string                `json:"timestamp,omitempty"`
 	IntervalSeconds float64               `json:"interval_seconds"`
 	Warmup          bool                  `json:"warmup,omitempty"`
 	Stages          map[string]StageStats `json:"stages"`
 	Downstream      DirectionStats        `json:"downstream"`
 	Upstream        DirectionStats        `json:"upstream"`
-	LargestGap      Gap                   `json:"largest_pipeline_gap,omitempty"`
+	LargestGap      Gap                   `json:"largest_pipeline_gap,omitempty"` // Deprecated: use directional gaps.
 	DownstreamGap   Gap                   `json:"downstream_gap,omitempty"`
 	UpstreamGap     Gap                   `json:"upstream_gap,omitempty"`
 	Runtime         RuntimeStats          `json:"runtime,omitempty"`
@@ -285,7 +286,7 @@ func (p *Probe) Snapshot(previous map[Stage]Point, elapsed time.Duration) (Stats
 		elapsed = time.Second
 	}
 	seconds := elapsed.Seconds()
-	out := Stats{IntervalSeconds: seconds, Warmup: previous == nil, Stages: make(map[string]StageStats, len(stages))}
+	out := Stats{SchemaVersion: 2, IntervalSeconds: seconds, Warmup: previous == nil, Stages: make(map[string]StageStats, len(stages))}
 	now := make(map[Stage]Point, len(stages))
 	rates := make(map[Stage]float64, len(stages))
 	for i, stage := range stages {
@@ -330,6 +331,9 @@ func largestAdjacentGap(ordered []Stage, rates map[Stage]float64) Gap {
 // RefreshGaps recomputes only adjacent same-direction stage gaps. It is useful
 // after aggregate runtime counters have been merged into a probe snapshot.
 func (s *Stats) RefreshGaps() {
+	if s.SchemaVersion == 0 {
+		s.SchemaVersion = 2
+	}
 	rates := make(map[Stage]float64, len(stages))
 	for _, stage := range stages {
 		rates[stage] = s.Stages[string(stage)].BytesPerSecond

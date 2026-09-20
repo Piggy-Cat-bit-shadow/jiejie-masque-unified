@@ -71,7 +71,7 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 			t.Fatalf("unexpected sensitive field %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(b), `"downstream"`) || !strings.Contains(string(b), `"upstream"`) || !strings.Contains(string(b), `"scheduler"`) || !strings.Contains(string(b), `"gso"`) || !strings.Contains(string(b), `"segments_per_write_p50":1`) || !strings.Contains(string(b), `"udp_writes":{"total":12,"delta":4}`) || !strings.Contains(string(b), `"tx_turn_ended_due_to_rx_pending":{"total":7,"delta":0}`) {
+	if !strings.Contains(string(b), `"schema_version":2`) || !strings.Contains(string(b), `"downstream"`) || !strings.Contains(string(b), `"upstream"`) || !strings.Contains(string(b), `"scheduler"`) || !strings.Contains(string(b), `"gso"`) || !strings.Contains(string(b), `"segments_per_write_p50":1`) || !strings.Contains(string(b), `"udp_writes":{"total":12,"delta":4}`) || !strings.Contains(string(b), `"tx_turn_ended_due_to_rx_pending":{"total":7,"delta":0}`) {
 		t.Fatalf("missing typed pipeline sections: %s", b)
 	}
 }

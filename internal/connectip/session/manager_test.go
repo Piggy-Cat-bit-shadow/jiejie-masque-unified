@@ -101,6 +101,43 @@ func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
 	b.Close()
 }
 
+func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T) {
+	m := NewManager()
+	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20}}
+	a := New(netip.MustParseAddr("10.200.0.20"), "a", aConn, func(s *Session) { m.RemoveIfCurrent(s) })
+	m.Replace(a)
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 {
+		t.Fatalf("initial cumulative counters = %+v", got)
+	}
+
+	aConn.stats.PacketsPacked = 110
+	aConn.stats.UDPWrites = 11
+	aConn.stats.ReceivedPackets = 22
+	bConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 7, UDPWrites: 2, ReceivedPackets: 3}}
+	b := New(netip.MustParseAddr("10.200.0.21"), "b", bConn, func(s *Session) { m.RemoveIfCurrent(s) })
+	m.Replace(b)
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 {
+		t.Fatalf("cumulative counters after join = %+v", got)
+	}
+
+	aConn.stats.PacketsPacked = 125 // final increments must be captured on close.
+	aConn.stats.UDPWrites = 13
+	aConn.stats.ReceivedPackets = 24
+	a.Close()
+	if got := m.AggregateRuntimeStats(); got.Connections != 1 || got.PacketsPacked != 132 || got.UDPWrites != 15 || got.QUICPacketsReceived != 27 {
+		t.Fatalf("cumulative counters after exit = %+v", got)
+	}
+
+	b.Close()
+	cConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 4, UDPWrites: 1, ReceivedPackets: 2}}
+	c := New(netip.MustParseAddr("10.200.0.22"), "c", cConn, func(s *Session) { m.RemoveIfCurrent(s) })
+	m.Replace(c)
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 136 || got.UDPWrites != 16 || got.QUICPacketsReceived != 29 {
+		t.Fatalf("cumulative counters after replacement generation = %+v", got)
+	}
+	c.Close()
+}
+
 func TestPerClientReservationCapAndRelease(t *testing.T) {
 	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 4, nil)
 	m.SetMaxSessionsPerClient(2)

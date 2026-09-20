@@ -19,11 +19,12 @@ func diagnoseReport(path string) error {
 	}
 	defer f.Close()
 	type aggregate struct {
-		Samples  int
-		Duration float64
-		Peak     map[string]float64
-		Sum      map[string]float64
-		Gap      diagnostics.Gap
+		Samples       int
+		Duration      float64
+		Peak          map[string]float64
+		Sum           map[string]float64
+		DownstreamGap diagnostics.Gap
+		UpstreamGap   diagnostics.Gap
 	}
 	a := aggregate{Peak: map[string]float64{}, Sum: map[string]float64{}}
 	scanner := bufio.NewScanner(f)
@@ -47,9 +48,8 @@ func diagnoseReport(path string) error {
 			}
 			a.Sum[stage] += stats.Mbps
 		}
-		if snapshot.LargestGap.Ratio > 0 && (a.Gap.Ratio == 0 || snapshot.LargestGap.Ratio < a.Gap.Ratio) {
-			a.Gap = snapshot.LargestGap
-		}
+		a.DownstreamGap = minimumGap(a.DownstreamGap, snapshot.DownstreamGap)
+		a.UpstreamGap = minimumGap(a.UpstreamGap, snapshot.UpstreamGap)
 	}
 	if err := scanner.Err(); err != nil {
 		return err
@@ -59,8 +59,11 @@ func diagnoseReport(path string) error {
 	for _, stage := range []string{"tun_read", "session_enqueue", "session_writer_submit", "connectip_datagram_submit", "http3_datagram_submit", "quic_packet_packed", "udp_wire"} {
 		fmt.Printf("  %-32s %.2f\n", stage, a.Peak[stage])
 	}
-	if a.Gap.Ratio > 0 {
-		fmt.Printf("Largest pipeline gap: %s -> %s (ratio %.3f)\n", a.Gap.From, a.Gap.To, a.Gap.Ratio)
+	if a.DownstreamGap.Ratio > 0 {
+		fmt.Printf("Downstream gap: %s -> %s (ratio %.3f)\n", a.DownstreamGap.From, a.DownstreamGap.To, a.DownstreamGap.Ratio)
+	}
+	if a.UpstreamGap.Ratio > 0 {
+		fmt.Printf("Upstream gap: %s -> %s (ratio %.3f)\n", a.UpstreamGap.From, a.UpstreamGap.To, a.UpstreamGap.Ratio)
 	}
 	if a.Peak["tun_read"] > 0 && a.Peak["session_enqueue"] < a.Peak["tun_read"]*0.75 {
 		fmt.Println("Evidence summary: possible application/session handoff limit")
@@ -69,4 +72,11 @@ func diagnoseReport(path string) error {
 		fmt.Println("Evidence summary: possible send scheduler or UDP handoff gap")
 	}
 	return nil
+}
+
+func minimumGap(current, next diagnostics.Gap) diagnostics.Gap {
+	if next.Ratio > 0 && (current.Ratio == 0 || next.Ratio < current.Ratio) {
+		return next
+	}
+	return current
 }

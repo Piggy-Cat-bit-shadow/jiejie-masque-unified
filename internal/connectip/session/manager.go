@@ -263,29 +263,32 @@ func (s *Session) Close() {
 }
 
 type Manager struct {
-	mu                 sync.RWMutex
-	sessions           map[netip.Addr]*Session
-	sessionsByShadow   map[netip.Addr]*Session
-	sessionsByID       map[uint64]*Session
-	next               uint64
-	shadow             bool
-	shadowPool         netip.Prefix
-	shadowNext         netip.Addr
-	max                int
-	excluded           map[netip.Addr]bool
-	cooling            map[netip.Addr]time.Time
-	cleanupQuarantined map[netip.Addr]struct{}
-	reserved           int
-	maxPerIdentity     int
-	reservedByIdentity map[string]int
-	activeByIdentity   map[string]int
-	now                func() time.Time
-	random             func(uint32) uint32
-	reuseDelay         time.Duration
-	cleanup            func(netip.Addr) error
-	cleanupExecutor    *cleanupExecutor
-	cleanupPending     map[netip.Addr]struct{}
-	queueOverflowTotal atomic.Uint64
+	mu                  sync.RWMutex
+	runtimeStatsMu      sync.Mutex
+	runtimeByGeneration map[uint64]quic.RuntimeStats
+	runtimeTotals       AggregateRuntimeStats
+	sessions            map[netip.Addr]*Session
+	sessionsByShadow    map[netip.Addr]*Session
+	sessionsByID        map[uint64]*Session
+	next                uint64
+	shadow              bool
+	shadowPool          netip.Prefix
+	shadowNext          netip.Addr
+	max                 int
+	excluded            map[netip.Addr]bool
+	cooling             map[netip.Addr]time.Time
+	cleanupQuarantined  map[netip.Addr]struct{}
+	reserved            int
+	maxPerIdentity      int
+	reservedByIdentity  map[string]int
+	activeByIdentity    map[string]int
+	now                 func() time.Time
+	random              func(uint32) uint32
+	reuseDelay          time.Duration
+	cleanup             func(netip.Addr) error
+	cleanupExecutor     *cleanupExecutor
+	cleanupPending      map[netip.Addr]struct{}
+	queueOverflowTotal  atomic.Uint64
 }
 
 const shadowCleanupWorkers = 2
@@ -599,12 +602,19 @@ func (m *Manager) Replace(s *Session) (old *Session) {
 			break
 		}
 	}
+	if old != nil && old != s {
+		m.observeSessionRuntimeStatsLocked(old)
+	}
 	for _, ip := range s.ClientIPs {
 		m.sessions[ip] = s
 	}
 	m.mu.Unlock()
 	if old != nil && old != s {
 		old.Close()
+		m.mu.Lock()
+		m.observeSessionRuntimeStatsLocked(old)
+		m.forgetRuntimeGenerationLocked(old.Generation)
+		m.mu.Unlock()
 	}
 	return old
 }
@@ -615,6 +625,8 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 			m.mu.Unlock()
 			return false
 		}
+		m.observeSessionRuntimeStatsLocked(s)
+		m.forgetRuntimeGenerationLocked(s.Generation)
 		delete(m.sessionsByID, s.ID)
 		delete(m.sessionsByShadow, s.ShadowIP)
 		cleanup := m.cleanup
@@ -642,6 +654,8 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		m.mu.Unlock()
 		return false
 	}
+	m.observeSessionRuntimeStatsLocked(s)
+	m.forgetRuntimeGenerationLocked(s.Generation)
 	for _, ip := range s.ClientIPs {
 		if m.sessions[ip] == s {
 			delete(m.sessions, ip)
@@ -749,12 +763,35 @@ func (m *Manager) AggregateQueueStats() AggregateQueueStats {
 
 func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 	var out AggregateRuntimeStats
-	for _, s := range m.Snapshot() {
+	m.mu.RLock()
+	sessions := make([]*Session, 0, len(m.sessions)+len(m.sessionsByID))
+	seen := make(map[uint64]struct{}, cap(sessions))
+	appendSession := func(s *Session) {
+		if s == nil {
+			return
+		}
+		if _, ok := seen[s.Generation]; ok {
+			return
+		}
+		seen[s.Generation] = struct{}{}
+		sessions = append(sessions, s)
+	}
+	if m.shadow {
+		for _, s := range m.sessionsByID {
+			appendSession(s)
+		}
+	} else {
+		for _, s := range m.sessions {
+			appendSession(s)
+		}
+	}
+	for _, s := range sessions {
 		provider, ok := s.Conn.(interface{ RuntimeStats() quic.RuntimeStats })
 		if !ok {
 			continue
 		}
 		stats := provider.RuntimeStats()
+		m.observeRuntimeStatsLocked(s.Generation, stats)
 		out.Connections++
 		if out.CongestionController == "" {
 			out.CongestionController = stats.CongestionController
@@ -834,7 +871,128 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 			out.GSOConnections++
 		}
 	}
+	m.runtimeStatsMu.Lock()
+	applyRuntimeCounterTotals(&out, m.runtimeTotals)
+	m.runtimeStatsMu.Unlock()
+	m.mu.RUnlock()
 	return out
+}
+
+// observeRuntimeStatsLocked maintains process-lifetime totals while the
+// manager membership lock is held. Generation keys stay internal and never
+// enter logs or JSON; each connection's raw counters are differenced before
+// aggregation so session churn cannot make exported totals fall.
+func (m *Manager) observeRuntimeStatsLocked(generation uint64, current quic.RuntimeStats) {
+	if generation == 0 {
+		return
+	}
+	m.runtimeStatsMu.Lock()
+	defer m.runtimeStatsMu.Unlock()
+	if m.runtimeByGeneration == nil {
+		m.runtimeByGeneration = make(map[uint64]quic.RuntimeStats)
+	}
+	previous, exists := m.runtimeByGeneration[generation]
+	if !exists {
+		previous = quic.RuntimeStats{}
+	}
+	add := func(dst *uint64, now, before uint64) { *dst += monotonicDelta(now, before) }
+	t := &m.runtimeTotals
+	add(&t.PacketsLost, current.PacketsLost, previous.PacketsLost)
+	add(&t.BytesLost, current.BytesLost, previous.BytesLost)
+	add(&t.SpuriousLosses, current.SpuriousLosses, previous.SpuriousLosses)
+	add(&t.DatagramBlocked, current.DatagramSendBlocked, previous.DatagramSendBlocked)
+	addDuration := func(dst *time.Duration, now, before time.Duration) {
+		*dst += time.Duration(monotonicDelta(uint64(now), uint64(before)))
+	}
+	addDuration(&t.DatagramBlockedDuration, current.DatagramSendBlockedDuration, previous.DatagramSendBlockedDuration)
+	add(&t.DatagramEnqueue, current.DatagramSendEnqueue, previous.DatagramSendEnqueue)
+	add(&t.DatagramDequeue, current.DatagramSendDequeue, previous.DatagramSendDequeue)
+	add(&t.DatagramEnqueueBytes, current.DatagramSendEnqueueBytes, previous.DatagramSendEnqueueBytes)
+	add(&t.DatagramDequeueBytes, current.DatagramSendDequeueBytes, previous.DatagramSendDequeueBytes)
+	addDuration(&t.DatagramNonEmptyDuration, current.DatagramQueueNonEmptyDuration, previous.DatagramQueueNonEmptyDuration)
+	add(&t.SendQueueHardBlocks, current.SendQueueHardBlocks, previous.SendQueueHardBlocks)
+	addDuration(&t.SendQueueHardBlockedDuration, current.SendQueueHardBlockedDuration, previous.SendQueueHardBlockedDuration)
+	add(&t.SendQueueEnqueue, current.SendQueueEnqueue, previous.SendQueueEnqueue)
+	add(&t.SendQueueDequeue, current.SendQueueDequeue, previous.SendQueueDequeue)
+	add(&t.SendQueueEnqueueBytes, current.SendQueueEnqueueBytes, previous.SendQueueEnqueueBytes)
+	add(&t.SendQueueDequeueBytes, current.SendQueueDequeueBytes, previous.SendQueueDequeueBytes)
+	add(&t.UDPWrites, current.UDPWrites, previous.UDPWrites)
+	add(&t.UDPWireBytes, current.UDPWireBytes, previous.UDPWireBytes)
+	add(&t.GSOBytes, current.GSOBytes, previous.GSOBytes)
+	add(&t.GSOWrites, current.GSOWrites, previous.GSOWrites)
+	add(&t.NonGSOWrites, current.NonGSOWrites, previous.NonGSOWrites)
+	add(&t.GSOSegments, current.GSOSegments, previous.GSOSegments)
+	for i := range t.SegmentsPerWriteBuckets {
+		add(&t.SegmentsPerWriteBuckets[i], current.SegmentsPerWriteBuckets[i], previous.SegmentsPerWriteBuckets[i])
+	}
+	add(&t.PacketsPacked, current.PacketsPacked, previous.PacketsPacked)
+	add(&t.PackedBytes, current.PackedBytes, previous.PackedBytes)
+	add(&t.PacingWakeups, current.PacingWakeups, previous.PacingWakeups)
+	add(&t.SendScheduleRequests, current.SendScheduleRequests, previous.SendScheduleRequests)
+	add(&t.SendScheduleCoalesced, current.SendScheduleCoalesced, previous.SendScheduleCoalesced)
+	add(&t.SchedulerTurns, current.SchedulerTurns, previous.SchedulerTurns)
+	add(&t.TXTurns, current.TXTurns, previous.TXTurns)
+	add(&t.TXPackets, current.TXPackets, previous.TXPackets)
+	add(&t.TXBytes, current.TXBytes, previous.TXBytes)
+	add(&t.RXTurns, current.RXTurns, previous.RXTurns)
+	add(&t.RXPackets, current.RXPackets, previous.RXPackets)
+	add(&t.TXTurnEndedDueToRXPending, current.TXTurnEndedDueToRXPending, previous.TXTurnEndedDueToRXPending)
+	add(&t.YieldPacing, current.YieldPacing, previous.YieldPacing)
+	add(&t.YieldCwnd, current.YieldCwnd, previous.YieldCwnd)
+	add(&t.YieldSendQueue, current.YieldSendQueue, previous.YieldSendQueue)
+	add(&t.YieldNoData, current.YieldNoData, previous.YieldNoData)
+	add(&t.YieldPTO, current.YieldPTO, previous.YieldPTO)
+	add(&t.YieldOther, current.YieldOther, previous.YieldOther)
+	add(&t.ReceivedPacketQueueDrops, current.ReceivedPacketQueueDrops, previous.ReceivedPacketQueueDrops)
+	add(&t.QUICPacketsReceived, current.ReceivedPackets, previous.ReceivedPackets)
+	add(&t.QUICBytesReceived, current.ReceivedBytes, previous.ReceivedBytes)
+	add(&t.ReceivedDatagramQueueDrops, current.ReceivedDatagramQueueDrops, previous.ReceivedDatagramQueueDrops)
+	m.runtimeByGeneration[generation] = current
+}
+
+func (m *Manager) observeSessionRuntimeStatsLocked(s *Session) {
+	provider, ok := s.Conn.(interface{ RuntimeStats() quic.RuntimeStats })
+	if !ok {
+		return
+	}
+	m.observeRuntimeStatsLocked(s.Generation, provider.RuntimeStats())
+}
+
+func (m *Manager) forgetRuntimeGenerationLocked(generation uint64) {
+	m.runtimeStatsMu.Lock()
+	delete(m.runtimeByGeneration, generation)
+	m.runtimeStatsMu.Unlock()
+}
+
+func monotonicDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return current
+	}
+	return current - previous
+}
+
+func applyRuntimeCounterTotals(out *AggregateRuntimeStats, t AggregateRuntimeStats) {
+	out.PacketsLost, out.BytesLost, out.SpuriousLosses = t.PacketsLost, t.BytesLost, t.SpuriousLosses
+	out.DatagramBlocked, out.DatagramBlockedDuration = t.DatagramBlocked, t.DatagramBlockedDuration
+	out.DatagramEnqueue, out.DatagramDequeue = t.DatagramEnqueue, t.DatagramDequeue
+	out.DatagramEnqueueBytes, out.DatagramDequeueBytes = t.DatagramEnqueueBytes, t.DatagramDequeueBytes
+	out.DatagramNonEmptyDuration = t.DatagramNonEmptyDuration
+	out.SendQueueHardBlocks, out.SendQueueHardBlockedDuration = t.SendQueueHardBlocks, t.SendQueueHardBlockedDuration
+	out.SendQueueEnqueue, out.SendQueueDequeue = t.SendQueueEnqueue, t.SendQueueDequeue
+	out.SendQueueEnqueueBytes, out.SendQueueDequeueBytes = t.SendQueueEnqueueBytes, t.SendQueueDequeueBytes
+	out.UDPWrites, out.UDPWireBytes, out.GSOBytes = t.UDPWrites, t.UDPWireBytes, t.GSOBytes
+	out.GSOWrites, out.NonGSOWrites, out.GSOSegments = t.GSOWrites, t.NonGSOWrites, t.GSOSegments
+	out.SegmentsPerWriteBuckets = t.SegmentsPerWriteBuckets
+	out.PacketsPacked, out.PackedBytes, out.PacingWakeups = t.PacketsPacked, t.PackedBytes, t.PacingWakeups
+	out.SendScheduleRequests, out.SendScheduleCoalesced = t.SendScheduleRequests, t.SendScheduleCoalesced
+	out.SchedulerTurns, out.TXTurns = t.SchedulerTurns, t.TXTurns
+	out.TXPackets, out.TXBytes, out.RXTurns, out.RXPackets = t.TXPackets, t.TXBytes, t.RXTurns, t.RXPackets
+	out.TXTurnEndedDueToRXPending = t.TXTurnEndedDueToRXPending
+	out.YieldPacing, out.YieldCwnd, out.YieldSendQueue = t.YieldPacing, t.YieldCwnd, t.YieldSendQueue
+	out.YieldNoData, out.YieldPTO, out.YieldOther = t.YieldNoData, t.YieldPTO, t.YieldOther
+	out.ReceivedPacketQueueDrops = t.ReceivedPacketQueueDrops
+	out.QUICPacketsReceived, out.QUICBytesReceived = t.QUICPacketsReceived, t.QUICBytesReceived
+	out.ReceivedDatagramQueueDrops = t.ReceivedDatagramQueueDrops
 }
 
 func (m *Manager) CloseCleanup() {
