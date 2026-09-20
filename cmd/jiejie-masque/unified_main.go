@@ -22,10 +22,16 @@ type modeEnvelope struct {
 
 var version = "dev"
 var commit = "unknown"
+var connectIPGoCommit = "unknown"
+var quicGoCommit = "unknown"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
+		if len(os.Args) > 2 && os.Args[2] == "--verbose" {
+			fmt.Printf("jiejie-masque %s\nmain_commit=%s\nconnect_ip_go_commit=%s\nquic_go_commit=%s\n", version, commit, connectIPGoCommit, quicGoCommit)
+		} else {
+			fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
+		}
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "version" {

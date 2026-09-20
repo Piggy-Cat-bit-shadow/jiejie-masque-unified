@@ -4,7 +4,7 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `bc10ff1536061eeabfbb92aae28c4fae35377e7c`
+- Pinned commit: `6c7a489285b356485c2392a4622403a8f2002fde`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the pinned fork: owned DATAGRAM buffers, nonblocking and
@@ -13,6 +13,9 @@
 - Transport runtime snapshots include aggregate UDP write/GSO syscall counts
   and bounded segments-per-write percentiles; no packet-level telemetry is
   emitted.
+- Short application packets use a dynamic legal UDP GSO segment size; one-packet
+  batches are emitted as ordinary UDP writes. 1-RTT retransmission work is
+  included in application-limited state tracking.
 - Sync baseline: the fork's existing MetaCubeX v0.62-compatible line, including
   the local DATAGRAM ownership and early-datagram lifecycle patches.
 - Adopted upstream runtime fix: `fcb5bedb` (`CONNECTION_CLOSE` packet sizing
@@ -37,7 +40,7 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `77de33ac2d6918569470eefb1cf7dd3e3fbaa77f`
+- Pinned commit: `a3ff5f6ca9ce6208ffa9fd1b3c77655b6a75b60d`
 - License: MIT
 - Used interfaces: owned packet-buffer send and prefix-accepting batch send,
   borrowed packet-buffer receive, bounded DATAGRAM ownership, and CONNECT-IP

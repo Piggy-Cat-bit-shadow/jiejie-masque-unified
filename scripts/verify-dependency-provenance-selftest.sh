@@ -21,6 +21,13 @@ current connect-ip-go version: v0.0.0-20260906041020-e645a82498ea
 current quic-go replacement version: v0.61.1-0.20260906040817-b6c72f4e72ef
 historical quic-go SHA: 6d5c3eafe61b
 EOF
+  cat > "$root/docs/FORKS.md" <<'EOF'
+## quic-go
+- Pinned commit: `b6c72f4e72ef0000000000000000000000000000`
+
+## connect-ip-go
+- Pinned commit: `e645a82498ea0000000000000000000000000000`
+EOF
 }
 
 write_docs

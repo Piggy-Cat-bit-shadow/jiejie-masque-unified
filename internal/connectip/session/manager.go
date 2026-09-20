@@ -95,6 +95,15 @@ type AggregateRuntimeStats struct {
 	PacketsLost                  uint64
 	BytesLost                    uint64
 	SpuriousLosses               uint64
+	LossEvents                   uint64
+	LossByPacketThreshold        uint64
+	LossByTimeThreshold          uint64
+	SpuriousAfterPacketThreshold uint64
+	SpuriousAfterTimeThreshold   uint64
+	CwndCutbacks                 uint64
+	RecoveryDuration             time.Duration
+	AdaptivePacketThreshold      uint64
+	AdaptiveTimeThreshold        time.Duration
 	MaxPacketReordering          uint64
 	MaxTimeReordering            time.Duration
 	DatagramQueueDepth           uint64
@@ -120,6 +129,20 @@ type AggregateRuntimeStats struct {
 	GSOWrites                    uint64
 	NonGSOWrites                 uint64
 	GSOSegments                  uint64
+	GSOAttempts                  uint64
+	SingleSegmentGSOAttempts     uint64
+	GSOBatchBreakShortPacket     uint64
+	GSOBatchBreakPacing          uint64
+	GSOBatchBreakCwnd            uint64
+	GSOBatchBreakECN             uint64
+	GSOBatchBreakTXTurn          uint64
+	GSOBatchBreakBufferCapacity  uint64
+	GSOBatchBreakNoData          uint64
+	GSOBatchBreakSendQueue       uint64
+	FullPMTUPackets              uint64
+	ShortPackets                 uint64
+	CandidateGSOBatchPackets     uint64
+	PackedPacketSizeBuckets      [8]uint64
 	SegmentsPerWriteBuckets      [65]uint64
 	PacketsPacked                uint64
 	PackedBytes                  uint64
@@ -809,6 +832,15 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.PacketsLost += stats.PacketsLost
 		out.BytesLost += stats.BytesLost
 		out.SpuriousLosses += stats.SpuriousLosses
+		out.LossEvents += stats.LossEvents
+		out.LossByPacketThreshold += stats.LossByPacketThreshold
+		out.LossByTimeThreshold += stats.LossByTimeThreshold
+		out.SpuriousAfterPacketThreshold += stats.SpuriousAfterPacketThreshold
+		out.SpuriousAfterTimeThreshold += stats.SpuriousAfterTimeThreshold
+		out.CwndCutbacks += stats.CwndCutbacks
+		out.RecoveryDuration += stats.RecoveryDuration
+		out.AdaptivePacketThreshold = max(out.AdaptivePacketThreshold, stats.AdaptivePacketThreshold)
+		out.AdaptiveTimeThreshold = max(out.AdaptiveTimeThreshold, stats.AdaptiveTimeThreshold)
 		out.MaxPacketReordering = max(out.MaxPacketReordering, stats.MaxPacketReordering)
 		out.MaxTimeReordering = max(out.MaxTimeReordering, stats.MaxTimeReordering)
 		out.DatagramQueueDepth += stats.DatagramSendQueueDepth
@@ -834,6 +866,22 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		out.GSOWrites += stats.GSOWrites
 		out.NonGSOWrites += stats.NonGSOWrites
 		out.GSOSegments += stats.GSOSegments
+		out.GSOAttempts += stats.GSOAttempts
+		out.SingleSegmentGSOAttempts += stats.SingleSegmentGSOAttempts
+		out.GSOBatchBreakShortPacket += stats.GSOBatchBreakShortPacket
+		out.GSOBatchBreakPacing += stats.GSOBatchBreakPacing
+		out.GSOBatchBreakCwnd += stats.GSOBatchBreakCwnd
+		out.GSOBatchBreakECN += stats.GSOBatchBreakECN
+		out.GSOBatchBreakTXTurn += stats.GSOBatchBreakTXTurn
+		out.GSOBatchBreakBufferCapacity += stats.GSOBatchBreakBufferCapacity
+		out.GSOBatchBreakNoData += stats.GSOBatchBreakNoData
+		out.GSOBatchBreakSendQueue += stats.GSOBatchBreakSendQueue
+		out.FullPMTUPackets += stats.FullPMTUPackets
+		out.ShortPackets += stats.ShortPackets
+		out.CandidateGSOBatchPackets += stats.CandidateGSOBatchPackets
+		for i, count := range stats.PackedPacketSizeBuckets {
+			out.PackedPacketSizeBuckets[i] += count
+		}
 		for i, count := range stats.SegmentsPerWriteBuckets {
 			out.SegmentsPerWriteBuckets[i] += count
 		}
@@ -900,11 +948,18 @@ func (m *Manager) observeRuntimeStatsLocked(generation uint64, current quic.Runt
 	add(&t.PacketsLost, current.PacketsLost, previous.PacketsLost)
 	add(&t.BytesLost, current.BytesLost, previous.BytesLost)
 	add(&t.SpuriousLosses, current.SpuriousLosses, previous.SpuriousLosses)
+	add(&t.LossEvents, current.LossEvents, previous.LossEvents)
+	add(&t.LossByPacketThreshold, current.LossByPacketThreshold, previous.LossByPacketThreshold)
+	add(&t.LossByTimeThreshold, current.LossByTimeThreshold, previous.LossByTimeThreshold)
+	add(&t.SpuriousAfterPacketThreshold, current.SpuriousAfterPacketThreshold, previous.SpuriousAfterPacketThreshold)
+	add(&t.SpuriousAfterTimeThreshold, current.SpuriousAfterTimeThreshold, previous.SpuriousAfterTimeThreshold)
+	add(&t.CwndCutbacks, current.CwndCutbacks, previous.CwndCutbacks)
 	add(&t.DatagramBlocked, current.DatagramSendBlocked, previous.DatagramSendBlocked)
 	addDuration := func(dst *time.Duration, now, before time.Duration) {
 		*dst += time.Duration(monotonicDelta(uint64(now), uint64(before)))
 	}
 	addDuration(&t.DatagramBlockedDuration, current.DatagramSendBlockedDuration, previous.DatagramSendBlockedDuration)
+	addDuration(&t.RecoveryDuration, current.RecoveryDuration, previous.RecoveryDuration)
 	add(&t.DatagramEnqueue, current.DatagramSendEnqueue, previous.DatagramSendEnqueue)
 	add(&t.DatagramDequeue, current.DatagramSendDequeue, previous.DatagramSendDequeue)
 	add(&t.DatagramEnqueueBytes, current.DatagramSendEnqueueBytes, previous.DatagramSendEnqueueBytes)
@@ -922,6 +977,22 @@ func (m *Manager) observeRuntimeStatsLocked(generation uint64, current quic.Runt
 	add(&t.GSOWrites, current.GSOWrites, previous.GSOWrites)
 	add(&t.NonGSOWrites, current.NonGSOWrites, previous.NonGSOWrites)
 	add(&t.GSOSegments, current.GSOSegments, previous.GSOSegments)
+	add(&t.GSOAttempts, current.GSOAttempts, previous.GSOAttempts)
+	add(&t.SingleSegmentGSOAttempts, current.SingleSegmentGSOAttempts, previous.SingleSegmentGSOAttempts)
+	add(&t.GSOBatchBreakShortPacket, current.GSOBatchBreakShortPacket, previous.GSOBatchBreakShortPacket)
+	add(&t.GSOBatchBreakPacing, current.GSOBatchBreakPacing, previous.GSOBatchBreakPacing)
+	add(&t.GSOBatchBreakCwnd, current.GSOBatchBreakCwnd, previous.GSOBatchBreakCwnd)
+	add(&t.GSOBatchBreakECN, current.GSOBatchBreakECN, previous.GSOBatchBreakECN)
+	add(&t.GSOBatchBreakTXTurn, current.GSOBatchBreakTXTurn, previous.GSOBatchBreakTXTurn)
+	add(&t.GSOBatchBreakBufferCapacity, current.GSOBatchBreakBufferCapacity, previous.GSOBatchBreakBufferCapacity)
+	add(&t.GSOBatchBreakNoData, current.GSOBatchBreakNoData, previous.GSOBatchBreakNoData)
+	add(&t.GSOBatchBreakSendQueue, current.GSOBatchBreakSendQueue, previous.GSOBatchBreakSendQueue)
+	add(&t.FullPMTUPackets, current.FullPMTUPackets, previous.FullPMTUPackets)
+	add(&t.ShortPackets, current.ShortPackets, previous.ShortPackets)
+	add(&t.CandidateGSOBatchPackets, current.CandidateGSOBatchPackets, previous.CandidateGSOBatchPackets)
+	for i := range t.PackedPacketSizeBuckets {
+		add(&t.PackedPacketSizeBuckets[i], current.PackedPacketSizeBuckets[i], previous.PackedPacketSizeBuckets[i])
+	}
 	for i := range t.SegmentsPerWriteBuckets {
 		add(&t.SegmentsPerWriteBuckets[i], current.SegmentsPerWriteBuckets[i], previous.SegmentsPerWriteBuckets[i])
 	}
@@ -973,6 +1044,9 @@ func monotonicDelta(current, previous uint64) uint64 {
 
 func applyRuntimeCounterTotals(out *AggregateRuntimeStats, t AggregateRuntimeStats) {
 	out.PacketsLost, out.BytesLost, out.SpuriousLosses = t.PacketsLost, t.BytesLost, t.SpuriousLosses
+	out.LossEvents, out.LossByPacketThreshold, out.LossByTimeThreshold = t.LossEvents, t.LossByPacketThreshold, t.LossByTimeThreshold
+	out.SpuriousAfterPacketThreshold, out.SpuriousAfterTimeThreshold = t.SpuriousAfterPacketThreshold, t.SpuriousAfterTimeThreshold
+	out.CwndCutbacks, out.RecoveryDuration = t.CwndCutbacks, t.RecoveryDuration
 	out.DatagramBlocked, out.DatagramBlockedDuration = t.DatagramBlocked, t.DatagramBlockedDuration
 	out.DatagramEnqueue, out.DatagramDequeue = t.DatagramEnqueue, t.DatagramDequeue
 	out.DatagramEnqueueBytes, out.DatagramDequeueBytes = t.DatagramEnqueueBytes, t.DatagramDequeueBytes
@@ -982,6 +1056,18 @@ func applyRuntimeCounterTotals(out *AggregateRuntimeStats, t AggregateRuntimeSta
 	out.SendQueueEnqueueBytes, out.SendQueueDequeueBytes = t.SendQueueEnqueueBytes, t.SendQueueDequeueBytes
 	out.UDPWrites, out.UDPWireBytes, out.GSOBytes = t.UDPWrites, t.UDPWireBytes, t.GSOBytes
 	out.GSOWrites, out.NonGSOWrites, out.GSOSegments = t.GSOWrites, t.NonGSOWrites, t.GSOSegments
+	out.GSOAttempts, out.SingleSegmentGSOAttempts = t.GSOAttempts, t.SingleSegmentGSOAttempts
+	out.GSOBatchBreakShortPacket = t.GSOBatchBreakShortPacket
+	out.GSOBatchBreakPacing = t.GSOBatchBreakPacing
+	out.GSOBatchBreakCwnd = t.GSOBatchBreakCwnd
+	out.GSOBatchBreakECN = t.GSOBatchBreakECN
+	out.GSOBatchBreakTXTurn = t.GSOBatchBreakTXTurn
+	out.GSOBatchBreakBufferCapacity = t.GSOBatchBreakBufferCapacity
+	out.GSOBatchBreakNoData = t.GSOBatchBreakNoData
+	out.GSOBatchBreakSendQueue = t.GSOBatchBreakSendQueue
+	out.FullPMTUPackets, out.ShortPackets = t.FullPMTUPackets, t.ShortPackets
+	out.CandidateGSOBatchPackets = t.CandidateGSOBatchPackets
+	out.PackedPacketSizeBuckets = t.PackedPacketSizeBuckets
 	out.SegmentsPerWriteBuckets = t.SegmentsPerWriteBuckets
 	out.PacketsPacked, out.PackedBytes, out.PacingWakeups = t.PacketsPacked, t.PackedBytes, t.PacingWakeups
 	out.SendScheduleRequests, out.SendScheduleCoalesced = t.SendScheduleRequests, t.SendScheduleCoalesced

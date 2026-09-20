@@ -80,11 +80,15 @@ func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
 	m := NewManager()
 	a := New(netip.MustParseAddr("10.200.0.4"), "a", &runtimeStatsConn{stats: quic.RuntimeStats{
 		CongestionController: "cubic", CongestionState: "Open", CongestionWindow: 10,
+		LossEvents: 3, LossByPacketThreshold: 2, SpuriousAfterPacketThreshold: 1,
+		CwndCutbacks: 2, RecoveryDuration: 7 * time.Millisecond, AdaptivePacketThreshold: 6,
 		MinRTT: 20 * time.Millisecond, LatestRTT: 40 * time.Millisecond,
 		SmoothedRTT: 30 * time.Millisecond, CurrentPMTU: 1350,
 	}}, nil)
 	b := New(netip.MustParseAddr("10.200.0.5"), "b", &runtimeStatsConn{stats: quic.RuntimeStats{
 		CongestionController: "cubic", CongestionState: "Recovery", CongestionWindow: 20,
+		LossEvents: 4, LossByTimeThreshold: 3, SpuriousAfterTimeThreshold: 1,
+		CwndCutbacks: 1, RecoveryDuration: 11 * time.Millisecond, AdaptivePacketThreshold: 8,
 		MinRTT: 10 * time.Millisecond, LatestRTT: 50 * time.Millisecond,
 		SmoothedRTT: 35 * time.Millisecond, CurrentPMTU: 1280,
 	}}, nil)
@@ -97,26 +101,31 @@ func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
 	if stats.CongestionWindows != 30 || stats.MinRTT != 10*time.Millisecond || stats.LatestRTT != 50*time.Millisecond || stats.SmoothedRTT != 35*time.Millisecond || stats.CurrentPMTU != 1280 {
 		t.Fatalf("aggregate metrics = %+v", stats)
 	}
+	if stats.LossEvents != 7 || stats.LossByPacketThreshold != 2 || stats.LossByTimeThreshold != 3 || stats.SpuriousAfterPacketThreshold != 1 || stats.SpuriousAfterTimeThreshold != 1 || stats.CwndCutbacks != 3 || stats.RecoveryDuration != 18*time.Millisecond || stats.AdaptivePacketThreshold != 8 {
+		t.Fatalf("aggregate loss recovery telemetry = %+v", stats)
+	}
 	a.Close()
 	b.Close()
 }
 
 func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T) {
 	m := NewManager()
-	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20}}
+	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20, GSOBatchBreakShortPacket: 4, PackedPacketSizeBuckets: [8]uint64{0, 2}}}
 	a := New(netip.MustParseAddr("10.200.0.20"), "a", aConn, func(s *Session) { m.RemoveIfCurrent(s) })
 	m.Replace(a)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 {
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 || got.GSOBatchBreakShortPacket != 4 || got.PackedPacketSizeBuckets[1] != 2 {
 		t.Fatalf("initial cumulative counters = %+v", got)
 	}
 
 	aConn.stats.PacketsPacked = 110
 	aConn.stats.UDPWrites = 11
 	aConn.stats.ReceivedPackets = 22
+	aConn.stats.GSOBatchBreakShortPacket = 7
+	aConn.stats.PackedPacketSizeBuckets[1] = 5
 	bConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 7, UDPWrites: 2, ReceivedPackets: 3}}
 	b := New(netip.MustParseAddr("10.200.0.21"), "b", bConn, func(s *Session) { m.RemoveIfCurrent(s) })
 	m.Replace(b)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 {
+	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 || got.GSOBatchBreakShortPacket != 7 || got.PackedPacketSizeBuckets[1] != 5 {
 		t.Fatalf("cumulative counters after join = %+v", got)
 	}
 

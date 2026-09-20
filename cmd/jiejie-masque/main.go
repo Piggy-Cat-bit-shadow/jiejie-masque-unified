@@ -37,6 +37,14 @@ import (
 
 var lastQueueOverflowLog atomic.Int64
 var connectIPPipeline atomic.Pointer[diagnostics.Probe]
+var datagramWriterTelemetry struct {
+	tryCalls atomic.Uint64
+	partial  atomic.Uint64
+	zero     atomic.Uint64
+	waits    atomic.Uint64
+	waitNS   atomic.Uint64
+	canceled atomic.Uint64
+}
 
 func runConnectIPLegacy() {
 	if err := serveConnectIP(); err != nil {
@@ -291,6 +299,12 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 				snapshot.Timestamp = now.UTC().Format(time.RFC3339Nano)
 				previous, previousAt = next, now
 				runtimeStats := mgr.AggregateRuntimeStats()
+				intervalSegmentBuckets := counterBucketDelta(runtimeStats.SegmentsPerWriteBuckets, previousRuntime.SegmentsPerWriteBuckets)
+				packetSizeDelta := counterBucketDelta8(runtimeStats.PackedPacketSizeBuckets, previousRuntime.PackedPacketSizeBuckets)
+				if baseline {
+					intervalSegmentBuckets = [65]uint64{}
+					packetSizeDelta = [8]uint64{}
+				}
 				setRuntimeStage(&snapshot, diagnostics.QUICDatagramEnqueue, runtimeStats.DatagramEnqueueBytes, runtimeStats.DatagramEnqueue, counterDelta(runtimeStats.DatagramEnqueueBytes, previousRuntime.DatagramEnqueueBytes), counterDelta(runtimeStats.DatagramEnqueue, previousRuntime.DatagramEnqueue), elapsed)
 				setRuntimeStage(&snapshot, diagnostics.QUICDatagramDequeue, runtimeStats.DatagramDequeueBytes, runtimeStats.DatagramDequeue, counterDelta(runtimeStats.DatagramDequeueBytes, previousRuntime.DatagramDequeueBytes), counterDelta(runtimeStats.DatagramDequeue, previousRuntime.DatagramDequeue), elapsed)
 				setRuntimeStage(&snapshot, diagnostics.QUICPacketReceived, runtimeStats.QUICBytesReceived, runtimeStats.QUICPacketsReceived, counterDelta(runtimeStats.QUICBytesReceived, previousRuntime.QUICBytesReceived), counterDelta(runtimeStats.QUICPacketsReceived, previousRuntime.QUICPacketsReceived), elapsed)
@@ -309,12 +323,23 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 				snapshot.RefreshGaps()
 				queueStats := mgr.AggregateQueueStats()
 				tunStats := tun.Stats()
+				writerStats := diagnostics.DATAGRAMWriterStats{
+					TryCalls: datagramWriterTelemetry.tryCalls.Load(), PartialAccepts: datagramWriterTelemetry.partial.Load(),
+					ZeroAccepts: datagramWriterTelemetry.zero.Load(), WritableWaits: datagramWriterTelemetry.waits.Load(),
+					WritableWaitNS: datagramWriterTelemetry.waitNS.Load(), Cancelled: datagramWriterTelemetry.canceled.Load(),
+				}
 				snapshot.Runtime = diagnostics.RuntimeStats{
+					DATAGRAMWriter: writerStats,
 					QUIC: diagnostics.QUICStats{
 						Connections: runtimeStats.Connections, CC: runtimeStats.CongestionController, CCState: runtimeStats.CongestionState,
 						CWNDBytes: runtimeStats.CongestionWindows, BytesInFlight: runtimeStats.BytesInFlight,
 						PacingBytesPerSecond: runtimeStats.PacingRate, PacketsLost: runtimeStats.PacketsLost,
 						BytesLost: runtimeStats.BytesLost, SpuriousLosses: runtimeStats.SpuriousLosses,
+						LossEvents: runtimeStats.LossEvents, LossByPacket: runtimeStats.LossByPacketThreshold,
+						LossByTime: runtimeStats.LossByTimeThreshold, SpuriousPacket: runtimeStats.SpuriousAfterPacketThreshold,
+						SpuriousTime: runtimeStats.SpuriousAfterTimeThreshold, CwndCutbacks: runtimeStats.CwndCutbacks,
+						RecoveryDuration: runtimeStats.RecoveryDuration.String(), AdaptivePacket: runtimeStats.AdaptivePacketThreshold,
+						AdaptiveTime:        runtimeStats.AdaptiveTimeThreshold.String(),
 						MaxPacketReordering: runtimeStats.MaxPacketReordering, PacketsReceived: runtimeStats.QUICPacketsReceived,
 						BytesReceived: runtimeStats.QUICBytesReceived, MaxTimeReordering: runtimeStats.MaxTimeReordering.String(),
 						MinRTT: runtimeStats.MinRTT.String(), LatestRTT: runtimeStats.LatestRTT.String(),
@@ -339,17 +364,40 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 						YieldOther:                schedulerCounter(runtimeStats.YieldOther, previousRuntime.YieldOther, baseline),
 					},
 					GSO: diagnostics.GSOStats{
-						UDPWrites:           schedulerCounter(runtimeStats.UDPWrites, previousRuntime.UDPWrites, baseline),
-						GSOWrites:           schedulerCounter(runtimeStats.GSOWrites, previousRuntime.GSOWrites, baseline),
-						NonGSOWrites:        schedulerCounter(runtimeStats.NonGSOWrites, previousRuntime.NonGSOWrites, baseline),
-						GSOSegments:         schedulerCounter(runtimeStats.GSOSegments, previousRuntime.GSOSegments, baseline),
-						SegmentsPerWrite:    segmentsPerWriteAverage(runtimeStats.SegmentsPerWriteBuckets),
-						SegmentsP50:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 50),
-						SegmentsP90:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 90),
-						SegmentsP99:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 99),
-						SegmentsMax:         segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 100),
-						BytesPerWrite:       average(runtimeStats.UDPWireBytes, runtimeStats.UDPWrites),
-						QUICPacketsPerWrite: ratio(runtimeStats.PacketsPacked, runtimeStats.UDPWrites),
+						UDPWrites:                schedulerCounter(runtimeStats.UDPWrites, previousRuntime.UDPWrites, baseline),
+						GSOWrites:                schedulerCounter(runtimeStats.GSOWrites, previousRuntime.GSOWrites, baseline),
+						NonGSOWrites:             schedulerCounter(runtimeStats.NonGSOWrites, previousRuntime.NonGSOWrites, baseline),
+						GSOSegments:              schedulerCounter(runtimeStats.GSOSegments, previousRuntime.GSOSegments, baseline),
+						GSOAttempts:              schedulerCounter(runtimeStats.GSOAttempts, previousRuntime.GSOAttempts, baseline),
+						SingleSegment:            schedulerCounter(runtimeStats.SingleSegmentGSOAttempts, previousRuntime.SingleSegmentGSOAttempts, baseline),
+						SegmentsPerWrite:         segmentsPerWriteAverage(runtimeStats.SegmentsPerWriteBuckets),
+						SegmentsP50:              segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 50),
+						SegmentsP90:              segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 90),
+						SegmentsP99:              segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 99),
+						SegmentsMax:              segmentWritePercentile(runtimeStats.SegmentsPerWriteBuckets, 100),
+						BytesPerWrite:            average(runtimeStats.UDPWireBytes, runtimeStats.UDPWrites),
+						QUICPacketsPerWrite:      ratio(runtimeStats.PacketsPacked, runtimeStats.UDPWrites),
+						IntervalBytesPerWrite:    average(intervalCounter(runtimeStats.UDPWireBytes, previousRuntime.UDPWireBytes, baseline), intervalCounter(runtimeStats.UDPWrites, previousRuntime.UDPWrites, baseline)),
+						IntervalSegmentsPerWrite: segmentsPerWriteAverage(intervalSegmentBuckets),
+						IntervalSegmentsP50:      segmentWritePercentile(intervalSegmentBuckets, 50),
+						IntervalSegmentsP90:      segmentWritePercentile(intervalSegmentBuckets, 90),
+						IntervalSegmentsP99:      segmentWritePercentile(intervalSegmentBuckets, 99),
+						IntervalSegmentsMax:      segmentWritePercentile(intervalSegmentBuckets, 100),
+						IntervalSegmentsBuckets:  intervalSegmentBuckets,
+						FullPMTUPackets:          schedulerCounter(runtimeStats.FullPMTUPackets, previousRuntime.FullPMTUPackets, baseline),
+						ShortPackets:             schedulerCounter(runtimeStats.ShortPackets, previousRuntime.ShortPackets, baseline),
+						CandidatePackets:         schedulerCounter(runtimeStats.CandidateGSOBatchPackets, previousRuntime.CandidateGSOBatchPackets, baseline),
+						BatchBreakShortPacket:    schedulerCounter(runtimeStats.GSOBatchBreakShortPacket, previousRuntime.GSOBatchBreakShortPacket, baseline),
+						BatchBreakPacing:         schedulerCounter(runtimeStats.GSOBatchBreakPacing, previousRuntime.GSOBatchBreakPacing, baseline),
+						BatchBreakCWND:           schedulerCounter(runtimeStats.GSOBatchBreakCwnd, previousRuntime.GSOBatchBreakCwnd, baseline),
+						BatchBreakECN:            schedulerCounter(runtimeStats.GSOBatchBreakECN, previousRuntime.GSOBatchBreakECN, baseline),
+						BatchBreakTXTurn:         schedulerCounter(runtimeStats.GSOBatchBreakTXTurn, previousRuntime.GSOBatchBreakTXTurn, baseline),
+						BatchBreakBufferCapacity: schedulerCounter(runtimeStats.GSOBatchBreakBufferCapacity, previousRuntime.GSOBatchBreakBufferCapacity, baseline),
+						BatchBreakNoData:         schedulerCounter(runtimeStats.GSOBatchBreakNoData, previousRuntime.GSOBatchBreakNoData, baseline),
+						BatchBreakSendQueue:      schedulerCounter(runtimeStats.GSOBatchBreakSendQueue, previousRuntime.GSOBatchBreakSendQueue, baseline),
+						PacketSizeBucketsTotal:   runtimeStats.PackedPacketSizeBuckets,
+						PacketSizeBucketsDelta:   packetSizeDelta,
+						PacketSizeBucketRanges:   [8]string{"<=256", "257-512", "513-768", "769-1024", "1025-1200", "1201-1280", "1281-1400", "1401+"},
 					},
 					Queues: diagnostics.QueueStats{
 						Session: diagnostics.SessionQueueStats{Sessions: queueStats.Sessions, Capacity: queueStats.Capacity,
@@ -379,9 +427,14 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			q := mgr.AggregateQueueStats()
 			qs := mgr.AggregateRuntimeStats()
 			t := tun.Stats()
+			writerStats := diagnostics.DATAGRAMWriterStats{
+				TryCalls: datagramWriterTelemetry.tryCalls.Load(), PartialAccepts: datagramWriterTelemetry.partial.Load(),
+				ZeroAccepts: datagramWriterTelemetry.zero.Load(), WritableWaits: datagramWriterTelemetry.waits.Load(),
+				WritableWaitNS: datagramWriterTelemetry.waitNS.Load(), Cancelled: datagramWriterTelemetry.canceled.Load(),
+			}
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d nonempty=%s blocked=%d/%s send_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d hard_block=%d/%s packed=%d/%dB pacing_wakeups=%d udp_writes=%d udp_wire_bytes=%d gso_bytes=%d gso_writes=%d non_gso_writes=%d gso_segments=%d segments_per_write=%.2f/%d/%d/%d/%d rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramEnqueue, qs.DatagramDequeue, qs.DatagramEnqueueBytes, qs.DatagramDequeueBytes, qs.DatagramNonEmptyDuration, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueEnqueue, qs.SendQueueDequeue, qs.SendQueueEnqueueBytes, qs.SendQueueDequeueBytes, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.PacketsPacked, qs.PackedBytes, qs.PacingWakeups, qs.UDPWrites, qs.UDPWireBytes, qs.GSOBytes, qs.GSOWrites, qs.NonGSOWrites, qs.GSOSegments, segmentsPerWriteAverage(qs.SegmentsPerWriteBuckets), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 50), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 90), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 99), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 100), qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC)
+			log.Printf("CONNECT-IP dataplane: sessions=%d queue_depth=%d/%d queue_high=%d enqueued=%d dequeued=%d dropped=%d tun_rx=%d/%dB tun_tx=%d/%dB tun_rx_batches=%d packets=%d quic_connections=%d cc=%s cc_state=%s cwnd=%dB in_flight=%dB pacing=%dBps rtt_min=%s rtt_latest=%s rtt_smoothed=%s lost=%d/%dB spurious=%d reorder=%d/%s datagram_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d nonempty=%s blocked=%d/%s send_queue=%d/%d enq=%d deq=%d enq_bytes=%d deq_bytes=%d hard_block=%d/%s packed=%d/%dB pacing_wakeups=%d udp_writes=%d udp_wire_bytes=%d gso_bytes=%d gso_writes=%d non_gso_writes=%d gso_segments=%d segments_per_write=%.2f/%d/%d/%d/%d rx_queue_drops=%d/%d pmtu=%d gso=%d heap=%dB gc=%d loss_events=%d loss_packet=%d loss_time=%d spurious_packet=%d spurious_time=%d cutbacks=%d recovery_duration=%s adaptive_packet_threshold=%d adaptive_time_threshold=%s gso_attempts_delta=%d single_segment_attempts_delta=%d datagram_try_batch_calls=%d datagram_partial_accepts=%d datagram_zero_accepts=%d datagram_writable_waits=%d datagram_writable_wait_ns=%d datagram_writable_cancelled=%d", q.Sessions, q.Depth, q.Capacity, q.HighWater, q.Enqueued, q.Dequeued, q.Dropped, t.RXPackets, t.RXBytes, t.TXPackets, t.TXBytes, t.RXBatches, t.RXBatchPackets, qs.Connections, qs.CongestionController, qs.CongestionState, qs.CongestionWindows, qs.BytesInFlight, qs.PacingRate, qs.MinRTT, qs.LatestRTT, qs.SmoothedRTT, qs.PacketsLost, qs.BytesLost, qs.SpuriousLosses, qs.MaxPacketReordering, qs.MaxTimeReordering, qs.DatagramQueueDepth, qs.DatagramQueueHighWater, qs.DatagramEnqueue, qs.DatagramDequeue, qs.DatagramEnqueueBytes, qs.DatagramDequeueBytes, qs.DatagramNonEmptyDuration, qs.DatagramBlocked, qs.DatagramBlockedDuration, qs.SendQueueDepth, qs.SendQueueHighWater, qs.SendQueueEnqueue, qs.SendQueueDequeue, qs.SendQueueEnqueueBytes, qs.SendQueueDequeueBytes, qs.SendQueueHardBlocks, qs.SendQueueHardBlockedDuration, qs.PacketsPacked, qs.PackedBytes, qs.PacingWakeups, qs.UDPWrites, qs.UDPWireBytes, qs.GSOBytes, qs.GSOWrites, qs.NonGSOWrites, qs.GSOSegments, segmentsPerWriteAverage(qs.SegmentsPerWriteBuckets), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 50), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 90), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 99), segmentWritePercentile(qs.SegmentsPerWriteBuckets, 100), qs.ReceivedPacketQueueDrops, qs.ReceivedDatagramQueueDrops, qs.CurrentPMTU, qs.GSOConnections, mem.HeapAlloc, mem.NumGC, qs.LossEvents, qs.LossByPacketThreshold, qs.LossByTimeThreshold, qs.SpuriousAfterPacketThreshold, qs.SpuriousAfterTimeThreshold, qs.CwndCutbacks, qs.RecoveryDuration, qs.AdaptivePacketThreshold, qs.AdaptiveTimeThreshold, counterDelta(qs.GSOAttempts, previousRuntime.GSOAttempts), counterDelta(qs.SingleSegmentGSOAttempts, previousRuntime.SingleSegmentGSOAttempts), writerStats.TryCalls, writerStats.PartialAccepts, writerStats.ZeroAccepts, writerStats.WritableWaits, writerStats.WritableWaitNS, writerStats.Cancelled)
 		}
 	}
 }
@@ -436,6 +489,29 @@ func segmentsPerWriteAverage(buckets [65]uint64) float64 {
 		return 0
 	}
 	return float64(segments) / float64(writes)
+}
+
+func counterBucketDelta(current, previous [65]uint64) [65]uint64 {
+	var delta [65]uint64
+	for i := range current {
+		delta[i] = counterDelta(current[i], previous[i])
+	}
+	return delta
+}
+
+func counterBucketDelta8(current, previous [8]uint64) [8]uint64 {
+	var delta [8]uint64
+	for i := range current {
+		delta[i] = counterDelta(current[i], previous[i])
+	}
+	return delta
+}
+
+func intervalCounter(current, previous uint64, baseline bool) uint64 {
+	if baseline {
+		return 0
+	}
+	return counterDelta(current, previous)
 }
 
 func segmentWritePercentile(buckets [65]uint64, percentile uint64) uint64 {
@@ -834,7 +910,14 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 		for i, pkt := range pending {
 			items[i] = connectip.OwnedPacketBuffer{Buffer: pkt.Buffer, Offset: session.PacketPoolHeadroom, Length: len(pkt.Data), Owner: pkt}
 		}
+		datagramWriterTelemetry.tryCalls.Add(1)
 		accepted, icmps, err := w.batch.TryWritePacketBuffersOwnedBatch(items)
+		if accepted > 0 && accepted < len(pending) {
+			datagramWriterTelemetry.partial.Add(1)
+		}
+		if accepted == 0 {
+			datagramWriterTelemetry.zero.Add(1)
+		}
 		if accepted < 0 || accepted > len(pending) {
 			releaseSessionPackets(s, pending)
 			s.SetCloseReason("write-error")
@@ -906,6 +989,9 @@ func (w sessionPacketWriter) write(s *session.Session, pkt *session.PacketBuffer
 		noProgressWakeups := 0
 		for {
 			icmp, accepted, err := w.try.TryWritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
+			if !accepted {
+				datagramWriterTelemetry.zero.Add(1)
+			}
 			if err != nil {
 				s.ReleasePacket(pkt)
 				return icmp, err
@@ -944,11 +1030,15 @@ const datagramWritablePollInterval = 10 * time.Millisecond
 // immediate retry loop. Proper generation channels still wake the first wait
 // immediately, preserving the Try-then-Writable lost-wakeup contract.
 func waitDatagramWritable(ctx context.Context, writable <-chan struct{}, noProgressWakeups int) bool {
+	start := time.Now()
+	datagramWriterTelemetry.waits.Add(1)
+	defer func() { datagramWriterTelemetry.waitNS.Add(uint64(time.Since(start))) }()
 	if writable == nil || noProgressWakeups > 0 {
 		timer := time.NewTimer(datagramWritablePollInterval)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
+			datagramWriterTelemetry.canceled.Add(1)
 			return false
 		case <-timer.C:
 			return true
@@ -956,6 +1046,7 @@ func waitDatagramWritable(ctx context.Context, writable <-chan struct{}, noProgr
 	}
 	select {
 	case <-ctx.Done():
+		datagramWriterTelemetry.canceled.Add(1)
 		return false
 	case <-writable:
 		return true

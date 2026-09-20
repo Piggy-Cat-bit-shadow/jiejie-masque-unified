@@ -94,25 +94,58 @@ type DirectionStats struct {
 }
 
 type RuntimeStats struct {
-	QUIC      QUICStats      `json:"quic"`
-	Scheduler SchedulerStats `json:"scheduler"`
-	GSO       GSOStats       `json:"gso"`
-	Queues    QueueStats     `json:"queues"`
-	TUN       TUNStats       `json:"tun"`
+	QUIC           QUICStats           `json:"quic"`
+	Scheduler      SchedulerStats      `json:"scheduler"`
+	GSO            GSOStats            `json:"gso"`
+	Queues         QueueStats          `json:"queues"`
+	DATAGRAMWriter DATAGRAMWriterStats `json:"datagram_writer"`
+	TUN            TUNStats            `json:"tun"`
+}
+
+type DATAGRAMWriterStats struct {
+	TryCalls       uint64 `json:"try_batch_calls"`
+	PartialAccepts uint64 `json:"partial_accepts"`
+	ZeroAccepts    uint64 `json:"zero_accepts"`
+	WritableWaits  uint64 `json:"writable_wait_events"`
+	WritableWaitNS uint64 `json:"writable_wait_duration_ns"`
+	Cancelled      uint64 `json:"writable_cancelled"`
 }
 
 type GSOStats struct {
-	UDPWrites           CounterStats `json:"udp_writes"`
-	GSOWrites           CounterStats `json:"gso_writes"`
-	NonGSOWrites        CounterStats `json:"non_gso_writes"`
-	GSOSegments         CounterStats `json:"gso_segments"`
-	SegmentsPerWrite    float64      `json:"segments_per_write_avg"`
-	SegmentsP50         uint64       `json:"segments_per_write_p50"`
-	SegmentsP90         uint64       `json:"segments_per_write_p90"`
-	SegmentsP99         uint64       `json:"segments_per_write_p99"`
-	SegmentsMax         uint64       `json:"segments_per_write_max"`
-	BytesPerWrite       uint64       `json:"bytes_per_write_avg"`
-	QUICPacketsPerWrite float64      `json:"quic_packets_per_write_avg"`
+	UDPWrites                CounterStats `json:"udp_writes"`
+	GSOWrites                CounterStats `json:"gso_writes"`
+	NonGSOWrites             CounterStats `json:"non_gso_writes"`
+	GSOSegments              CounterStats `json:"gso_segments"`
+	GSOAttempts              CounterStats `json:"gso_attempts"`
+	SingleSegment            CounterStats `json:"single_segment_attempts"`
+	SegmentsPerWrite         float64      `json:"segments_per_write_avg"`
+	SegmentsP50              uint64       `json:"segments_per_write_p50"`
+	SegmentsP90              uint64       `json:"segments_per_write_p90"`
+	SegmentsP99              uint64       `json:"segments_per_write_p99"`
+	SegmentsMax              uint64       `json:"segments_per_write_max"`
+	BytesPerWrite            uint64       `json:"bytes_per_write_avg"`
+	QUICPacketsPerWrite      float64      `json:"quic_packets_per_write_avg"`
+	IntervalBytesPerWrite    uint64       `json:"interval_bytes_per_write_avg"`
+	IntervalSegmentsPerWrite float64      `json:"interval_segments_per_write_avg"`
+	IntervalSegmentsP50      uint64       `json:"interval_segments_p50"`
+	IntervalSegmentsP90      uint64       `json:"interval_segments_p90"`
+	IntervalSegmentsP99      uint64       `json:"interval_segments_p99"`
+	IntervalSegmentsMax      uint64       `json:"interval_segments_max"`
+	IntervalSegmentsBuckets  [65]uint64   `json:"interval_segments_buckets"`
+	FullPMTUPackets          CounterStats `json:"full_pmtu_packets"`
+	ShortPackets             CounterStats `json:"short_packets"`
+	CandidatePackets         CounterStats `json:"candidate_batch_packets"`
+	BatchBreakShortPacket    CounterStats `json:"batch_break_short_packet"`
+	BatchBreakPacing         CounterStats `json:"batch_break_pacing"`
+	BatchBreakCWND           CounterStats `json:"batch_break_cwnd"`
+	BatchBreakECN            CounterStats `json:"batch_break_ecn"`
+	BatchBreakTXTurn         CounterStats `json:"batch_break_tx_turn"`
+	BatchBreakBufferCapacity CounterStats `json:"batch_break_buffer_capacity"`
+	BatchBreakNoData         CounterStats `json:"batch_break_no_data"`
+	BatchBreakSendQueue      CounterStats `json:"batch_break_send_queue"`
+	PacketSizeBucketsTotal   [8]uint64    `json:"packet_size_buckets_total"`
+	PacketSizeBucketsDelta   [8]uint64    `json:"packet_size_buckets_delta"`
+	PacketSizeBucketRanges   [8]string    `json:"packet_size_bucket_ranges"`
 }
 
 type QUICStats struct {
@@ -125,6 +158,15 @@ type QUICStats struct {
 	PacketsLost          uint64 `json:"packets_lost"`
 	BytesLost            uint64 `json:"bytes_lost"`
 	SpuriousLosses       uint64 `json:"spurious_losses"`
+	LossEvents           uint64 `json:"loss_events"`
+	LossByPacket         uint64 `json:"loss_by_packet_threshold"`
+	LossByTime           uint64 `json:"loss_by_time_threshold"`
+	SpuriousPacket       uint64 `json:"spurious_after_packet_threshold"`
+	SpuriousTime         uint64 `json:"spurious_after_time_threshold"`
+	CwndCutbacks         uint64 `json:"cwnd_cutbacks"`
+	RecoveryDuration     string `json:"recovery_duration"`
+	AdaptivePacket       uint64 `json:"adaptive_packet_threshold"`
+	AdaptiveTime         string `json:"adaptive_time_threshold"`
 	MaxPacketReordering  uint64 `json:"max_packet_reordering"`
 	PacketsReceived      uint64 `json:"packets_received"`
 	BytesReceived        uint64 `json:"bytes_received"`

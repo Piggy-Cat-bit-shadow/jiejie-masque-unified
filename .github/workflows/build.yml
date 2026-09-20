@@ -216,6 +216,7 @@ jobs:
             dist/jiejie-masque-linux-amd64
             dist/jiejie-masque-linux-amd64.sha256
             dist/RELEASE.txt
+            dist/BUILD_PROVENANCE.txt
           if-no-files-found: error
 
   release:
@@ -264,6 +265,9 @@ jobs:
           chmod 0755 dist/jiejie-masque-linux-amd64
           (cd dist && sha256sum -c jiejie-masque-linux-amd64.sha256)
           test "$(dist/jiejie-masque-linux-amd64 --version)" = "jiejie-masque $BUILD_VERSION commit=$BUILD_COMMIT"
+          grep -Fx "main_commit=$BUILD_COMMIT" dist/BUILD_PROVENANCE.txt
+          grep -Fx "connect_ip_go_commit=$(sed -n 's/^connect_ip_go_commit=//p' dist/BUILD_PROVENANCE.txt)" <(dist/jiejie-masque-linux-amd64 --version --verbose)
+          grep -Fx "quic_go_commit=$(sed -n 's/^quic_go_commit=//p' dist/BUILD_PROVENANCE.txt)" <(dist/jiejie-masque-linux-amd64 --version --verbose)
           grep -Fx "version=$BUILD_VERSION" dist/RELEASE.txt
           grep -Fx "commit=$BUILD_COMMIT" dist/RELEASE.txt
           test "$(stat -c '%s' dist/jiejie-masque-linux-amd64)" = "$(awk -F= '/^raw_elf_bytes=/{print $2}' dist/RELEASE.txt)"
