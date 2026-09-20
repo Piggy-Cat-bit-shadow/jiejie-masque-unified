@@ -27,6 +27,14 @@ type Config struct {
 	Clients     []Client    `yaml:"clients,omitempty"`
 	Server      Server      `yaml:"server"`
 	DNSGateway  DNSGateway  `yaml:"dns_gateway,omitempty"`
+	Diagnostics Diagnostics `yaml:"diagnostics,omitempty"`
+}
+type Diagnostics struct {
+	QLog QLog `yaml:"qlog,omitempty"`
+}
+type QLog struct {
+	Enabled   bool   `yaml:"enabled"`
+	Directory string `yaml:"directory"`
 }
 type QUIC struct {
 	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
@@ -119,6 +127,9 @@ func Load(path string) (Config, error) {
 	}
 	if c.Server.SessionNat.Enabled && c.Server.SessionNat.ReuseDelay == "" {
 		c.Server.SessionNat.ReuseDelay = "30m"
+	}
+	if c.Diagnostics.QLog.Enabled && c.Diagnostics.QLog.Directory == "" {
+		return c, fmt.Errorf("diagnostics.qlog.directory is required when qlog is enabled")
 	}
 	// DNS is part of the CONNECT-IP service, rather than a client-side
 	// prerequisite. Existing configurations get the production default.

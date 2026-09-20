@@ -92,6 +92,19 @@ MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset k
 
 ### 高 RTT 吞吐与 UDP socket buffer
 
+如需临时抓取 QUIC qlog，可显式启用：
+
+```yaml
+diagnostics:
+  qlog:
+    enabled: true
+    directory: /var/log/jiejie-masque/qlog
+```
+
+默认关闭。目录由服务创建为 0700，单个 `.sqlog` 文件为 0600；文件名只含
+QUIC connection ID 和 perspective，不含 client identity、证书、公钥或目标地址。
+抓取完成后应关闭并轮换/清理 qlog，避免磁盘无限增长。
+
 新部署的跨境/高 RTT 链路建议先使用 example 中的 `cubic` 与
 `outbound_queue_size: 1024`，并保留 `mtu: 1280`、`tun_offload: false`、
 `tun_tx_gro: false`。省略字段时，程序兼容性 fallback 仍是 `default` 与

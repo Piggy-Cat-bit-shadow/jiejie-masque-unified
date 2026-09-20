@@ -165,7 +165,7 @@ func serveConnectIP() error {
 	packetPool := session.NewPacketPool(c.Server.MTU)
 	fatal := make(chan error, 2)
 	go tunDispatcher(tun, mgr, packetPool, fatal)
-	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, MaxIdleTimeout: 2 * time.Minute, KeepAlivePeriod: 15 * time.Second, MaxIncomingStreams: 32}
+	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, MaxIdleTimeout: 2 * time.Minute, KeepAlivePeriod: 15 * time.Second, MaxIncomingStreams: 32, Tracer: newQLogTracer(c.Diagnostics.QLog)}
 	transport := &quic.Transport{Conn: packetConn, StatelessResetKey: &resetKey}
 	ql, err := transport.Listen(http3.ConfigureTLSConfig(tc), qc)
 	if err != nil {
