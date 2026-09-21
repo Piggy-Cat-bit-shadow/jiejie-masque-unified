@@ -2,770 +2,115 @@ package session
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
+	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/metacubex/quic-go"
 )
 
-type fakeConn struct{ closed int }
-
-func (f *fakeConn) ReadPacket() ([]byte, error)        { return nil, errors.New("closed") }
-func (f *fakeConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
-func (f *fakeConn) Close() error                       { f.closed++; return nil }
-
-type runtimeStatsConn struct {
-	fakeConn
-	stats quic.RuntimeStats
+type managerTestConn struct {
+	mu     sync.Mutex
+	stats  quic.RuntimeStats
+	closed bool
 }
 
-func (f *runtimeStatsConn) RuntimeStats() quic.RuntimeStats { return f.stats }
-func TestManagerConcurrentIPsAndTakeover(t *testing.T) {
+func (c *managerTestConn) ReadPacketBuffer() (*connectip.PacketBuffer, error) {
+	return nil, context.Canceled
+}
+func (c *managerTestConn) TryReadPacketBuffer() (*connectip.PacketBuffer, error) {
+	return nil, context.Canceled
+}
+func (c *managerTestConn) WritePacketBufferOwned(_ []byte, _, _ int, owner connectip.PacketPayloadOwner) ([]byte, error) {
+	if owner != nil {
+		owner.Release()
+	}
+	return nil, nil
+}
+func (c *managerTestConn) RuntimeStats() quic.RuntimeStats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats
+}
+func (c *managerTestConn) Close() error                 { c.mu.Lock(); c.closed = true; c.mu.Unlock(); return nil }
+func (c *managerTestConn) setStats(s quic.RuntimeStats) { c.mu.Lock(); c.stats = s; c.mu.Unlock() }
+
+func TestManagerDualStackTakeoverAndIdentityExclusion(t *testing.T) {
+	m := NewManager(2)
+	v4 := netip.MustParseAddr("10.20.0.2")
+	v6 := netip.MustParseAddr("2001:db8:1::2")
+	old := NewWithAddresses(context.Background(), []netip.Addr{v4, v6}, "client-a", &managerTestConn{}, nil)
+	if got, err := m.Replace(old); err != nil || len(got) != 0 {
+		t.Fatalf("first register: old=%v err=%v", got, err)
+	}
+	if m.Lookup(v4) != old || m.Lookup(v6) != old || m.Len() != 1 {
+		t.Fatal("dual-stack addresses did not map atomically")
+	}
+	next := NewWithAddresses(context.Background(), []netip.Addr{v4, v6}, "client-a", &managerTestConn{}, nil)
+	previous, err := m.Replace(next)
+	if err != nil || len(previous) != 1 || m.Lookup(v4) != next || m.Lookup(v6) != next {
+		t.Fatalf("takeover failed: %v %v", previous, err)
+	}
+	if !old.Conn.(*managerTestConn).closed {
+		t.Fatal("replaced connection was not closed")
+	}
+	conflict := New(v4, "client-b", &managerTestConn{}, nil)
+	if _, err = m.Replace(conflict); err == nil {
+		t.Fatal("different identity took an owned address")
+	}
+	if m.Lookup(v4) != next {
+		t.Fatal("rejected registration changed current owner")
+	}
+}
+
+func TestManagerSessionLimit(t *testing.T) {
+	m := NewManager(1)
+	a := New(netip.MustParseAddr("10.0.0.2"), "a", &managerTestConn{}, nil)
+	if _, err := m.Replace(a); err != nil {
+		t.Fatal(err)
+	}
+	b := New(netip.MustParseAddr("10.0.0.3"), "b", &managerTestConn{}, nil)
+	if _, err := m.Replace(b); err == nil {
+		t.Fatal("session limit was not enforced")
+	}
+}
+
+func TestAggregateRuntimeCountersMonotonicAcrossGenerationChurn(t *testing.T) {
 	m := NewManager()
-	a := New(netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-	b := New(netip.MustParseAddr("10.200.0.3"), "b", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-	m.Replace(a)
-	m.Replace(b)
-	if m.Len() != 2 {
-		t.Fatal(m.Len())
+	c1 := &managerTestConn{}
+	c1.setStats(quic.RuntimeStats{PacketsLost: 3, UDPWrites: 9, UDPWireBytes: 100, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 6})
+	s1 := New(netip.MustParseAddr("10.0.0.2"), "a", c1, nil)
+	if _, err := m.Replace(s1); err != nil {
+		t.Fatal(err)
 	}
-	a2 := New(a.ClientIP, "a2", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-	m.Replace(a2)
-	if m.Lookup(a.ClientIP) != a2 || m.Lookup(b.ClientIP) != b {
-		t.Fatal("replace damaged registry")
+	_ = m.AggregateRuntimeStats()
+	s1.Close()
+	c2 := &managerTestConn{}
+	c2.setStats(quic.RuntimeStats{PacketsLost: 1, UDPWrites: 2, UDPWireBytes: 40, GSOMultiSegmentWrites: 1, GSOSegmentsTotal: 3})
+	s2 := New(netip.MustParseAddr("10.0.0.3"), "b", c2, nil)
+	if _, err := m.Replace(s2); err != nil {
+		t.Fatal(err)
 	}
-	if m.RemoveIfCurrent(a) {
-		t.Fatal("stale remove succeeded")
-	}
-	if m.Lookup(a.ClientIP) != a2 {
-		t.Fatal("stale removal deleted new session")
-	}
-	a2.Close()
-	b.Close()
-}
-
-func TestRecordDequeuedNPreservesQueueStatistics(t *testing.T) {
-	s := New(netip.MustParseAddr("10.200.0.2"), "stats", &fakeConn{}, nil)
-	s.RecordDequeued()
-	s.RecordDequeuedN(3)
-	s.RecordDequeuedN(0)
-	if got := s.QueueStats().Dequeued; got != 4 {
-		t.Fatalf("dequeued = %d, want 4", got)
-	}
-	s.Close()
-}
-
-func TestAggregateQueueStatsIsIdentityFree(t *testing.T) {
-	m := NewManager()
-	a := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, nil, 2, nil)
-	b := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.3"), "b", &fakeConn{}, nil, 4, nil)
-	m.Replace(a)
-	m.Replace(b)
-	if !a.TryEnqueue(&PacketBuffer{Data: []byte{1}}) || !b.TryEnqueue(&PacketBuffer{Data: []byte{2}}) {
-		t.Fatal("failed to enqueue test packets")
-	}
-	stats := m.AggregateQueueStats()
-	if stats.Sessions != 2 || stats.Capacity != 6 || stats.Depth != 2 || stats.Enqueued != 2 {
-		t.Fatalf("aggregate stats = %+v", stats)
-	}
-	a.Close()
-	b.Close()
-}
-
-func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
-	m := NewManager()
-	a := New(netip.MustParseAddr("10.200.0.4"), "a", &runtimeStatsConn{stats: quic.RuntimeStats{
-		CongestionController: "cubic", CongestionState: "Open", CongestionWindow: 10,
-		LossEvents: 3, LossByPacketThreshold: 2, SpuriousAfterPacketThreshold: 1,
-		CwndCutbacks: 2, RecoveryDuration: 7 * time.Millisecond, AdaptivePacketThreshold: 6,
-		MinRTT: 20 * time.Millisecond, LatestRTT: 40 * time.Millisecond,
-		SmoothedRTT: 30 * time.Millisecond, CurrentPMTU: 1350,
-	}}, nil)
-	b := New(netip.MustParseAddr("10.200.0.5"), "b", &runtimeStatsConn{stats: quic.RuntimeStats{
-		CongestionController: "cubic", CongestionState: "Recovery", CongestionWindow: 20,
-		LossEvents: 4, LossByTimeThreshold: 3, SpuriousAfterTimeThreshold: 1,
-		CwndCutbacks: 1, RecoveryDuration: 11 * time.Millisecond, AdaptivePacketThreshold: 8,
-		MinRTT: 10 * time.Millisecond, LatestRTT: 50 * time.Millisecond,
-		SmoothedRTT: 35 * time.Millisecond, CurrentPMTU: 1280,
-	}}, nil)
-	m.Replace(a)
-	m.Replace(b)
-	stats := m.AggregateRuntimeStats()
-	if stats.Connections != 2 || stats.CongestionController != "cubic" || stats.CongestionState != "mixed" {
-		t.Fatalf("aggregate identity = %+v", stats)
-	}
-	if stats.CongestionWindows != 30 || stats.MinRTT != 10*time.Millisecond || stats.LatestRTT != 50*time.Millisecond || stats.SmoothedRTT != 35*time.Millisecond || stats.CurrentPMTU != 1280 {
-		t.Fatalf("aggregate metrics = %+v", stats)
-	}
-	if stats.LossEvents != 7 || stats.LossByPacketThreshold != 2 || stats.LossByTimeThreshold != 3 || stats.SpuriousAfterPacketThreshold != 1 || stats.SpuriousAfterTimeThreshold != 1 || stats.CwndCutbacks != 3 || stats.RecoveryDuration != 18*time.Millisecond || stats.AdaptivePacketThreshold != 8 {
-		t.Fatalf("aggregate loss recovery telemetry = %+v", stats)
-	}
-	a.Close()
-	b.Close()
-}
-
-func TestAggregateBBRRuntimeStatsUsesExplicitMultiConnectionSemantics(t *testing.T) {
-	m := NewManager()
-	a := New(netip.MustParseAddr("10.200.0.40"), "identity-a", &runtimeStatsConn{stats: quic.RuntimeStats{
-		CongestionController: "bbr", BBRMode: "probe_bw", BBRBandwidthEstimate: 8_000_000,
-		BBRMinRTT: 20 * time.Millisecond, BBRPacingGain: 1.25, BBRCwndGain: 2,
-		BBRTargetCwnd: 24_000, BBRRoundTripCount: 7, BBRFullBandwidthReached: true,
-		BBRRecoveryState: "not_in_recovery", BBRAppLimited: false, BBRRecoveryWindow: 40_000,
-	}}, nil)
-	b := New(netip.MustParseAddr("10.200.0.41"), "identity-b", &runtimeStatsConn{stats: quic.RuntimeStats{
-		CongestionController: "bbr", BBRMode: "probe_rtt", BBRBandwidthEstimate: 12_000_000,
-		BBRMinRTT: 15 * time.Millisecond, BBRPacingGain: 1, BBRCwndGain: 2,
-		BBRTargetCwnd: 12_000, BBRRoundTripCount: 9, BBRRecoveryState: "conservation",
-		BBRAppLimited: true, BBRAckAggregationHeight: 1500, BBRRecoveryWindow: 30_000,
-	}}, nil)
-	m.Replace(a)
-	m.Replace(b)
 	got := m.AggregateRuntimeStats()
-	if got.CongestionController != "bbr" || got.BBRConnections != 2 || got.BBRMode != "mixed" || got.BBRRecoveryState != "mixed" {
-		t.Fatalf("controller/mode aggregation = %+v", got)
+	if got.PacketsLost != 4 || got.UDPWrites != 11 || got.UDPWireBytes != 140 || got.GSOMultiSegmentWrites != 3 || got.GSOSegmentsTotal != 9 {
+		t.Fatalf("aggregate counters = %+v", got)
 	}
-	if got.BBRBandwidthEstimate != 20_000_000 || got.BBRMinRTT != 15*time.Millisecond || !got.BBRGainsMixed || got.BBRPacingGain != 0 || got.BBRCwndGain != 0 {
-		t.Fatalf("rate/gain aggregation = %+v", got)
-	}
-	if got.BBRTargetCwnd != 36_000 || got.BBRRoundTripCount != 9 || !got.BBRFullBandwidthReached || !got.BBRAppLimited || got.BBRAckAggregationHeight != 1500 || got.BBRRecoveryWindow != 70_000 {
-		t.Fatalf("BBR model aggregation = %+v", got)
-	}
-	a.Close()
-	b.Close()
-}
-
-func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T) {
-	m := NewManager()
-	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20, PacketsLost: 4, SpuriousLosses: 2, ReorderingEvents: 8, SendQueueHardBlockedDuration: 5 * time.Millisecond, GSOBatchBreakShortPacket: 4, GSOMultiSegmentWrites: 8, GSOSegmentsTotal: 32, PackedPacketSizeBuckets: [8]uint64{0, 2}}}
-	a := New(netip.MustParseAddr("10.200.0.20"), "a", aConn, func(s *Session) { m.RemoveIfCurrent(s) })
-	m.Replace(a)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 100 || got.UDPWrites != 10 || got.QUICPacketsReceived != 20 || got.PacketsLost != 4 || got.SpuriousLosses != 2 || got.ReorderingEvents != 8 || got.SendQueueHardBlockedDuration != 5*time.Millisecond || got.GSOBatchBreakShortPacket != 4 || got.GSOMultiSegmentWrites != 8 || got.GSOSegmentsTotal != 32 || got.PackedPacketSizeBuckets[1] != 2 {
-		t.Fatalf("initial cumulative counters = %+v", got)
-	}
-
-	aConn.stats.PacketsPacked = 110
-	aConn.stats.UDPWrites = 11
-	aConn.stats.ReceivedPackets = 22
-	aConn.stats.PacketsLost = 6
-	aConn.stats.SpuriousLosses = 3
-	aConn.stats.ReorderingEvents = 12
-	aConn.stats.SendQueueHardBlockedDuration = 9 * time.Millisecond
-	aConn.stats.GSOBatchBreakShortPacket = 7
-	aConn.stats.GSOMultiSegmentWrites = 9
-	aConn.stats.GSOSegmentsTotal = 36
-	aConn.stats.PackedPacketSizeBuckets[1] = 5
-	bConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 7, UDPWrites: 2, ReceivedPackets: 3, PacketsLost: 1, SpuriousLosses: 1, ReorderingEvents: 3, SendQueueHardBlockedDuration: 4 * time.Millisecond, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 8}}
-	b := New(netip.MustParseAddr("10.200.0.21"), "b", bConn, func(s *Session) { m.RemoveIfCurrent(s) })
-	m.Replace(b)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 117 || got.UDPWrites != 13 || got.QUICPacketsReceived != 25 || got.PacketsLost != 7 || got.SpuriousLosses != 4 || got.ReorderingEvents != 15 || got.SendQueueHardBlockedDuration != 13*time.Millisecond || got.GSOBatchBreakShortPacket != 7 || got.GSOMultiSegmentWrites != 11 || got.GSOSegmentsTotal != 44 || got.PackedPacketSizeBuckets[1] != 5 {
-		t.Fatalf("cumulative counters after join = %+v", got)
-	}
-
-	aConn.stats.PacketsPacked = 125 // final increments must be captured on close.
-	aConn.stats.UDPWrites = 13
-	aConn.stats.ReceivedPackets = 24
-	a.Close()
-	if got := m.AggregateRuntimeStats(); got.Connections != 1 || got.PacketsPacked != 132 || got.UDPWrites != 15 || got.QUICPacketsReceived != 27 || got.PacketsLost != 7 || got.SpuriousLosses != 4 || got.ReorderingEvents != 15 || got.SendQueueHardBlockedDuration != 13*time.Millisecond || got.GSOMultiSegmentWrites != 11 || got.GSOSegmentsTotal != 44 {
-		t.Fatalf("cumulative counters after exit = %+v", got)
-	}
-
-	b.Close()
-	cConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 4, UDPWrites: 1, ReceivedPackets: 2, PacketsLost: 2, SpuriousLosses: 1, ReorderingEvents: 4, SendQueueHardBlockedDuration: 6 * time.Millisecond, GSOAttempts: 3, SingleSegmentGSOAttempts: 1, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 8}}
-	c := New(netip.MustParseAddr("10.200.0.22"), "c", cConn, func(s *Session) { m.RemoveIfCurrent(s) })
-	m.Replace(c)
-	if got := m.AggregateRuntimeStats(); got.PacketsPacked != 136 || got.UDPWrites != 16 || got.QUICPacketsReceived != 29 || got.PacketsLost != 9 || got.SpuriousLosses != 5 || got.ReorderingEvents != 19 || got.SendQueueHardBlockedDuration != 19*time.Millisecond || got.GSOAttempts != 3 || got.SingleSegmentGSOAttempts != 1 || got.GSOMultiSegmentWrites != 13 || got.GSOSegmentsTotal != 52 {
-		t.Fatalf("cumulative counters after replacement generation = %+v", got)
-	}
-	c.Close()
-}
-
-func TestPerClientReservationCapAndRelease(t *testing.T) {
-	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 4, nil)
-	m.SetMaxSessionsPerClient(2)
-	r1, err := m.TryReserveFor("a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r2, err := m.TryReserveFor("a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.TryReserveFor("a"); err == nil {
-		t.Fatal("same identity bypassed cap")
-	}
-	other, err := m.TryReserveFor("b")
-	if err != nil {
-		t.Fatal("other identity blocked: " + err.Error())
-	}
-	r1()
-	r1()
-	if _, err := m.TryReserveFor("a"); err != nil {
-		t.Fatal("capacity not restored")
-	}
-	r2()
-	other()
-}
-
-func TestPerClientConcurrentReservations(t *testing.T) {
-	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/29"), 16, nil)
-	m.SetMaxSessionsPerClient(2)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	var accepted int
-	var mu sync.Mutex
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if release, err := m.TryReserveFor("shared"); err == nil {
-				mu.Lock()
-				accepted++
-				mu.Unlock()
-				release()
-			}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	if accepted == 0 {
-		t.Fatal("no concurrent reservation succeeded")
-	}
-	if m.reserved != 0 || len(m.reservedByIdentity) != 0 {
-		t.Fatalf("reservation leak: %d %v", m.reserved, m.reservedByIdentity)
-	}
-}
-
-func TestManagerQueueIsBounded(t *testing.T) {
-	m := NewManager()
-	s := New(netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	m.Replace(s)
-	if cap(s.Outbound) != DefaultOutboundQueueSize {
-		t.Fatalf("queue capacity = %d, want %d", cap(s.Outbound), DefaultOutboundQueueSize)
-	}
-	for i := 0; i < cap(s.Outbound); i++ {
-		s.Outbound <- &PacketBuffer{Data: []byte{1}}
-	}
-	select {
-	case s.Outbound <- &PacketBuffer{Data: []byte{2}}:
-		t.Fatal("queue accepted packet beyond capacity")
-	default:
-	}
-	s.Close()
-}
-
-func TestCloseDrainsOutboundAndRejectsNewPackets(t *testing.T) {
-	pool := NewPacketPool(1280)
-	s := NewWithContextAndPacketPool(context.Background(), netip.MustParseAddr("10.200.0.2"), "client", &fakeConn{}, pool, nil)
-	if !s.TryEnqueue(pool.Get(1280)) {
-		t.Fatal("enqueue failed")
-	}
-	s.Close()
-	if len(s.Outbound) != 0 {
-		t.Fatalf("queued packets after close = %d", len(s.Outbound))
-	}
-	if s.TryEnqueue(pool.Get(1280)) {
-		t.Fatal("closed session accepted packet")
-	}
-}
-
-func TestQueueTracksHighWaterAndBoundedOverflow(t *testing.T) {
-	pool := NewPacketPool(1280)
-	s := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "client", &fakeConn{}, pool, 2, nil)
-	defer s.Close()
-	if !s.TryEnqueue(pool.Get(10)) || !s.TryEnqueue(pool.Get(10)) {
-		t.Fatal("queue did not accept its bounded burst")
-	}
-	if s.QueueHighWater() != 2 {
-		t.Fatalf("high water = %d, want 2", s.QueueHighWater())
-	}
-	if s.TryEnqueue(pool.Get(10)) {
-		t.Fatal("queue accepted packet beyond capacity")
-	}
-	if s.QueueDropped() != 1 {
-		t.Fatalf("dropped = %d, want 1", s.QueueDropped())
-	}
-	stats := s.QueueStats()
-	if stats.Capacity != 2 || stats.Depth != 2 || stats.HighWater != 2 || stats.Enqueued != 2 || stats.Dequeued != 0 || stats.Dropped != 1 {
-		t.Fatalf("queue stats = %+v", stats)
-	}
-}
-
-func TestSlowSessionQueueDoesNotBlockFastSession(t *testing.T) {
-	pool := NewPacketPool(1280)
-	slow := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.2"), "slow", &fakeConn{}, pool, 2, nil)
-	fast := NewWithContextAndPacketPoolAndQueue(context.Background(), netip.MustParseAddr("10.200.0.3"), "fast", &fakeConn{}, pool, 2, nil)
-	defer slow.Close()
-	defer fast.Close()
-
-	// Deliberately leave slow's writer stalled and fill its small bounded queue.
-	if !slow.TryEnqueue(pool.Get(10)) || !slow.TryEnqueue(pool.Get(10)) || slow.TryEnqueue(pool.Get(10)) {
-		t.Fatal("slow queue did not apply bounded backpressure")
-	}
-	for i := 0; i < 128; i++ {
-		if !fast.TryEnqueue(pool.Get(10)) {
-			t.Fatalf("fast session dropped packet %d while another session was stalled", i)
-		}
-		packet := <-fast.Outbound
-		fast.RecordDequeued()
-		fast.ReleasePacket(packet)
-	}
-	if got := slow.QueueStats(); got.Dropped != 1 || got.Depth != 2 {
-		t.Fatalf("slow queue stats = %+v", got)
-	}
-	if got := fast.QueueStats(); got.Dropped != 0 || got.Enqueued != 128 || got.Dequeued != 128 || got.Depth != 0 {
-		t.Fatalf("fast queue stats = %+v", got)
-	}
-}
-
-func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {
-	pool := netip.MustParsePrefix("10.200.0.128/30")
-	m := NewShadowManager(pool, 2, nil)
-	a := New(netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	b := New(netip.MustParseAddr("10.200.0.2"), "b", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Register(b); err != nil {
-		t.Fatal(err)
-	}
-	if a.ShadowIPv4 == b.ShadowIPv4 || m.Len() != 2 {
-		t.Fatalf("shadow sessions = %s, %s; len=%d", a.ShadowIPv4, b.ShadowIPv4, m.Len())
-	}
-	if m.Lookup(a.ShadowIPv4) != a || m.Lookup(b.ShadowIPv4) != b {
-		t.Fatal("shadow lookup mismatch")
-	}
-	a.Close()
-	if m.Lookup(a.ShadowIPv4) != nil || m.Lookup(b.ShadowIPv4) != b {
-		t.Fatal("closing A affected B")
-	}
-	c := New(netip.MustParseAddr("10.200.0.2"), "c", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(c); err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-	b.Close()
-}
-
-func TestShadowManagerHybridDualStackAndIPv6Only(t *testing.T) {
-	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/30"), 4, nil)
-	newSession := func(addresses ...netip.Addr) *Session {
-		return NewWithAddressesAndPacketPoolAndQueue(context.Background(), addresses, "hybrid", &fakeConn{}, nil, 8, func(s *Session) { m.RemoveIfCurrent(s) })
-	}
-	v4 := netip.MustParseAddr("10.200.0.2")
-	v6a := netip.MustParseAddr("2001:db8:200::2")
-	v6b := netip.MustParseAddr("2001:db8:200::3")
-	dual := newSession(v4, v6a)
-	if err := m.Register(dual); err != nil {
-		t.Fatal(err)
-	}
-	if !dual.ShadowIPv4.IsValid() || dual.ClientIPv4 != v4 || dual.ClientIPv6 != v6a || m.Lookup(v6a) != dual || m.Lookup(dual.ShadowIPv4) != dual {
-		t.Fatalf("dual-stack mapping incorrect: session=%+v", dual)
-	}
-	duplicate := newSession(v6a)
-	if err := m.Register(duplicate); err == nil {
-		t.Fatal("duplicate active IPv6 address was accepted")
-	}
-	ipv6Only := newSession(v6b)
-	if err := m.Register(ipv6Only); err != nil {
-		t.Fatalf("IPv6-only session should not consume shadow IPv4: %v", err)
-	}
-	if ipv6Only.ShadowIPv4.IsValid() || m.Lookup(v6b) != ipv6Only {
-		t.Fatalf("IPv6-only mapping allocated a shadow address: %+v", ipv6Only)
-	}
-	dual.Close()
-	if m.Lookup(v6a) != nil || m.Lookup(dual.ShadowIPv4) != nil {
-		t.Fatal("closing dual-stack session left a stale mapping")
-	}
-	reused := newSession(v6a)
-	if err := m.Register(reused); err != nil {
-		t.Fatalf("IPv6 address could not be reused after close: %v", err)
-	}
-	reused.Close()
-	ipv6Only.Close()
-}
-
-func TestIPv6DirectMappingTakeoverLeavesNoStaleOwner(t *testing.T) {
-	m := NewManager()
-	ip := netip.MustParseAddr("2001:db8:200::8")
-	old := NewWithAddressesAndPacketPoolAndQueue(context.Background(), []netip.Addr{ip}, "old", &fakeConn{}, nil, 2, func(s *Session) { m.RemoveIfCurrent(s) })
-	if replaced := m.Replace(old); replaced != nil {
-		t.Fatalf("first replace evicted %v", replaced)
-	}
-	newSession := NewWithAddressesAndPacketPoolAndQueue(context.Background(), []netip.Addr{ip}, "new", &fakeConn{}, nil, 2, func(s *Session) { m.RemoveIfCurrent(s) })
-	if replaced := m.Replace(newSession); replaced != old {
-		t.Fatalf("replaced = %p, want %p", replaced, old)
-	}
-	if m.Lookup(ip) != newSession || m.Len() != 1 {
-		t.Fatal("IPv6 direct mapping retained a stale owner")
-	}
-	newSession.Close()
-	if m.Lookup(ip) != nil {
-		t.Fatal("closing new owner did not remove direct IPv6 mapping")
-	}
-}
-
-func TestShadowManagerReuseCooldown(t *testing.T) {
-	now := time.Unix(100, 0)
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 2, nil, time.Minute, func() time.Time { return now }, func(uint32) uint32 { return 0 })
-	a := New(netip.MustParseAddr("10.200.0.2"), "a", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	b := New(netip.MustParseAddr("10.200.0.2"), "b", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Register(b); err != nil {
-		t.Fatal(err)
-	}
-	shadow := a.ShadowIPv4
-	a.Close()
-	c := New(netip.MustParseAddr("10.200.0.2"), "c", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(c); err == nil {
-		t.Fatal("expected cooling address to be unavailable")
-	}
-	now = now.Add(time.Minute)
-	if err := m.Register(c); err != nil {
-		t.Fatal(err)
-	}
-	if c.ShadowIPv4 != shadow {
-		t.Fatalf("shadow = %s, want %s", c.ShadowIPv4, shadow)
-	}
-	b.Close()
-	c.Close()
-}
-
-func TestShadowManagerAdmission(t *testing.T) {
-	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/30"), 1, nil)
-	release, err := m.TryReserve()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.TryReserve(); err == nil {
-		t.Fatal("expected reserved capacity to reject a second session")
-	}
-	release()
-}
-
-func TestShadowManagerAllocatesManySameVisibleSessions(t *testing.T) {
-	m := NewShadowManager(netip.MustParsePrefix("10.200.0.0/24"), 100, nil)
-	sessions := make([]*Session, 0, 100)
-	seen := map[netip.Addr]bool{}
-	for i := 0; i < 100; i++ {
-		s := New(netip.MustParseAddr("10.200.0.2"), "shared", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-		if err := m.Register(s); err != nil {
-			t.Fatal(err)
-		}
-		if seen[s.ShadowIPv4] {
-			t.Fatalf("duplicate shadow address %s", s.ShadowIPv4)
-		}
-		seen[s.ShadowIPv4] = true
-		sessions = append(sessions, s)
-	}
-	if m.Len() != 100 {
-		t.Fatalf("sessions = %d", m.Len())
-	}
-	for _, s := range sessions {
-		s.Close()
-	}
+	s2.Close()
 	if m.Len() != 0 {
-		t.Fatalf("sessions after close = %d", m.Len())
+		t.Fatal("closed session remains registered")
 	}
 }
 
-// Pending cleanup must reserve the shadow address even when reuse_delay is
-// zero and after a positive delay would otherwise have expired.
-func TestShadowCleanupPendingAddressUnavailable(t *testing.T) {
-	for _, delay := range []time.Duration{0, 10 * time.Millisecond} {
-		t.Run(delay.String(), func(t *testing.T) {
-			var now = time.Unix(100, 0)
-			release := make(chan struct{})
-			started := make(chan netip.Addr, 1)
-			m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 2, nil, delay, func() time.Time { return now }, func(uint32) uint32 { return 0 })
-			defer m.CloseCleanup()
-			m.SetShadowCleanup(func(ip netip.Addr) error {
-				started <- ip
-				<-release
-				return nil
-			})
-			defer close(release)
-			newSession := func(identity string) *Session {
-				return New(netip.MustParseAddr("10.200.0.2"), identity, &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-			}
-			a, b := newSession("a"), newSession("b")
-			if err := m.Register(a); err != nil {
-				t.Fatal(err)
-			}
-			if err := m.Register(b); err != nil {
-				t.Fatal(err)
-			}
-			a.Close()
-			select {
-			case <-started:
-			case <-time.After(time.Second):
-				t.Fatal("cleanup did not start")
-			}
-			now = now.Add(time.Second)
-			c := newSession("c")
-			if err := m.Register(c); err == nil {
-				t.Fatal("pending cleanup address was reused before cleanup completed")
-			}
-			b.Close()
-		})
-	}
-}
-
-func TestShadowCleanupConcurrencyBounded(t *testing.T) {
-	const n = 128
-	var active, maxActive atomic.Int32
-	started := make(chan struct{}, n)
-	release := make(chan struct{})
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.0/24"), n, nil, 0, time.Now, func(uint32) uint32 { return 0 })
-	defer m.CloseCleanup()
-	m.SetShadowCleanup(func(netip.Addr) error {
-		current := active.Add(1)
-		for {
-			old := maxActive.Load()
-			if current <= old || maxActive.CompareAndSwap(old, current) {
-				break
-			}
-		}
-		started <- struct{}{}
-		<-release
-		active.Add(-1)
-		return nil
-	})
-	sessions := make([]*Session, 0, n)
-	for i := 0; i < n; i++ {
-		s := New(netip.MustParseAddr("10.200.0.2"), "shared", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-		if err := m.Register(s); err != nil {
-			t.Fatal(err)
-		}
-		sessions = append(sessions, s)
-	}
-	for _, s := range sessions {
-		s.Close()
-	}
-	deadline := time.After(time.Second)
-	for len(started) == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("cleanup did not start")
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-	if maxActive.Load() > 2 {
-		t.Fatalf("cleanup concurrency exceeded fixed worker bound: max=%d", maxActive.Load())
-	}
-	close(release)
-	deadline = time.After(time.Second)
-	for m.CleanupStats().Completed < n {
-		select {
-		case <-deadline:
-			t.Fatalf("only %d/%d cleanup callbacks completed", m.CleanupStats().Completed, n)
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-}
-
-func TestShadowCleanupExecutorBackpressureAndWorkerSurvival(t *testing.T) {
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.0/29"), 1, nil, 0, time.Now, func(uint32) uint32 { return 0 })
-	defer m.CloseCleanup()
-	started := make(chan struct{}, 4)
-	release := make(chan struct{})
-	m.SetShadowCleanup(func(ip netip.Addr) error {
-		started <- struct{}{}
-		<-release
-		if ip == netip.MustParseAddr("10.200.0.1") {
-			return errors.New("expected cleanup error")
-		}
-		return nil
-	})
-	e := m.cleanupExecutor
-	jobs := []cleanupJob{
-		{manager: m, ip: netip.MustParseAddr("10.200.0.1"), cleanup: m.cleanup},
-		{manager: m, ip: netip.MustParseAddr("10.200.0.2"), cleanup: m.cleanup},
-		{manager: m, ip: netip.MustParseAddr("10.200.0.3"), cleanup: m.cleanup},
-		{manager: m, ip: netip.MustParseAddr("10.200.0.4"), cleanup: m.cleanup},
-	}
-	for _, job := range jobs {
-		m.cleanupPending[job.ip] = struct{}{}
-	}
-	if !e.enqueue(jobs[0]) || !e.enqueue(jobs[1]) {
-		t.Fatal("initial cleanup jobs were not accepted")
-	}
-	thirdDone := make(chan bool, 1)
-	go func() {
-		if !e.enqueue(jobs[2]) {
-			thirdDone <- false
-			return
-		}
-		thirdDone <- e.enqueue(jobs[3])
-	}()
-	select {
-	case <-thirdDone:
-		t.Fatal("queue-full enqueue did not apply backpressure")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	select {
-	case accepted := <-thirdDone:
-		if !accepted {
-			t.Fatal("backpressured cleanup job was dropped during normal operation")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("backpressured cleanup job was not accepted")
-	}
-	deadline := time.After(time.Second)
-	for stats := m.CleanupStats(); stats.Completed+stats.Failed < 4; stats = m.CleanupStats() {
-		select {
-		case <-deadline:
-			t.Fatalf("cleanup workers did not survive error: %+v", m.CleanupStats())
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-	stats := m.CleanupStats()
-	if stats.Failed != 1 || stats.Completed != 3 || stats.MaxActive > shadowCleanupWorkers {
-		t.Fatalf("unexpected cleanup stats: %+v", stats)
-	}
-}
-
-func TestShadowCleanupShutdownDropsQueuedWork(t *testing.T) {
-	const n = 4
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.203.0.0/24"), n, nil, 0, time.Now, func(uint32) uint32 { return 0 })
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
-	started := make(chan struct{}, n)
-	defer m.CloseCleanup()
-	m.SetShadowCleanup(func(netip.Addr) error {
-		started <- struct{}{}
-		<-release
-		return nil
-	})
-	defer releaseAll()
-	sessions := make([]*Session, 0, n)
-	for i := 0; i < n; i++ {
-		s := New(netip.MustParseAddr("10.200.0.2"), "shutdown", &fakeConn{}, func(s *Session) { m.RemoveIfCurrent(s) })
-		if err := m.Register(s); err != nil {
-			t.Fatal(err)
-		}
-		sessions = append(sessions, s)
-	}
-	for _, s := range sessions {
-		s.Close()
-	}
-	deadline := time.After(time.Second)
-	for len(started) < shadowCleanupWorkers {
-		select {
-		case <-deadline:
-			t.Fatalf("only %d cleanup workers started", len(started))
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-	closed := make(chan struct{})
-	go func() {
-		m.CloseCleanup()
-		close(closed)
-	}()
-	select {
-	case <-closed:
-		t.Fatal("shutdown returned while cleanup callbacks were still running")
-	case <-time.After(20 * time.Millisecond):
-	}
-	releaseAll()
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not wait for running cleanup callbacks")
-	}
-	stats := m.CleanupStats()
-	if stats.Started != shadowCleanupWorkers || stats.Completed != shadowCleanupWorkers || stats.Dropped != n-shadowCleanupWorkers || stats.Quarantined != n-shadowCleanupWorkers {
-		t.Fatalf("shutdown drained queued cleanup unexpectedly: %+v", stats)
-	}
-}
-
-func TestSessionActivity(t *testing.T) {
-	s := New(netip.MustParseAddr("10.200.0.2"), "test", &fakeConn{}, nil)
-	when := time.Unix(123, 456)
-	s.Touch(when)
-	if got := s.LastActivity(); !got.Equal(when) {
-		t.Fatalf("activity = %v", got)
-	}
-}
-
-func TestShadowCleanupFailureQuarantinesAddress(t *testing.T) {
-	now := time.Unix(100, 0)
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, []netip.Addr{netip.MustParseAddr("10.200.0.130")}, time.Hour, func() time.Time { return now }, func(uint32) uint32 { return 0 })
-	defer m.CloseCleanup()
-	called := make(chan netip.Addr, 1)
-	m.SetShadowCleanup(func(ip netip.Addr) error { called <- ip; return errors.New("cleanup failed") })
-	s := New(netip.MustParseAddr("10.200.0.2"), "test", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(s); err != nil {
-		t.Fatal(err)
-	}
-	shadow := s.ShadowIPv4
+func TestSessionCloseIsIdempotent(t *testing.T) {
+	c := &managerTestConn{}
+	s := New(netip.MustParseAddr("10.0.0.2"), "a", c, nil)
 	s.Close()
-	select {
-	case got := <-called:
-		if got != shadow {
-			t.Fatalf("cleanup address = %s", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("cleanup was not scheduled")
-	}
-	deadline := time.After(time.Second)
-	for stats := m.CleanupStats(); stats.Completed+stats.Failed < 1; stats = m.CleanupStats() {
-		select {
-		case <-deadline:
-			t.Fatal("cleanup did not complete")
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-	next := New(netip.MustParseAddr("10.200.0.2"), "next", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(next); err == nil {
-		t.Fatalf("quarantined address %s was reused after cleanup failure", shadow)
-	}
-	if got := m.CleanupStats().Quarantined; got != 1 {
-		t.Fatalf("quarantined addresses = %d, want 1", got)
-	}
-}
-
-func TestShadowCleanupSuccessDoesNotQuarantineAddress(t *testing.T) {
-	m := NewShadowManagerWithClock(netip.MustParsePrefix("10.200.0.128/30"), 1, []netip.Addr{netip.MustParseAddr("10.200.0.130")}, 0, time.Now, func(uint32) uint32 { return 0 })
-	defer m.CloseCleanup()
-	m.SetShadowCleanup(func(netip.Addr) error { return nil }) // conntrack no-match is also normalized to nil.
-	s := New(netip.MustParseAddr("10.200.0.2"), "first", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(s); err != nil {
-		t.Fatal(err)
-	}
-	shadow := s.ShadowIPv4
 	s.Close()
-	deadline := time.After(time.Second)
-	for m.CleanupStats().Completed != 1 {
-		select {
-		case <-deadline:
-			t.Fatal("cleanup did not complete")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	if !c.closed {
+		t.Fatal("connection was not closed")
 	}
-	if got := m.CleanupStats().Quarantined; got != 0 {
-		t.Fatalf("successful cleanup quarantined %d addresses", got)
+	if s.Ctx.Err() != context.Canceled {
+		t.Fatalf("context err = %v", s.Ctx.Err())
 	}
-	next := New(netip.MustParseAddr("10.200.0.2"), "second", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
-	if err := m.Register(next); err != nil {
-		t.Fatal(err)
-	}
-	if next.ShadowIPv4 != shadow {
-		t.Fatalf("successful cleanup reused %s, want %s", next.ShadowIPv4, shadow)
-	}
-	next.Close()
 }

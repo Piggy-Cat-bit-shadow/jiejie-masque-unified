@@ -26,9 +26,8 @@ func (i doctorTestInfo) Sys() any           { return nil }
 
 func doctorTestConfig(dns bool) config.Config {
 	return config.Config{
-		Mode:       "connect-ip",
 		QUIC:       config.QUIC{StatelessResetKeyFile: "/var/lib/jiejie-masque-connect-ip/stateless-reset.key"},
-		Server:     config.Server{TunnelIPv4: "10.200.0.1/16", MTU: 1280},
+		Server:     config.Server{TunnelIPv4: "10.200.0.1/16"},
 		DNSGateway: config.DNSGateway{Enabled: &dns, Port: 5353},
 	}
 }
@@ -77,7 +76,7 @@ func TestDoctorPassAndReadOnlyCommands(t *testing.T) {
 func TestDoctorDistinguishesLocalIPv6PrerequisitesFromProviderRouting(t *testing.T) {
 	dns := false
 	c := doctorTestConfig(dns)
-	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64", MTU: 1280, AdvertiseIPv6DefaultRoute: true}
+	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64", AdvertiseIPv6DefaultRoute: true}
 	rt, _ := doctorTestRuntime(t, "Status: inactive\n", "")
 	rt.checkIPv6Forwarding = func() error { return nil }
 	rt.checkIPv6Egress = func(iface string, prefix netip.Prefix) error {
@@ -108,7 +107,7 @@ func TestDoctorDistinguishesLocalIPv6PrerequisitesFromProviderRouting(t *testing
 
 func TestDoctorFailsWhenActiveUFWDoesNotEnableIPv6(t *testing.T) {
 	c := doctorTestConfig(false)
-	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64", MTU: 1280}
+	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64"}
 	rt, _ := doctorTestRuntime(t, "Status: active\n", "")
 	rt.checkIPv6Forwarding = func() error { return nil }
 	rt.checkIPv6Egress = func(string, netip.Prefix) error { return nil }

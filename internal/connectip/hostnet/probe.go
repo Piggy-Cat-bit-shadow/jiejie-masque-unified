@@ -3,7 +3,6 @@ package hostnet
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/netip"
 	"os/exec"
 	"strings"
@@ -62,38 +61,8 @@ func (p Probe) Check() error {
 	return nil
 }
 
-type Supervisor struct {
-	Probe    Probe
-	Interval time.Duration
-}
-
-func (s Supervisor) Run(ctx context.Context, fatal chan<- error) {
-	ticker := time.NewTicker(s.Interval)
-	defer ticker.Stop()
-	failures := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.Probe.Check(); err != nil {
-				failures++
-				log.Printf("host-network probe failed (%d/2): %v", failures, err)
-				if failures >= 2 {
-					fatal <- err
-					return
-				}
-				continue
-			}
-			failures = 0
-		}
-	}
-}
-
 func CheckNAT(external string, prefix netip.Prefix) error {
 	if prefix.Addr().Is6() {
-		// IPv6 is routed by default. NAT66 is an explicit future mode, not a
-		// prerequisite for a production dual-stack deployment.
 		return nil
 	}
 	if external == "" {
@@ -101,11 +70,7 @@ func CheckNAT(external string, prefix netip.Prefix) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	family := "ip"
-	if prefix.Addr().Is6() {
-		family = "ip6"
-	}
-	out, err := execNft(ctx, "-a", "list", "table", family, "masque_lite")
+	out, err := execNft(ctx, "-a", "list", "table", "ip", "masque_lite")
 	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("nft query timeout")

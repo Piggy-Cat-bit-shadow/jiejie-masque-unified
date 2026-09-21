@@ -13,8 +13,7 @@ const networkPrepareTestKey = "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNY
 func writeNetworkPrepareConfig(t *testing.T, tunnelIPv4 string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test config.yaml")
-	content := "mode: connect-ip\n" +
-		"listen: 127.0.0.1:4434\n" +
+	content := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: c\n  key: k\n" +
 		"client:\n  public_keys: [" + networkPrepareTestKey + "]\n  tunnel_ipv4: 10.200.0.2/32\n" +
 		"server:\n  tunnel_ipv4: " + tunnelIPv4 + "\n"
@@ -56,7 +55,7 @@ func TestNetworkPrepareInfoRejectsConfigParserErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
-			base := "mode: connect-ip\nlisten: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + networkPrepareTestKey + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/16\n"
+			base := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + networkPrepareTestKey + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/16\n"
 			if err := os.WriteFile(path, []byte(tc.mutate(base)), 0o600); err != nil {
 				t.Fatal(err)
 			}

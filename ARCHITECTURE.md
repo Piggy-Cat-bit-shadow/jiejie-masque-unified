@@ -1,9 +1,5 @@
 # jiejie-masque architecture
 
-This repository contains one Go binary with independent CONNECT-IP and
-CONNECT-UDP MASQUE services. The canonical architecture, ownership rules,
-queue limits, security model, operational boundaries, and frozen optimization
-decisions are documented in [docs/architecture.md](docs/architecture.md).
-
-Runtime is in maintenance mode: change it only for a demonstrated correctness,
-security, compatibility, ownership, or shutdown issue.
+本仓库是单一 Linux CONNECT-IP MASQUE 服务端。架构、ownership 和运行时边界
+见 [docs/architecture-lean.md](docs/architecture-lean.md)。外层 QUIC 使用维护
+fork；TUN 数据面保持普通 bounded read/write，QUIC UDP GSO 仍由传输层负责。

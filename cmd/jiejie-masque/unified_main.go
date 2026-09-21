@@ -1,25 +1,14 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"runtime"
-	"strings"
-	"syscall"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectudp"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
-	"go.yaml.in/yaml/v3"
 )
-
-type modeEnvelope struct {
-	Mode string `yaml:"mode"`
-}
 
 var version = "dev"
 var commit = "unknown"
@@ -38,12 +27,6 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Printf("jiejie-masque %s commit=%s\n", version, commit)
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "diagnose-report" {
-		if err := diagnoseReportCommand(os.Args[1:]); err != nil {
-			log.Fatal(err)
-		}
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "keygen" {
@@ -104,60 +87,11 @@ func main() {
 	if *path == "" {
 		log.Fatal("--config is required")
 	}
-	b, err := os.ReadFile(*path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var env modeEnvelope
-	if err := yaml.Unmarshal(b, &env); err != nil {
-		log.Fatal(err)
-	}
-	if strings.TrimSpace(env.Mode) == "connect-udp" {
-		c, err := connectudp.Load(*path)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if os.Args[1] == "check-config" {
-			if err := c.Validate(true); err != nil {
-				log.Fatal(err)
-			}
-			fmt.Printf("mode: connect-udp\nvalidation: pass\n")
-			return
-		}
-		if os.Args[1] != "serve" {
-			log.Fatalf("unknown command %q", os.Args[1])
-		}
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
-		ready := make(chan string, 1)
-		serveErr := make(chan error, 1)
-		go func() { serveErr <- connectudp.ServeContextReady(ctx, c, ready) }()
-		select {
-		case addr := <-ready:
-			log.Printf("CONNECT-UDP ready on %s", addr)
-			if err := notify.Send("READY=1"); err != nil {
-				log.Printf("systemd notify failed: %v", err)
-			}
-			go runSystemdWatchdog(ctx)
-		case err := <-serveErr:
-			if err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-		if err := <-serveErr; err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	if strings.TrimSpace(env.Mode) != "connect-ip" {
-		log.Fatalf("unsupported mode %q", env.Mode)
-	}
 	if os.Args[1] == "check-config" {
 		if err := checkConfig(*path); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("mode: connect-ip\nvalidation: pass\n")
+		fmt.Printf("validation: pass\n")
 		return
 	}
 	if os.Args[1] != "serve" {
@@ -166,11 +100,4 @@ func main() {
 	if err := serveConnectIPArgs([]string{"--config", *path}); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func diagnoseReportCommand(args []string) error {
-	if len(args) != 2 {
-		return fmt.Errorf("usage: jiejie-masque diagnose-report FILE")
-	}
-	return diagnoseReport(args[1])
 }

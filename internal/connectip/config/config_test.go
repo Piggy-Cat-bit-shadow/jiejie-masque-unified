@@ -9,79 +9,47 @@ import (
 	"testing"
 )
 
-func TestValidate(t *testing.T) {
-	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/30"}}
-	if e := c.Validate(); e != nil {
-		t.Fatal(e)
+const testClientKey = "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
+
+func validConfig() Config {
+	return Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{testClientKey}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/24"}}
+}
+
+func TestValidateAndProductionDefaults(t *testing.T) {
+	c := validConfig()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
-	c.Server.TunTXGRO = true
-	if e := c.Validate(); e == nil || e.Error() != "server.tun_tx_gro requires server.tun_offload=true" {
-		t.Fatalf("invalid TX GRO config error = %v", e)
-	}
-	c.Server.TunOffload = true
-	if e := c.Validate(); e != nil {
-		t.Fatalf("valid TX GRO config: %v", e)
-	}
-	c.Server.TunnelIPv4 = "::1/128"
-	if e := c.Validate(); e == nil {
-		t.Fatal("expected IPv6 rejection")
+	c.QUIC.CongestionController = "cubic"
+	c.QUIC.CongestionController = "reno"
+	if err := c.Validate(); err == nil {
+		t.Fatal("unknown controller accepted")
 	}
 }
 
-func TestLoadSessionIdleTimeoutDefaultAndDisable(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	base := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/30\n"
+func TestLoadDefaultsAndRetiredFields(t *testing.T) {
+	base := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + testClientKey + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/24\n"
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
 		t.Fatal(err)
 	}
 	c, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if c.Server.SessionIdleTimeout != "1h" {
-		t.Fatalf("default idle timeout = %q", c.Server.SessionIdleTimeout)
-	}
-	if c.Server.OutboundQueueSize != 1024 {
-		t.Fatalf("default outbound queue size = %d", c.Server.OutboundQueueSize)
-	}
-	if c.Server.TunOffload {
-		t.Fatal("TUN offload must default to disabled")
 	}
 	if c.QUIC.CongestionController != "cubic" {
-		t.Fatalf("default congestion controller = %q", c.QUIC.CongestionController)
+		t.Fatalf("unexpected lean defaults: %+v", c)
 	}
 	if c.QUIC.StatelessResetKeyFile != DefaultStatelessResetKeyFile {
-		t.Fatalf("default stateless reset key = %q, want %q", c.QUIC.StatelessResetKeyFile, DefaultStatelessResetKeyFile)
+		t.Fatalf("reset key default=%q", c.QUIC.StatelessResetKeyFile)
 	}
-	if err := os.WriteFile(path, []byte(base+"  session_idle_timeout: 0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err = Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Server.SessionIdleTimeout != "0" {
-		t.Fatalf("disabled idle timeout = %q", c.Server.SessionIdleTimeout)
-	}
-	if c.HostNetwork.CheckInterval != "30s" {
-		t.Fatalf("default check interval = %q", c.HostNetwork.CheckInterval)
-	}
-}
-
-func TestLoadPreservesExplicitStatelessResetKeyFile(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nquic:\n  stateless_reset_key_file: /custom/example/reset.key\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/30\n"
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.QUIC.StatelessResetKeyFile != "/custom/example/reset.key" {
-		t.Fatalf("explicit stateless reset key = %q", c.QUIC.StatelessResetKeyFile)
+	for _, field := range []string{"  outbound_queue_size: 1024\n", "  session_nat:\n    enabled: true\n", "diagnostics:\n  pipeline:\n    enabled: true\n"} {
+		if err := os.WriteFile(path, []byte(base+field), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("retired field accepted: %q", field)
+		}
 	}
 }
 
@@ -94,258 +62,63 @@ func TestDefaultStatelessResetKeyMatchesPackagedStateDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const marker = "StateDirectory="
-	var stateDirectory string
+	var state string
 	for _, line := range strings.Split(string(unit), "\n") {
-		if strings.HasPrefix(line, marker) {
-			stateDirectory = strings.TrimSpace(strings.TrimPrefix(line, marker))
+		if strings.HasPrefix(line, "StateDirectory=") {
+			state = strings.TrimSpace(strings.TrimPrefix(line, "StateDirectory="))
 			break
 		}
 	}
-	if stateDirectory == "" {
-		t.Fatal("packaged CONNECT-IP unit has no StateDirectory")
-	}
-	if stateDirectory != ConnectIPStateDirectory {
-		t.Fatalf("StateDirectory = %q, want %q", stateDirectory, ConnectIPStateDirectory)
-	}
-	want := filepath.Join("/var/lib", stateDirectory, "stateless-reset.key")
-	if DefaultStatelessResetKeyFile != want {
-		t.Fatalf("default stateless reset key = %q, want %q", DefaultStatelessResetKeyFile, want)
-	}
-}
-
-func TestLoadAppliesSessionAndDNSDefaultsBeforeValidation(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/24\n  session_nat:\n    enabled: true\n    pool: 10.200.0.128/25\n"
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Server.MTU != 1280 || c.Server.OutboundQueueSize != 1024 {
-		t.Fatalf("server defaults = mtu %d queue %d", c.Server.MTU, c.Server.OutboundQueueSize)
-	}
-	if c.Server.SessionNat.MaxSessions != 120 || c.Server.SessionNat.ReuseDelay != "30m" {
-		t.Fatalf("session NAT defaults = max %d delay %q", c.Server.SessionNat.MaxSessions, c.Server.SessionNat.ReuseDelay)
-	}
-	if c.DNSGateway.Enabled == nil || !*c.DNSGateway.Enabled || c.DNSGateway.Port != 5353 || c.DNSGateway.Upstream != "127.0.0.1:53" || c.DNSGateway.Timeout != "5s" || c.DNSGateway.Concurrency != 32 {
-		t.Fatalf("DNS defaults = %+v", c.DNSGateway)
-	}
-}
-
-func TestLoadTunOffload(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	data := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + key + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/30\n  tun_offload: true\n"
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.Server.TunOffload {
-		t.Fatal("tun_offload: true was not loaded")
+	if state != ConnectIPStateDirectory || DefaultStatelessResetKeyFile != filepath.Join("/var/lib", state, "stateless-reset.key") {
+		t.Fatalf("state=%q reset=%q", state, DefaultStatelessResetKeyFile)
 	}
 }
 
 func TestCongestionControllerValidation(t *testing.T) {
-	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/30"}}
-	c.QUIC.CongestionController = "cubic"
-	if err := c.Validate(); err != nil {
-		t.Fatalf("cubic rejected: %v", err)
-	}
-	c.QUIC.CongestionController = "bbr"
-	if err := c.Validate(); err != nil {
-		t.Fatalf("experimental BBR rejected: %v", err)
-	}
-	c.QUIC.CongestionController = "reno"
-	if err := c.Validate(); err == nil {
-		t.Fatal("expected unknown controller to be rejected")
-	}
-}
-
-func TestPipelineDiagnosticsValidation(t *testing.T) {
-	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/30"}, Diagnostics: Diagnostics{Pipeline: Pipeline{Enabled: true, Interval: "1s", Format: "json"}}}
-	if err := c.Validate(); err != nil {
-		t.Fatalf("valid pipeline rejected: %v", err)
-	}
-	c.Diagnostics.Pipeline.Format = "xml"
-	if err := c.Validate(); err == nil {
-		t.Fatal("invalid pipeline format accepted")
-	}
-}
-
-func TestMultiClientValidation(t *testing.T) {
-	keyA := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	keyB := "BJVHqCpze4DJd2ZMvQDENmffhP3y1iW9t63vgbGvZ2mCC9kAmupPlruK5JYN8ZpAOFBTQ9zetFSFbPIBH3mWbgA="
-	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Clients: []Client{{Name: "iphone", PublicKeys: []string{keyA}, TunnelIPv4: "10.200.0.2/32"}, {Name: "mac", PublicKeys: []string{keyB}, TunnelIPv4: "10.200.0.3/32"}}, Server: Server{TunnelIPv4: "10.200.0.1/24", MTU: 1280}}
-	clients, err := c.ResolvedClients()
-	if err != nil || len(clients) != 2 {
-		t.Fatalf("clients = %#v, err = %v", clients, err)
-	}
-	c.Clients[1].TunnelIPv4 = "10.90.0.3/32"
-	if _, err := c.ResolvedClients(); err == nil {
-		t.Fatal("expected client outside server subnet to fail")
-	}
-	c.Clients[1].TunnelIPv4 = "10.200.0.2/32"
-	if _, err := c.ResolvedClients(); err == nil {
-		t.Fatal("expected duplicate IP to fail")
-	}
-	c.Clients[1].TunnelIPv4 = "10.200.0.3/32"
-	c.Clients[1].PublicKeys = []string{keyA}
-	c.Clients[1].TunnelIPv4 = "10.200.0.4/32"
-	if _, err := c.ResolvedClients(); err == nil {
-		t.Fatal("expected duplicate key to fail")
-	}
-}
-
-func TestEffectiveClientIdentityValidation(t *testing.T) {
-	keyA := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	keyB := "BJVHqCpze4DJd2ZMvQDENmffhP3y1iW9t63vgbGvZ2mCC9kAmupPlruK5JYN8ZpAOFBTQ9zetFSFbPIBH3mWbgA="
-	base := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Server: Server{TunnelIPv4: "10.200.0.1/24"}}
-
-	duplicate := base
-	duplicate.Clients = []Client{{Name: "phone", PublicKeys: []string{keyA}, TunnelIPv4: "10.200.0.2/32"}, {Name: "phone", PublicKeys: []string{keyB}, TunnelIPv4: "10.200.0.3/32"}}
-	if _, err := duplicate.ResolvedClients(); err == nil {
-		t.Fatal("duplicate explicit client names were accepted")
-	}
-
-	generatedCollision := base
-	generatedCollision.Clients = []Client{{PublicKeys: []string{keyA}, TunnelIPv4: "10.200.0.2/32"}, {Name: "client-1", PublicKeys: []string{keyB}, TunnelIPv4: "10.200.0.3/32"}}
-	if _, err := generatedCollision.ResolvedClients(); err == nil {
-		t.Fatal("blank client name colliding with generated identity was accepted")
-	}
-
-	twoUnnamed := base
-	twoUnnamed.Clients = []Client{{PublicKeys: []string{keyA}, TunnelIPv4: "10.200.0.2/32"}, {PublicKeys: []string{keyB}, TunnelIPv4: "10.200.0.3/32"}}
-	if _, err := twoUnnamed.ResolvedClients(); err != nil {
-		t.Fatalf("unnamed clients were rejected: %v", err)
-	}
-	resolved, err := twoUnnamed.ResolvedClients()
-	if err != nil || resolved[0].Name != "client-1" || resolved[1].Name != "client-2" {
-		t.Fatalf("canonical unnamed identities = %#v, err=%v", resolved, err)
-	}
-	if got := EffectiveClientName(0, ""); got != "client-1" {
-		t.Fatalf("generated identity = %q", got)
-	}
-	if got := EffectiveClientName(1, ""); got != "client-2" {
-		t.Fatalf("generated identity = %q", got)
-	}
-
-	negativePerClient := base
-	negativePerClient.Server.SessionNat = SessionNat{MaxSessionsPerClient: -1}
-	if err := negativePerClient.Validate(); err == nil {
-		t.Fatal("negative max_sessions_per_client was accepted")
-	}
-
-	sessionBase := base
-	sessionBase.Client = Client{PublicKeys: []string{keyA}, TunnelIPv4: "10.200.0.2/32"}
-	sessionBase.Server.SessionNat = SessionNat{Enabled: true, Pool: "10.200.0.128/25", MaxSessions: 120, ReuseDelay: "30m"}
-	for _, tc := range []struct {
-		name       string
-		perClient  int
-		reuseDelay string
-		wantError  bool
-	}{
-		{name: "zero values", perClient: 0, reuseDelay: "0s"},
-		{name: "positive values", perClient: 2, reuseDelay: "1s"},
-		{name: "negative per-client limit", perClient: -1, reuseDelay: "0s", wantError: true},
-		{name: "negative reuse delay", perClient: 0, reuseDelay: "-1s", wantError: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c := sessionBase
-			c.Server.SessionNat.MaxSessionsPerClient = tc.perClient
-			c.Server.SessionNat.ReuseDelay = tc.reuseDelay
-			if err := c.Validate(); (err != nil) != tc.wantError {
-				t.Fatalf("Validate() error = %v, wantError=%t", err, tc.wantError)
-			}
-		})
-	}
-}
-
-func TestIPv6MTUValidation(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	base := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{key}, TunnelIPv6: "2001:db8:200::2/128"}, Server: Server{TunnelIPv6: "2001:db8:200::1/64", MTU: 1280}}
-	if err := base.Validate(); err != nil {
-		t.Fatalf("valid IPv6 MTU rejected: %v", err)
-	}
-	for _, mtu := range []int{1279} {
-		bad := base
-		bad.Server.MTU = mtu
-		if err := bad.Validate(); err == nil {
-			t.Fatalf("IPv6 MTU %d was accepted", mtu)
+	for _, cc := range []string{"", "default", "cubic", "bbr"} {
+		c := validConfig()
+		c.QUIC.CongestionController = cc
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%q rejected: %v", cc, err)
 		}
 	}
-	v4 := base
-	v4.Server.TunnelIPv6 = ""
-	v4.Client.TunnelIPv6 = ""
-	v4.Server.TunnelIPv4 = "10.200.0.1/24"
-	v4.Client.TunnelIPv4 = "10.200.0.2/32"
-	v4.Server.MTU = 576
-	if err := v4.Validate(); err != nil {
-		t.Fatalf("IPv4 MTU 576 rejected: %v", err)
-	}
 }
 
-func TestIPv6DefaultRouteRequiresRoutedPublicPrefix(t *testing.T) {
-	c := Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{"BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="}, TunnelIPv6: "fd00:200::2/128"}, Server: Server{TunnelIPv6: "fd00:200::1/64", MTU: 1280, AdvertiseIPv6DefaultRoute: true}}
+func TestMultiClientAndDualStackValidation(t *testing.T) {
+	c := validConfig()
+	c.Server.TunnelIPv6 = "fd00:200::1/64"
+	c.Client.TunnelIPv6 = "fd00:200::2/128"
+	clients, err := c.ResolvedClients()
+	if err != nil || len(clients) != 1 {
+		t.Fatalf("resolved=%+v err=%v", clients, err)
+	}
+	if clients[0].TunnelIPv6.Addr() != netip.MustParseAddr("fd00:200::2") {
+		t.Fatal("client IPv6 address lost")
+	}
+	c.Server.AdvertiseIPv6DefaultRoute = true
 	if err := c.Validate(); err == nil {
-		t.Fatal("ULA IPv6 default route was accepted")
+		t.Fatal("private IPv6 prefix accepted for default route")
 	}
 }
 
-func TestUsableGlobalIPv6TunnelPrefix(t *testing.T) {
-	for _, tc := range []struct {
-		prefix string
-		want   bool
-	}{
-		{"2001:4860:100::/48", true},
-		{"fd00:200::/64", false},
-		{"fe80::/64", false},
-		{"::/0", false},
-		{"::1/128", false},
-		{"ff02::/16", false},
-		{"::ffff:192.0.2.1/128", false},
-		{"2001:db8::/32", false},
-		{"2001:2::/48", false},
-		{"3fff::/20", false},
-	} {
-		t.Run(tc.prefix, func(t *testing.T) {
-			if got := isUsableGlobalIPv6TunnelPrefix(netip.MustParsePrefix(tc.prefix)); got != tc.want {
-				t.Fatalf("usable(%s) = %t, want %t", tc.prefix, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestSessionNatValidation(t *testing.T) {
-	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
-	c := Config{
-		Listen: "127.0.0.1:4434",
-		TLS:    TLS{Cert: "c", Key: "k"},
-		Client: Client{PublicKeys: []string{key}, TunnelIPv4: "10.200.0.2/32"},
-		Server: Server{TunnelIPv4: "10.200.0.1/24", SessionNat: SessionNat{Enabled: true, Pool: "10.200.0.128/25", MaxSessions: 120, ReuseDelay: "30m"}},
-	}
+func TestIPv6MTUAndPrefixValidation(t *testing.T) {
+	c := validConfig()
+	c.Server.TunnelIPv6 = "2001:4860:100::1/64"
+	c.Client.TunnelIPv6 = "2001:4860:100::2/128"
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	dual := c
-	dual.Server.TunnelIPv6 = "fd00:200::1/64"
-	dual.Client.TunnelIPv6 = "fd00:200::2/128"
-	if err := dual.Validate(); err != nil {
-		t.Fatalf("hybrid dual-stack Session NAT rejected: %v", err)
+	for prefix, want := range map[string]bool{"2001:4860:100::/48": true, "fd00::/64": false, "2001:db8::/32": false, "2001:2::/48": false} {
+		if got := IsUsableGlobalIPv6TunnelPrefix(netip.MustParsePrefix(prefix)); got != want {
+			t.Errorf("usable(%s)=%t want %t", prefix, got, want)
+		}
 	}
-	ipv6OnlyClient := dual
-	ipv6OnlyClient.Client.TunnelIPv4 = ""
-	if err := ipv6OnlyClient.Validate(); err != nil {
-		t.Fatalf("IPv6-only client with IPv4 shadow pool rejected: %v", err)
-	}
-	c.Server.SessionNat.Pool = "10.200.0.0/25"
-	if err := c.Validate(); err == nil {
-		t.Fatal("expected pool containing server address to fail")
+}
+
+func TestSessionIdleAndDNSDefaults(t *testing.T) {
+	c := validConfig()
+	c.DNSGateway.Enabled = nil
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

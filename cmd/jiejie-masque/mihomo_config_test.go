@@ -32,10 +32,9 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 	}
 	certPath := writeTestServerCertificate(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	config := "mode: connect-ip\n" +
-		"listen: 127.0.0.1:4434\n" +
+	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
-		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  mtu: 1280\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
 		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
 		"  - name: iphone\n    public_key: " + publicA + "\n    tunnel_ipv4: 10.200.0.2/32\n" +
@@ -111,8 +110,8 @@ func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
 	}
 	certPath := writeTestServerCertificate(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	configText := "mode: connect-ip\nlisten: 127.0.0.1:4434\ntls:\n  cert: " + certPath + "\n  key: unused\n" +
-		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  tunnel_ipv6: 2001:db8:200::1/64\n  mtu: 1280\n" +
+	configText := "listen: 127.0.0.1:4434\ntls:\n  cert: " + certPath + "\n  key: unused\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  tunnel_ipv6: 2001:db8:200::1/64\n" +
 		"dns_gateway:\n  enabled: true\n  port: 5353\n  upstream: 127.0.0.1:53\n" +
 		"clients:\n  - public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n    tunnel_ipv6: 2001:db8:200::2/128\n"
 	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
@@ -171,10 +170,9 @@ func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
 	}
 	certPath := writeTestServerCertificate(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	config := "mode: connect-ip\n" +
-		"listen: 127.0.0.1:4434\n" +
+	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
-		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  mtu: 1280\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
 		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
 		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
@@ -274,10 +272,9 @@ func TestMihomoConfigPKCS8InputCanonicalizesToSEC1ConsumerContract(t *testing.T)
 
 	certPath := writeTestServerCertificate(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	config := "mode: connect-ip\n" +
-		"listen: 127.0.0.1:4434\n" +
+	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
-		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  mtu: 1280\n" +
+		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
 		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
 		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"

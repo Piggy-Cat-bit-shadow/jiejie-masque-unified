@@ -119,7 +119,7 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 		if prefix.Addr().Is6() {
 			name = "ipv6-tun"
 		}
-		if err := rt.checkTunnel("masque0", prefix, c.Server.MTU); err != nil {
+		if err := rt.checkTunnel("masque0", prefix, tunnelMTU); err != nil {
 			results = append(results, doctorResult{Name: name, Level: doctorFail, Detail: err.Error(), Failure: true})
 		} else {
 			results = append(results, doctorResult{Name: name, Level: doctorPass, Detail: prefix.String()})

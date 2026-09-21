@@ -2,7 +2,6 @@ package notify
 
 import (
 	"net"
-	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -58,26 +57,5 @@ func TestSendAbstractSocket(t *testing.T) {
 	}
 	if got := string(buf[:n]); got != "WATCHDOG=1" {
 		t.Fatalf("unexpected payload %q", got)
-	}
-}
-
-func TestWatchdogInterval(t *testing.T) {
-	t.Setenv("NOTIFY_SOCKET", "/tmp/notify.sock")
-	t.Setenv("WATCHDOG_USEC", "30000000")
-	t.Setenv("WATCHDOG_PID", "")
-	interval, ok := WatchdogInterval()
-	if !ok || interval != 15*time.Second {
-		t.Fatalf("got interval=%s enabled=%v", interval, ok)
-	}
-	t.Setenv("WATCHDOG_USEC", "not-a-number")
-	if _, ok := WatchdogInterval(); ok {
-		t.Fatal("malformed watchdog interval enabled")
-	}
-	t.Setenv("WATCHDOG_USEC", "30000000")
-	t.Setenv("WATCHDOG_PID", "1")
-	if os.Getpid() != 1 {
-		if _, ok := WatchdogInterval(); ok {
-			t.Fatal("watchdog for another PID enabled")
-		}
 	}
 }

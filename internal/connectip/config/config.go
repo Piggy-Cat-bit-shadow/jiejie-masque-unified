@@ -18,7 +18,6 @@ const (
 )
 
 type Config struct {
-	Mode        string      `yaml:"mode"`
 	Listen      string      `yaml:"listen"`
 	TLS         TLS         `yaml:"tls"`
 	QUIC        QUIC        `yaml:"quic"`
@@ -27,20 +26,6 @@ type Config struct {
 	Clients     []Client    `yaml:"clients,omitempty"`
 	Server      Server      `yaml:"server"`
 	DNSGateway  DNSGateway  `yaml:"dns_gateway,omitempty"`
-	Diagnostics Diagnostics `yaml:"diagnostics,omitempty"`
-}
-type Diagnostics struct {
-	QLog     QLog     `yaml:"qlog,omitempty"`
-	Pipeline Pipeline `yaml:"pipeline,omitempty"`
-}
-type QLog struct {
-	Enabled   bool   `yaml:"enabled"`
-	Directory string `yaml:"directory"`
-}
-type Pipeline struct {
-	Enabled  bool   `yaml:"enabled"`
-	Interval string `yaml:"interval,omitempty"`
-	Format   string `yaml:"format,omitempty"`
 }
 type QUIC struct {
 	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
@@ -50,7 +35,6 @@ type HostNetwork struct {
 	ExternalInterface     string `yaml:"external_interface"`
 	ExternalInterfaceIPv4 string `yaml:"external_interface_ipv4,omitempty"`
 	ExternalInterfaceIPv6 string `yaml:"external_interface_ipv6,omitempty"`
-	CheckInterval         string `yaml:"check_interval"`
 }
 type TLS struct {
 	Cert string `yaml:"cert"`
@@ -70,15 +54,9 @@ type ResolvedClient struct {
 	TunnelIPv6 netip.Prefix
 }
 type Server struct {
-	TunnelIPv4                string     `yaml:"tunnel_ipv4"`
-	TunnelIPv6                string     `yaml:"tunnel_ipv6,omitempty"`
-	AdvertiseIPv6DefaultRoute bool       `yaml:"advertise_ipv6_default_route,omitempty"`
-	MTU                       int        `yaml:"mtu"`
-	OutboundQueueSize         int        `yaml:"outbound_queue_size,omitempty"`
-	TunOffload                bool       `yaml:"tun_offload,omitempty"`
-	TunTXGRO                  bool       `yaml:"tun_tx_gro,omitempty"`
-	SessionIdleTimeout        string     `yaml:"session_idle_timeout"`
-	SessionNat                SessionNat `yaml:"session_nat,omitempty"`
+	TunnelIPv4                string `yaml:"tunnel_ipv4"`
+	TunnelIPv6                string `yaml:"tunnel_ipv6,omitempty"`
+	AdvertiseIPv6DefaultRoute bool   `yaml:"advertise_ipv6_default_route,omitempty"`
 }
 
 // TunnelAddresses is the address set assigned to one CONNECT-IP endpoint.
@@ -169,14 +147,6 @@ func IsUsableGlobalIPv6TunnelPrefix(prefix netip.Prefix) bool {
 	return isUsableGlobalIPv6TunnelPrefix(prefix)
 }
 
-type SessionNat struct {
-	Enabled              bool   `yaml:"enabled"`
-	Pool                 string `yaml:"pool"`
-	MaxSessions          int    `yaml:"max_sessions"`
-	ReuseDelay           string `yaml:"reuse_delay"`
-	MaxSessionsPerClient int    `yaml:"max_sessions_per_client,omitempty"`
-}
-
 // DNSGateway exposes the server's local resolver only on the CONNECT-IP
 // address. It deliberately has no public listen-address option.
 type DNSGateway struct {
@@ -205,47 +175,11 @@ func Load(path string) (Config, error) {
 		}
 		return c, e
 	}
-	if c.Server.MTU == 0 {
-		c.Server.MTU = 1280
-	}
 	if c.QUIC.StatelessResetKeyFile == "" {
 		c.QUIC.StatelessResetKeyFile = DefaultStatelessResetKeyFile
 	}
 	if c.QUIC.CongestionController == "" {
 		c.QUIC.CongestionController = "cubic"
-	}
-	if c.Server.SessionIdleTimeout == "" {
-		c.Server.SessionIdleTimeout = "1h"
-	}
-	if c.Server.OutboundQueueSize == 0 {
-		c.Server.OutboundQueueSize = 1024
-	}
-	if c.HostNetwork.CheckInterval == "" {
-		c.HostNetwork.CheckInterval = "30s"
-	}
-	if c.Server.SessionNat.Enabled && c.Server.SessionNat.MaxSessions == 0 {
-		c.Server.SessionNat.MaxSessions = 120
-	}
-	if c.Server.SessionNat.Enabled && c.Server.SessionNat.ReuseDelay == "" {
-		c.Server.SessionNat.ReuseDelay = "30m"
-	}
-	if c.Diagnostics.QLog.Enabled && c.Diagnostics.QLog.Directory == "" {
-		return c, fmt.Errorf("diagnostics.qlog.directory is required when qlog is enabled")
-	}
-	if c.Diagnostics.Pipeline.Enabled {
-		if c.Diagnostics.Pipeline.Interval == "" {
-			c.Diagnostics.Pipeline.Interval = "1s"
-		}
-		interval, err := time.ParseDuration(c.Diagnostics.Pipeline.Interval)
-		if err != nil || interval <= 0 {
-			return c, fmt.Errorf("diagnostics.pipeline.interval must be a positive duration")
-		}
-		if c.Diagnostics.Pipeline.Format == "" {
-			c.Diagnostics.Pipeline.Format = "text"
-		}
-		if c.Diagnostics.Pipeline.Format != "text" && c.Diagnostics.Pipeline.Format != "json" {
-			return c, fmt.Errorf("diagnostics.pipeline.format must be text or json")
-		}
 	}
 	// DNS is part of the CONNECT-IP service, rather than a client-side
 	// prerequisite. Existing configurations get the production default.
@@ -270,23 +204,6 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
-	if c.Diagnostics.Pipeline.Enabled {
-		if c.Diagnostics.Pipeline.Interval != "" {
-			interval, err := time.ParseDuration(c.Diagnostics.Pipeline.Interval)
-			if err != nil || interval <= 0 {
-				return fmt.Errorf("diagnostics.pipeline.interval must be a positive duration")
-			}
-		}
-		if c.Diagnostics.Pipeline.Format != "" && c.Diagnostics.Pipeline.Format != "text" && c.Diagnostics.Pipeline.Format != "json" {
-			return fmt.Errorf("diagnostics.pipeline.format must be text or json")
-		}
-	}
-	if c.Server.TunTXGRO && !c.Server.TunOffload {
-		return fmt.Errorf("server.tun_tx_gro requires server.tun_offload=true")
-	}
-	if c.Mode != "" && c.Mode != "connect-ip" {
-		return fmt.Errorf("mode must be connect-ip")
-	}
 	if c.Listen == "" || c.TLS.Cert == "" || c.TLS.Key == "" {
 		return fmt.Errorf("listen, tls.cert and tls.key are required")
 	}
@@ -297,12 +214,6 @@ func (c Config) Validate() error {
 	}
 	if len(c.Clients) > 0 && (len(c.Client.PublicKeys) > 0 || c.Client.PublicKey != "" || c.Client.TunnelIPv4 != "" || c.Client.TunnelIPv6 != "") {
 		return fmt.Errorf("client and clients cannot both be configured")
-	}
-	if c.Server.MTU != 0 && (c.Server.MTU < 576 || c.Server.MTU > 65535) {
-		return fmt.Errorf("server.mtu must be between 576 and 65535")
-	}
-	if c.Server.TunnelIPv6 != "" && c.Server.MTU != 0 && c.Server.MTU < 1280 {
-		return fmt.Errorf("server.mtu must be at least 1280 when IPv6 tunnel addressing is enabled")
 	}
 	if c.Server.AdvertiseIPv6DefaultRoute {
 		addresses, err := c.ServerAddresses()
@@ -316,39 +227,8 @@ func (c Config) Validate() error {
 			return fmt.Errorf("server.advertise_ipv6_default_route requires a usable global IPv6 prefix; ULA, link-local, and special-use prefixes cannot provide public egress")
 		}
 	}
-	if c.Server.OutboundQueueSize != 0 && (c.Server.OutboundQueueSize < 64 || c.Server.OutboundQueueSize > 4096) {
-		return fmt.Errorf("server.outbound_queue_size must be between 64 and 4096")
-	}
-	idleTimeout := c.Server.SessionIdleTimeout
-	if idleTimeout == "" {
-		idleTimeout = "1h"
-	}
-	if _, e := time.ParseDuration(idleTimeout); e != nil {
-		return fmt.Errorf("invalid server.session_idle_timeout")
-	}
-	if d, _ := time.ParseDuration(idleTimeout); d < 0 {
-		return fmt.Errorf("server.session_idle_timeout must not be negative")
-	}
-	checkInterval := c.HostNetwork.CheckInterval
-	if checkInterval == "" {
-		checkInterval = "30s"
-	}
-	if _, e := time.ParseDuration(checkInterval); e != nil {
-		return fmt.Errorf("invalid host_network.check_interval")
-	}
-	if d, _ := time.ParseDuration(checkInterval); d <= 0 {
-		return fmt.Errorf("host_network.check_interval must be positive")
-	}
 	if _, e := c.ResolvedClients(); e != nil {
 		return e
-	}
-	if c.Server.SessionNat.MaxSessionsPerClient < 0 {
-		return fmt.Errorf("server.session_nat.max_sessions_per_client must not be negative")
-	}
-	if c.Server.SessionNat.ReuseDelay != "" {
-		if reuseDelay, e := time.ParseDuration(c.Server.SessionNat.ReuseDelay); e == nil && reuseDelay < 0 {
-			return fmt.Errorf("server.session_nat.reuse_delay must not be negative")
-		}
 	}
 	if c.DNSGateway.Enabled != nil && *c.DNSGateway.Enabled {
 		if c.DNSGateway.Port < 1024 || c.DNSGateway.Port > 65535 {
@@ -364,59 +244,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("dns_gateway.concurrency must be between 1 and 256")
 		}
 	}
-	if c.Server.SessionNat.Enabled {
-		if c.Server.TunnelIPv4 == "" {
-			return fmt.Errorf("server.session_nat requires server.tunnel_ipv4 for IPv4 shadow allocation; IPv6-only clients may still use direct IPv6")
-		}
-		pool, e := netip.ParsePrefix(c.Server.SessionNat.Pool)
-		if e != nil || !pool.Addr().Is4() {
-			return fmt.Errorf("invalid session_nat.pool")
-		}
-		if pool.Bits() < 16 || pool.Bits() > 30 {
-			return fmt.Errorf("session_nat.pool prefix must be between /16 and /30")
-		}
-		server, _ := netip.ParsePrefix(c.Server.TunnelIPv4)
-		poolLast := netip.AddrFrom4(addIPv4(pool.Masked().Addr().As4(), uint32((uint64(1)<<uint(32-pool.Bits()))-1)))
-		if !server.Contains(pool.Masked().Addr()) || !server.Contains(poolLast) {
-			return fmt.Errorf("session_nat.pool must be inside server network")
-		}
-		if pool.Contains(server.Addr()) {
-			return fmt.Errorf("session_nat.pool must not contain server tunnel address")
-		}
-		if c.Server.SessionNat.MaxSessions <= 0 {
-			return fmt.Errorf("session_nat.max_sessions must be positive")
-		}
-		if c.Server.SessionNat.MaxSessions > 4096 {
-			return fmt.Errorf("session_nat.max_sessions must not exceed 4096")
-		}
-		reuseDelay, e := time.ParseDuration(c.Server.SessionNat.ReuseDelay)
-		if e != nil || c.Server.SessionNat.ReuseDelay == "" || reuseDelay < 0 {
-			return fmt.Errorf("invalid session_nat.reuse_delay")
-		}
-		available := uint64(1) << uint(32-pool.Bits())
-		if available > 2 {
-			available -= 2
-		}
-		for _, cl := range mustResolved(c) {
-			if pool.Contains(cl.TunnelIPv4.Addr()) && available > 0 {
-				available--
-			}
-		}
-		if uint64(c.Server.SessionNat.MaxSessions) > available {
-			return fmt.Errorf("session_nat.max_sessions exceeds available shadow addresses")
-		}
-	}
 	return nil
 }
 
 func (d DNSGateway) IsEnabled() bool         { return d.Enabled == nil || *d.Enabled }
 func mustResolved(c Config) []ResolvedClient { v, _ := c.ResolvedClients(); return v }
-
-func addIPv4(a [4]byte, n uint32) [4]byte {
-	v := uint32(a[0])<<24 | uint32(a[1])<<16 | uint32(a[2])<<8 | uint32(a[3])
-	v += n
-	return [4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
-}
 
 func (c Config) ResolvedClients() ([]ResolvedClient, error) {
 	server, e := c.ServerAddresses()

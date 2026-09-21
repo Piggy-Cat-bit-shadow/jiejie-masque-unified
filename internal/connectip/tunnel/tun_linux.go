@@ -5,12 +5,10 @@ package tunnel
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,27 +16,19 @@ import (
 )
 
 type Device struct {
-	f              *os.File
-	Name           string
-	MTU            int
-	offload        bool
-	txGRO          bool
-	txGROBuf       []byte
-	txGROMu        sync.Mutex
-	readBuffer     [65545]byte
-	rxPackets      atomic.Uint64
-	rxBytes        atomic.Uint64
-	txPackets      atomic.Uint64
-	txBytes        atomic.Uint64
-	rxBatches      atomic.Uint64
-	rxBatchPackets atomic.Uint64
+	f         *os.File
+	Name      string
+	MTU       int
+	rxPackets atomic.Uint64
+	rxBytes   atomic.Uint64
+	txPackets atomic.Uint64
+	txBytes   atomic.Uint64
 }
 
 type tunFDOps struct {
 	open        func(string, int, uint32) (int, error)
 	ioctl       func(int, uint, *unix.Ifreq) error
 	setNonblock func(int, bool) error
-	setOffload  func(int, int) error
 	newFile     func(uintptr, string) *os.File
 	close       func(int) error
 }
@@ -47,18 +37,15 @@ var systemTunFDOps = tunFDOps{
 	open:        unix.Open,
 	ioctl:       unix.IoctlIfreq,
 	setNonblock: unix.SetNonblock,
-	setOffload: func(fd, flags int) error {
-		return unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, flags)
-	},
-	newFile: os.NewFile,
-	close:   unix.Close,
+	newFile:     os.NewFile,
+	close:       unix.Close,
 }
 
-func Open(name string, mtu int, offload bool, txGRO bool) (*Device, error) {
-	return openTun(name, mtu, offload, txGRO, systemTunFDOps)
+func Open(name string, mtu int) (*Device, error) {
+	return openTun(name, mtu, systemTunFDOps)
 }
 
-func openTun(name string, mtu int, offload, txGRO bool, ops tunFDOps) (*Device, error) {
+func openTun(name string, mtu int, ops tunFDOps) (*Device, error) {
 	fd, err := ops.open("/dev/net/tun", unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -69,7 +56,7 @@ func openTun(name string, mtu int, offload, txGRO bool, ops tunFDOps) (*Device, 
 			_ = ops.close(fd)
 		}
 	}()
-	ifr, err := newIfreq(name, offload)
+	ifr, err := newIfreq(name)
 	if err != nil {
 		return nil, err
 	}
@@ -84,24 +71,15 @@ func openTun(name string, mtu int, offload, txGRO bool, ops tunFDOps) (*Device, 
 		return nil, fmt.Errorf("create TUN file")
 	}
 	closeFD = false
-	if offload {
-		if err = ops.setOffload(fd, unix.TUN_F_CSUM|unix.TUN_F_TSO4|unix.TUN_F_TSO6); err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("TUNSETOFFLOAD: %w", err)
-		}
-	}
-	return &Device{f: f, Name: ifr.Name(), MTU: mtu, offload: offload, txGRO: txGRO}, nil
+	return &Device{f: f, Name: ifr.Name(), MTU: mtu}, nil
 }
 
-func newIfreq(name string, offload bool) (*unix.Ifreq, error) {
+func newIfreq(name string) (*unix.Ifreq, error) {
 	ifr, err := unix.NewIfreq(name)
 	if err != nil {
 		return nil, err
 	}
 	flags := uint16(unix.IFF_TUN | unix.IFF_NO_PI)
-	if offload {
-		flags |= unix.IFF_VNET_HDR
-	}
 	ifr.SetUint16(flags)
 	return ifr, nil
 }
@@ -241,50 +219,24 @@ func (d *Device) Read(p []byte) (int, error) {
 	if err == nil {
 		d.rxPackets.Add(1)
 		d.rxBytes.Add(uint64(n))
-		d.rxBatches.Add(1)
-		d.rxBatchPackets.Add(1)
 	}
 	return n, err
 }
 func (d *Device) Write(p []byte) (int, error) {
-	if !d.offload {
-		n, err := d.f.Write(p)
-		if err == nil {
-			d.txPackets.Add(1)
-			d.txBytes.Add(uint64(n))
-		}
-		return n, err
+	n, err := d.f.Write(p)
+	if err == nil {
+		d.txPackets.Add(1)
+		d.txBytes.Add(uint64(n))
 	}
-	var header [10]byte
-	raw, err := d.f.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	err = raw.Write(func(fd uintptr) bool {
-		n, err = unix.Writev(int(fd), [][]byte{header[:], p})
-		return err != unix.EAGAIN && err != unix.EWOULDBLOCK
-	})
-	if err != nil {
-		return 0, err
-	}
-	if n != len(header)+len(p) {
-		return 0, io.ErrShortWrite
-	}
-	d.txPackets.Add(1)
-	d.txBytes.Add(uint64(len(p)))
-	return len(p), nil
+	return n, err
 }
 
 type Stats struct {
-	RXPackets, RXBytes        uint64
-	TXPackets, TXBytes        uint64
-	RXBatches, RXBatchPackets uint64
+	RXPackets, RXBytes uint64
+	TXPackets, TXBytes uint64
 }
 
 func (d *Device) Stats() Stats {
-	return Stats{RXPackets: d.rxPackets.Load(), RXBytes: d.rxBytes.Load(), TXPackets: d.txPackets.Load(), TXBytes: d.txBytes.Load(), RXBatches: d.rxBatches.Load(), RXBatchPackets: d.rxBatchPackets.Load()}
+	return Stats{RXPackets: d.rxPackets.Load(), RXBytes: d.rxBytes.Load(), TXPackets: d.txPackets.Load(), TXBytes: d.txBytes.Load()}
 }
-func (d *Device) Close() error         { return d.f.Close() }
-func (d *Device) OffloadEnabled() bool { return d.offload }
-func (d *Device) TXGROEnabled() bool   { return d.txGRO }
+func (d *Device) Close() error { return d.f.Close() }

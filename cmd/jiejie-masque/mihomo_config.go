@@ -88,7 +88,7 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	node := map[string]any{
 		"name": *name, "type": "masque", "server": *server, "port": *port,
 		"private-key": canonicalPrivateKey, "public-key": serverPublicKey,
-		"mtu": c.Server.MTU, "udp": true,
+		"mtu": tunnelMTU, "udp": true,
 		"ip-stack":              map[string]any{"mode": "mips", "congestion-controller": "bbr3"},
 		"congestion-controller": "bbr", "bbr-profile": "standard",
 	}

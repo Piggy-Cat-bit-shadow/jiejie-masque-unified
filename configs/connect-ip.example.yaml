@@ -1,15 +1,4 @@
-mode: connect-ip
 listen: 127.0.0.1:4434
-diagnostics:
-  qlog:
-    enabled: false
-    directory: /var/log/jiejie-masque/qlog
-  # Opt-in one-second aggregate pipeline diagnostics. JSON emits one JSON line
-  # per interval and never includes client identity, targets, or payloads.
-  pipeline:
-    enabled: false
-    interval: 1s
-    format: text
 tls:
   # Generated with: jiejie-masque server-keygen --cert /etc/jiejie-masque/connect-ip/server.crt --key /etc/jiejie-masque/connect-ip/server.key
   # Must be an independent P-256 ECDSA certificate, not a wildcard certificate.
@@ -26,7 +15,6 @@ host_network:
   # Optional overrides when IPv4 and IPv6 leave through different WAN interfaces.
   # external_interface_ipv4: eth0
   # external_interface_ipv6: eth1
-  check_interval: 30s
 client:
   # Example-only public key; replace it with the client's raw P-256 public key.
   public_keys: [BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=]
@@ -50,29 +38,9 @@ server:
   # Keep false for ULA/internal IPv6. Set true only when the VPS operator has
   # routed a public IPv6 prefix to the TUN path; this advertises ::/0 to clients.
   advertise_ipv6_default_route: false
-  mtu: 1280
-  # Optional Linux IFF_VNET_HDR RX GSO split path. Keep disabled until tested.
-  tun_offload: false
-  tun_tx_gro: false
-  # 1024 packets is about 1.25 MiB at MTU 1280. It covers more of a typical
-  # high-RTT WAN BDP without making memory unbounded; validate per deployment.
-  outbound_queue_size: 1024
-  session_idle_timeout: 1h
-  session_nat:
-    enabled: true
-    pool: 10.200.128.0/17
-    max_sessions: 120
-    max_sessions_per_client: 32
-    reuse_delay: 30m
-# IPv6 cannot currently be combined with server.session_nat. Disable it for
-# the single-session or dual-stack mode.
 dns_gateway:
   enabled: true
   port: 5353
   upstream: 127.0.0.1:53
   timeout: 5s
   concurrency: 32
-# For legacy single-session compatibility only, disable session_nat and use:
-# server:
-#   tunnel_ipv4: 10.200.0.1/30
-#   mtu: 1280
