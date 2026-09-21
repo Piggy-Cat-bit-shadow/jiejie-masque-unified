@@ -4,7 +4,7 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `ce9e71dbb523246036abadda35e84ce8df82b0eb`
+- Pinned commit: `655218e5a1721b50432866cd8a988077b8bd0bac`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
 - Local patches in the maintained fork: owned DATAGRAM buffers, nonblocking and
@@ -45,7 +45,7 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `6cde461225f7cffb95127ef9419b09baff3d444a`
+- Pinned commit: `6f63f5dec0a9df5ab4fb973c5e79a92a256eed9c`
 - License: MIT
 - Used interfaces: owned packet-buffer send and prefix-accepting batch send,
   borrowed packet-buffer receive, bounded DATAGRAM ownership, and CONNECT-IP

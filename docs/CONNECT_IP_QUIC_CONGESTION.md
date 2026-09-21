@@ -36,7 +36,7 @@ HTTP/3 control stream and CONNECT-IP data plane
 `github.com/metacubex/quic-go` is replaced by
 `github.com/Piggy-Cat-bit-shadow/quic-go` commit
 `bc10ff1536061eeabfbb92aae28c4fae35377e7c`.
-The maintained fork is pinned at `ce9e71dbb523246036abadda35e84ce8df82b0eb`.
+The maintained fork is pinned at `655218e5a1721b50432866cd8a988077b8bd0bac`.
 It is based on canonical quic-go v0.62.0 commit
 `793f74d8e03368c5aded128af6f48d21dbb47f73`; the fork adds the project's
 DATAGRAM/ownership integration, CUBIC and experimental BBRv1 selection, and

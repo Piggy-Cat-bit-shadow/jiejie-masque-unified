@@ -5,10 +5,10 @@ go 1.26.0
 toolchain go1.26.8
 
 require (
-	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921002806-6cde461225f7
+	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921003827-6f63f5dec0a9
 	github.com/dunglas/httpsfv v1.1.1
 	github.com/metacubex/http v0.1.7
-	github.com/metacubex/quic-go v0.61.1-0.20260921002656-ce9e71dbb523
+	github.com/metacubex/quic-go v0.61.1-0.20260921003739-655218e5a172
 	github.com/metacubex/tls v0.1.8
 	github.com/yosida95/uritemplate/v3 v3.0.2
 	go.yaml.in/yaml/v3 v3.0.5
@@ -18,7 +18,7 @@ require (
 
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior while consuming the
 // project-maintained fork's DATAGRAM ownership and experimental BBR support.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921002656-ce9e71dbb523
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921003739-655218e5a172
 
 require (
 	github.com/metacubex/cpu v0.1.0 // indirect
