@@ -21,7 +21,6 @@ type PacketConn interface {
 }
 
 type Session struct {
-	ID         uint64
 	Generation uint64
 	ClientIP   netip.Addr
 	ClientIPs  []netip.Addr
@@ -32,11 +31,10 @@ type Session struct {
 	Ctx        context.Context
 	Cancel     context.CancelFunc
 
-	manager     *Manager
-	onClose     func(*Session)
-	closeOnce   sync.Once
-	removed     atomic.Bool
-	closeReason atomic.Value
+	manager   *Manager
+	onClose   func(*Session)
+	closeOnce sync.Once
+	removed   atomic.Bool
 }
 
 func (s *Session) OwnsAddress(ip netip.Addr) bool {
@@ -46,19 +44,6 @@ func (s *Session) OwnsAddress(ip netip.Addr) bool {
 		}
 	}
 	return false
-}
-
-func (s *Session) SetCloseReason(reason string) {
-	if reason != "" {
-		s.closeReason.Store(reason)
-	}
-}
-
-func (s *Session) CloseReason() string {
-	if reason, ok := s.closeReason.Load().(string); ok {
-		return reason
-	}
-	return ""
 }
 
 func New(ip netip.Addr, identity string, conn PacketConn, onClose func(*Session)) *Session {
@@ -210,7 +195,6 @@ func (m *Manager) Replace(s *Session) ([]*Session, error) {
 		}
 	}
 	m.nextGeneration++
-	s.ID = m.nextGeneration
 	s.Generation = m.nextGeneration
 	s.manager = m
 	for _, ip := range s.ClientIPs {

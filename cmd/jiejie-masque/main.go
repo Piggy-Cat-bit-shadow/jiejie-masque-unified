@@ -270,21 +270,14 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 	if len(old) != 0 {
 		log.Printf("session takeover")
 	}
-	log.Printf("session=%d established", s.ID)
+	log.Printf("CONNECT-IP session established")
 	go sessionReaderWithAddresses(s, tun, serverAddresses)
 	select {
 	case <-r.Context().Done():
 	case <-s.Ctx.Done():
 	}
 	s.Close()
-	reason := s.CloseReason()
-	if reason == "" {
-		reason = "peer"
-	}
-	if r.Context().Err() != nil {
-		reason = "context"
-	}
-	log.Printf("session=%d closed reason=%s", s.ID, reason)
+	log.Printf("CONNECT-IP session closed")
 }
 
 func firstPrefix(a config.TunnelAddresses) netip.Prefix {
@@ -301,7 +294,6 @@ func connectIPRoutes(client, server config.TunnelAddresses, advertiseIPv6Default
 	if client.IPv6.IsValid() {
 		if advertiseIPv6DefaultRoute {
 			routes = append(routes, connectip.IPRoute{StartIP: netip.IPv6Unspecified(), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
-		} else if server.IPv6.IsValid() {
 		}
 	}
 	return routes
@@ -338,7 +330,6 @@ func dispatchTUNPacket(data []byte, mgr *session.Manager, tun tunPacketWriter) {
 	icmp, err := s.Conn.WritePacket(data)
 	if len(icmp) != 0 {
 		if _, writeErr := tun.Write(icmp); writeErr != nil {
-			s.SetCloseReason("icmp-write-error")
 			s.Close()
 			return
 		}
@@ -347,7 +338,6 @@ func dispatchTUNPacket(data []byte, mgr *session.Manager, tun tunPacketWriter) {
 		if normalSessionError(err, s.Ctx) {
 			return
 		}
-		s.SetCloseReason("write-error")
 		log.Printf("CONNECT-IP packet write failed: %v", err)
 		s.Close()
 		return
@@ -362,8 +352,7 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 			if normalSessionError(err, s.Ctx) {
 				return
 			}
-			s.SetCloseReason("read-error")
-			log.Printf("session=%d session read failed: %v", s.ID, err)
+			log.Printf("CONNECT-IP session read failed: %v", err)
 			s.Close()
 			return
 		}
@@ -372,8 +361,7 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 			continue
 		}
 		if _, err = tun.Write(pkt); err != nil {
-			s.SetCloseReason("tun-write-error")
-			log.Printf("session=%d TUN write failed: %v", s.ID, err)
+			log.Printf("CONNECT-IP TUN write failed: %v", err)
 			s.Close()
 			return
 		}
