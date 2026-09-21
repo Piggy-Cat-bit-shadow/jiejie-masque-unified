@@ -35,4 +35,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/metacubex/connect-ip-go => github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921034235-3532964bd9cd
+replace github.com/metacubex/connect-ip-go => github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921034515-fc5bf33d1eb5
