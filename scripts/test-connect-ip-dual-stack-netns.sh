@@ -82,6 +82,14 @@ if ! v4_ping=$(ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.
 fi
 if ! v6_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 2>&1); then
   echo "dual-stack netns: IPv6 synthetic egress ping failed: $v6_ping" >&2
+  echo 'server route:' >&2
+  ip -n "$server" -6 route get 2001:db8:6::2 from 2001:db8:200::2 >&2 || true
+  echo 'WAN return route:' >&2
+  ip -n "$wan6" -6 route get 2001:db8:200::2 >&2 || true
+  echo 'server IPv6 neighbors:' >&2
+  ip -n "$server" -6 neigh show dev "js6${suffix}" >&2 || true
+  echo 'WAN IPv6 neighbors:' >&2
+  ip -n "$wan6" -6 neigh show dev "jw6${suffix}" >&2 || true
   exit 1
 fi
 if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
