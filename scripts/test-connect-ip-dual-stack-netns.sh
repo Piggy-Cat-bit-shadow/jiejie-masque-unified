@@ -28,6 +28,13 @@ trap cleanup EXIT INT TERM
 ip netns add "$server"
 ip netns add "$wan4"
 ip netns add "$wan6"
+# Make synthetic veth link-local address setup deterministic. Set both knobs
+# before creating/moving the IPv6 veth interfaces; `all=0` alone does not stop
+# DAD when the namespace default remains enabled.
+for ns in "$server" "$wan6"; do
+  ip netns exec "$ns" sysctl -qw net.ipv6.conf.all.accept_dad=0
+  ip netns exec "$ns" sysctl -qw net.ipv6.conf.default.accept_dad=0
+done
 ip link add "js4${suffix}" type veth peer name "jw4${suffix}"
 ip link set "js4${suffix}" netns "$server"
 ip link set "jw4${suffix}" netns "$wan4"
@@ -63,6 +70,21 @@ dump_ipv6_state() {
 # Capture the address/DAD and multicast state before the first NDP exchange.
 dump_ipv6_state "$server" "js6${suffix}" server
 dump_ipv6_state "$wan6" "jw6${suffix}" WAN
+echo '--- pre-ping IPv6 neighbors (must be kernel-learned; no static/proxy entries) ---' >&2
+server_neighbors=$(ip -n "$server" -6 neigh show dev "js6${suffix}")
+wan_neighbors=$(ip -n "$wan6" -6 neigh show dev "jw6${suffix}")
+printf 'server: %s\nWAN: %s\n' "${server_neighbors:-<empty>}" "${wan_neighbors:-<empty>}" >&2
+if printf '%s\n%s\n' "$server_neighbors" "$wan_neighbors" | grep -Eiq 'PERMANENT|proxy'; then
+  echo 'dual-stack netns: pre-ping neighbor table contains a static or proxy entry' >&2
+  exit 1
+fi
+for devspec in "$server js6${suffix}" "$wan6 jw6${suffix}"; do
+  read -r ns dev <<<"$devspec"
+  if tentative=$(ip -n "$ns" -6 addr show tentative dev "$dev") && [[ -n $tentative ]]; then
+    echo "dual-stack netns: unexpected tentative IPv6 address on ${ns}/${dev}: ${tentative}" >&2
+    exit 1
+  fi
+done
 
 # First prove on-link NDP and basic IPv6 connectivity independently from
 # forwarding and the synthetic routed-prefix source.
@@ -83,6 +105,7 @@ if ! v6_link_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:6::
   dump_ipv6_state "$wan6" "jw6${suffix}" WAN
   exit 1
 fi
+echo 'dual-stack netns: PASS (on-link IPv6 ping with dynamic NDP before forwarding)'
 
 ip -n "$server" tuntap add dev masque0 mode tun
 ip -n "$server" addr add 10.200.0.1/24 dev masque0
@@ -153,6 +176,7 @@ if ! v6_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2
   echo 'dual-stack netns: IPv6 synthetic egress retry passed after initial failure' >&2
   exit 1
 fi
+echo 'dual-stack netns: PASS (routed-prefix IPv6 ping from 2001:db8:200::2 after forwarding)'
 
 check_dynamic_neighbor() {
   local ns=$1 dev=$2 target=$3 neighbor
@@ -171,6 +195,7 @@ check_dynamic_neighbor() {
 }
 check_dynamic_neighbor "$server" "js6${suffix}" 2001:db8:6::2
 check_dynamic_neighbor "$wan6" "jw6${suffix}" 2001:db8:6::1
+echo "dual-stack netns: dynamic neighbors server=[$(ip -n "$server" -6 neigh show to 2001:db8:6::2 dev "js6${suffix}")] WAN=[$(ip -n "$wan6" -6 neigh show to 2001:db8:6::1 dev "jw6${suffix}")]"
 if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
   echo 'dual-stack netns: tunnel-local IPv6 DNS address missing from TUN' >&2
   exit 1
