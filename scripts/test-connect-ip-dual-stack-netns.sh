@@ -65,14 +65,14 @@ ip netns exec "$server" sysctl -qw net.ipv6.conf.all.forwarding=1
 # Synthetic RA-enabled WAN setup: forwarding must coexist with accept_ra=2,
 # and the selected IPv6 default route must remain present.
 ip netns exec "$server" sysctl -qw "net.ipv6.conf.js6${suffix}.accept_ra=2"
-ip netns exec "$server" -6 route show default | grep -F "dev js6${suffix}" >/dev/null
+ip netns exec "$server" ip -6 route show default | grep -F "dev js6${suffix}" >/dev/null
 
 v4_route=$(ip netns exec "$server" route get 198.18.4.2 from 10.200.0.2)
-v6_route=$(ip netns exec "$server" -6 route get 2001:db8:6::2 from 2001:db8:200::2)
+v6_route=$(ip netns exec "$server" ip -6 route get 2001:db8:6::2 from 2001:db8:200::2)
 [[ $v4_route == *"dev js4${suffix}"* ]]
 [[ $v6_route == *"dev js6${suffix}"* ]]
 ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.2 >/dev/null
 ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 >/dev/null
-ip netns exec "$server" -6 route get fd00:200::1 | grep -F 'dev masque0' >/dev/null
+ip netns exec "$server" ip -6 route get fd00:200::1 | grep -F 'dev masque0' >/dev/null
 
 echo 'dual-stack netns: PASS (synthetic IPv4/IPv6 routed egress, distinct WAN interfaces, TUN-local IPv6 host route, forwarding/RA sysctl)'
