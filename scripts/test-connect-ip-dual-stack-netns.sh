@@ -58,7 +58,6 @@ ip -n "$server" route add default via 198.18.4.2 dev "js4${suffix}"
 ip -n "$server" -6 route add default via 2001:db8:6::2 dev "js6${suffix}" metric 100
 ip -n "$wan4" route add 10.200.0.0/24 via 198.18.4.1
 ip -n "$wan6" -6 route add 2001:db8:200::/64 via 2001:db8:6::1
-ip -n "$server" -6 route add fd00:200::1/128 dev masque0
 
 ip netns exec "$server" sysctl -qw net.ipv4.ip_forward=1
 ip netns exec "$server" sysctl -qw net.ipv6.conf.all.forwarding=1
@@ -69,10 +68,25 @@ ip netns exec "$server" ip -6 route show default | grep -F "dev js6${suffix}" >/
 
 v4_route=$(ip netns exec "$server" ip route get 198.18.4.2 from 10.200.0.2)
 v6_route=$(ip netns exec "$server" ip -6 route get 2001:db8:6::2 from 2001:db8:200::2)
-[[ $v4_route == *"dev js4${suffix}"* ]]
-[[ $v6_route == *"dev js6${suffix}"* ]]
-ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.2 >/dev/null
-ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 >/dev/null
-ip netns exec "$server" ip -6 route get fd00:200::1 | grep -F 'dev masque0' >/dev/null
+if [[ $v4_route != *"dev js4${suffix}"* ]]; then
+  echo "dual-stack netns: IPv4 route lookup unexpected: $v4_route" >&2
+  exit 1
+fi
+if [[ $v6_route != *"dev js6${suffix}"* ]]; then
+  echo "dual-stack netns: IPv6 route lookup unexpected: $v6_route" >&2
+  exit 1
+fi
+if ! ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.2 >/dev/null; then
+  echo 'dual-stack netns: IPv4 synthetic egress ping failed' >&2
+  exit 1
+fi
+if ! ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 >/dev/null; then
+  echo 'dual-stack netns: IPv6 synthetic egress ping failed' >&2
+  exit 1
+fi
+if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
+  echo 'dual-stack netns: tunnel-local IPv6 DNS address missing from TUN' >&2
+  exit 1
+fi
 
 echo 'dual-stack netns: PASS (synthetic IPv4/IPv6 routed egress, distinct WAN interfaces, TUN-local IPv6 host route, forwarding/RA sysctl)'
