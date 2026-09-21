@@ -15,7 +15,7 @@ require (
 
 // Keep the pinned MetaCubeX QUIC API and HTTP/3 behavior while consuming the
 // project-maintained fork's DATAGRAM ownership and experimental BBR support.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921030846-657844dee002
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921031612-beb42da71a55
 
 require (
 	github.com/dunglas/httpsfv v1.1.1 // indirect
