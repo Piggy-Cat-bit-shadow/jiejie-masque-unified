@@ -47,6 +47,43 @@ ip -n "$wan4" link set "jw4${suffix}" up
 ip -n "$server" link set "js6${suffix}" up
 ip -n "$wan6" link set "jw6${suffix}" up
 
+dump_ipv6_state() {
+  local ns=$1 dev=$2 label=$3
+  echo "--- ${label}: IPv6 addresses on ${dev} ---" >&2
+  ip -n "$ns" -6 addr show dev "$dev" >&2 || true
+  echo "--- ${label}: tentative IPv6 addresses ---" >&2
+  ip -n "$ns" -6 addr show tentative >&2 || true
+  echo "--- ${label}: IPv6 multicast memberships on ${dev} ---" >&2
+  ip -n "$ns" -6 maddr show dev "$dev" >&2 || true
+  echo "--- ${label}: accept_dad ---" >&2
+  ip netns exec "$ns" sysctl net.ipv6.conf.all.accept_dad >&2 || true
+  ip netns exec "$ns" sysctl net.ipv6.conf.default.accept_dad >&2 || true
+}
+
+# Capture the address/DAD and multicast state before the first NDP exchange.
+dump_ipv6_state "$server" "js6${suffix}" server
+dump_ipv6_state "$wan6" "jw6${suffix}" WAN
+
+# First prove on-link NDP and basic IPv6 connectivity independently from
+# forwarding and the synthetic routed-prefix source.
+if ! v6_link_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:6::1 2001:db8:6::2 2>&1); then
+  echo "dual-stack netns: on-link IPv6 NDP ping failed: $v6_link_ping" >&2
+  dump_ipv6_state "$server" "js6${suffix}" server
+  dump_ipv6_state "$wan6" "jw6${suffix}" WAN
+  ip -n "$server" -6 neigh show dev "js6${suffix}" >&2 || true
+  ip -n "$wan6" -6 neigh show dev "jw6${suffix}" >&2 || true
+  echo '--- waiting 1.3s and retrying once to diagnose transient DAD/NDP ---' >&2
+  sleep 1.3
+  if v6_link_retry=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:6::1 2001:db8:6::2 2>&1); then
+    echo 'dual-stack netns: on-link retry passed after initial failure (transient setup race suspected)' >&2
+  else
+    echo "dual-stack netns: on-link retry also failed: $v6_link_retry" >&2
+  fi
+  dump_ipv6_state "$server" "js6${suffix}" server
+  dump_ipv6_state "$wan6" "jw6${suffix}" WAN
+  exit 1
+fi
+
 ip -n "$server" tuntap add dev masque0 mode tun
 ip -n "$server" addr add 10.200.0.1/24 dev masque0
 ip -n "$server" addr add 10.200.0.2/32 dev masque0
@@ -81,20 +118,59 @@ if ! v4_ping=$(ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.
   exit 1
 fi
 if ! v6_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 2>&1); then
-  echo "dual-stack netns: IPv6 synthetic egress ping failed: $v6_ping" >&2
-  echo 'server route:' >&2
-  ip -n "$server" -6 route get 2001:db8:6::2 from 2001:db8:200::2 >&2 || true
-  echo 'WAN return route:' >&2
-  ip -n "$wan6" -6 route get 2001:db8:200::2 >&2 || true
-  echo 'server IPv6 neighbors:' >&2
-  ip -n "$server" -6 neigh show dev "js6${suffix}" >&2 || true
-  echo 'WAN IPv6 neighbors:' >&2
-  ip -n "$wan6" -6 neigh show dev "jw6${suffix}" >&2 || true
-  echo 'WAN IPv6 link/address:' >&2
-  ip -n "$wan6" -details link show dev "jw6${suffix}" >&2 || true
-  ip -n "$wan6" -6 addr show dev "jw6${suffix}" >&2 || true
+  echo "dual-stack netns: first IPv6 synthetic egress ping failed: $v6_ping" >&2
+  echo '--- immediate IPv6 diagnostics ---' >&2
+  ip -n "$server" -6 addr show >&2 || true
+  ip -n "$server" -6 route show >&2 || true
+  ip -n "$server" -6 neigh show >&2 || true
+  ip -n "$server" -6 maddr show >&2 || true
+  ip -n "$server" -details link show >&2 || true
+  ip -n "$wan6" -6 addr show >&2 || true
+  ip -n "$wan6" -6 route show >&2 || true
+  ip -n "$wan6" -6 neigh show >&2 || true
+  ip -n "$wan6" -6 maddr show >&2 || true
+  ip -n "$wan6" -details link show >&2 || true
+  for ns in "$server" "$wan6"; do
+    for key in disable_ipv6 accept_dad forwarding accept_ra; do
+      ip netns exec "$ns" sysctl "net.ipv6.conf.all.${key}" >&2 || true
+      ip netns exec "$ns" sysctl "net.ipv6.conf.default.${key}" >&2 || true
+    done
+  done
+  echo '--- waiting 1.3s and retrying once to diagnose transient DAD/NDP ---' >&2
+  sleep 1.3
+  if ! v6_retry=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 2>&1); then
+    echo "dual-stack netns: IPv6 synthetic egress retry failed: $v6_retry" >&2
+    echo 'server route:' >&2
+    ip -n "$server" -6 route get 2001:db8:6::2 from 2001:db8:200::2 >&2 || true
+    echo 'WAN return route:' >&2
+    ip -n "$wan6" -6 route get 2001:db8:200::2 >&2 || true
+    echo 'server IPv6 neighbors:' >&2
+    ip -n "$server" -6 neigh show dev "js6${suffix}" >&2 || true
+    echo 'WAN IPv6 neighbors:' >&2
+    ip -n "$wan6" -6 neigh show dev "jw6${suffix}" >&2 || true
+    exit 1
+  fi
+  echo 'dual-stack netns: IPv6 synthetic egress retry passed after initial failure' >&2
   exit 1
 fi
+
+check_dynamic_neighbor() {
+  local ns=$1 dev=$2 target=$3 neighbor
+  neighbor=$(ip -n "$ns" -6 neigh show to "$target" dev "$dev")
+  case "$neighbor" in
+    *PERMANENT*|*INCOMPLETE*|*FAILED*|'')
+      echo "dual-stack netns: invalid dynamic NDP state for ${target}: ${neighbor:-missing}" >&2
+      exit 1
+      ;;
+    *REACHABLE*|*STALE*|*DELAY*) ;;
+    *)
+      echo "dual-stack netns: unexpected NDP state for ${target}: $neighbor" >&2
+      exit 1
+      ;;
+  esac
+}
+check_dynamic_neighbor "$server" "js6${suffix}" 2001:db8:6::2
+check_dynamic_neighbor "$wan6" "jw6${suffix}" 2001:db8:6::1
 if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
   echo 'dual-stack netns: tunnel-local IPv6 DNS address missing from TUN' >&2
   exit 1
