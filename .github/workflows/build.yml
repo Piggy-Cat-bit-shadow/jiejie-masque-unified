@@ -76,15 +76,9 @@ jobs:
 
       - name: Linux dataplane benchmarks
         run: |
-          go test ./internal/connectudp -run '^$' -bench 'BenchmarkUDP(ReadBatchLoopback|ReadSingleLoopback|WriteBatchLoopback)' -benchtime=250ms -count=3
-          go test ./cmd/jiejie-masque -run '^$' -bench BenchmarkTUNBatchSlotRefill -benchtime=250ms -count=3
-          go test ./cmd/jiejie-masque -run '^$' -bench 'BenchmarkSessionWriter(Burst|Capability)' -benchtime=250ms -count=3 -benchmem
-          go test ./internal/connectip/session -run '^$' -bench BenchmarkRecordDequeued -benchtime=250ms -count=3 -benchmem
-
-      - name: TX GRO targeted stress
-        run: |
-          go test -count=300 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
-          go test -race -count=150 ./internal/connectip/tunnel -run 'TestTXGRO|TestTCPGRO'
+          go test ./internal/connectip/packet -run '^$' -bench BenchmarkParseHotPaths -benchtime=250ms -count=3 -benchmem
+          go test ./internal/connectip/session -run '^$' -bench 'Benchmark(ManagerLookup|TunToConnectIPDirect)' -benchtime=250ms -count=3 -benchmem
+          go test ./cmd/jiejie-masque -run '^$' -bench BenchmarkTunToConnectIPDirect -benchtime=250ms -count=3 -benchmem
 
       - name: ICMP translation targeted stress
         run: |
