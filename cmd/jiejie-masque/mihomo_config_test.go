@@ -35,10 +35,9 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
 		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
-		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
-		"  - name: iphone\n    public_key: " + publicA + "\n    tunnel_ipv4: 10.200.0.2/32\n" +
-		"  - name: mac\n    public_key: " + publicB + "\n    tunnel_ipv4: 10.200.0.3/32\n"
+		"  - public_key: " + publicA + "\n    tunnel_ipv4: 10.200.0.2/32\n" +
+		"  - public_key: " + publicB + "\n    tunnel_ipv4: 10.200.0.3/32\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -92,15 +91,6 @@ func TestMihomoConfigSelectsSecondClientByPrivateKey(t *testing.T) {
 		t.Fatal("generated server public key does not match the TLS certificate")
 	}
 
-	var selectedClientOutput bytes.Buffer
-	err = mihomoConfigTo(&selectedClientOutput, []string{"--config", configPath, "--server", "example.com", "--private-key", privateB, "--client", "iphone"})
-	if err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("client selector mismatch was not rejected: %v", err)
-	}
-	err = mihomoConfigTo(&selectedClientOutput, []string{"--config", configPath, "--server", "example.com", "--private-key", privateB, "--client", "missing"})
-	if err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("unknown client selector was not rejected: %v", err)
-	}
 }
 
 func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
@@ -112,7 +102,6 @@ func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	configText := "listen: 127.0.0.1:4434\ntls:\n  cert: " + certPath + "\n  key: unused\n" +
 		"server:\n  tunnel_ipv4: 10.200.0.1/24\n  tunnel_ipv6: 2001:db8:200::1/64\n" +
-		"dns_gateway:\n  enabled: true\n  port: 5353\n  upstream: 127.0.0.1:53\n" +
 		"clients:\n  - public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n    tunnel_ipv6: 2001:db8:200::2/128\n"
 	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
 		t.Fatal(err)
@@ -128,39 +117,6 @@ func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
 	if nodes[0]["ip"] != "10.200.0.2/32" || nodes[0]["ipv6"] != "2001:db8:200::2/128" {
 		t.Fatalf("dual-stack addresses = %#v", nodes[0])
 	}
-	dns, ok := nodes[0]["dns"].([]any)
-	if !ok || len(dns) != 2 || dns[0] != "udp://10.200.0.1:5353" || dns[1] != "udp://[2001:db8:200::1]:5353" {
-		t.Fatalf("dual-stack DNS = %#v", nodes[0]["dns"])
-	}
-}
-
-func TestCompatibleDNSAddressFamilies(t *testing.T) {
-	server := config.TunnelAddresses{
-		IPv4: netip.MustParsePrefix("10.200.0.1/24"),
-		IPv6: netip.MustParsePrefix("fd00:200::1/64"),
-	}
-	tests := []struct {
-		name   string
-		client config.ResolvedClient
-		want   []string
-	}{
-		{name: "IPv4 only", client: config.ResolvedClient{TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32")}, want: []string{"10.200.0.1"}},
-		{name: "IPv6 only", client: config.ResolvedClient{TunnelIPv6: netip.MustParsePrefix("fd00:200::2/128")}, want: []string{"fd00:200::1"}},
-		{name: "dual stack", client: config.ResolvedClient{TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32"), TunnelIPv6: netip.MustParsePrefix("fd00:200::2/128")}, want: []string{"10.200.0.1", "fd00:200::1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := compatibleDNSAddresses(tt.client, server)
-			if len(got) != len(tt.want) {
-				t.Fatalf("DNS addresses = %v, want %v", got, tt.want)
-			}
-			for i := range got {
-				if got[i].String() != tt.want[i] {
-					t.Fatalf("DNS addresses = %v, want %v", got, tt.want)
-				}
-			}
-		})
-	}
 }
 
 func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
@@ -173,9 +129,8 @@ func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
 	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
 		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
-		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
-		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
+		"  - public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -275,9 +230,8 @@ func TestMihomoConfigPKCS8InputCanonicalizesToSEC1ConsumerContract(t *testing.T)
 	config := "listen: 127.0.0.1:4434\n" +
 		"tls:\n  cert: " + certPath + "\n  key: unused\n" +
 		"server:\n  tunnel_ipv4: 10.200.0.1/24\n" +
-		"dns_gateway:\n  enabled: false\n" +
 		"clients:\n" +
-		"  - name: test\n    public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
+		"  - public_key: " + publicKey + "\n    tunnel_ipv4: 10.200.0.2/32\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -313,14 +267,14 @@ func TestSelectMihomoClientUsesDerivedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	clients := []config.ResolvedClient{
-		{Name: "iphone", PublicKeys: []string{publicA}, TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32")},
-		{Name: "mac", PublicKeys: []string{publicB}, TunnelIPv4: netip.MustParsePrefix("10.200.0.3/32")},
+		{PublicKey: publicA, TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32")},
+		{PublicKey: publicB, TunnelIPv4: netip.MustParsePrefix("10.200.0.3/32")},
 	}
 	derivedA, err := clientPublicKeyFromPrivateKey(privateA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := selectMihomoClient(clients, derivedA, "")
+	selected, err := selectMihomoClient(clients, derivedA)
 	if err != nil || selected.TunnelIPv4.String() != "10.200.0.2/32" {
 		t.Fatalf("single-client identity selection failed: %+v, %v", selected, err)
 	}
@@ -328,23 +282,11 @@ func TestSelectMihomoClientUsesDerivedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err = selectMihomoClient(clients, derivedB, "mac")
+	selected, err = selectMihomoClient(clients, derivedB)
 	if err != nil || selected.TunnelIPv4.String() != "10.200.0.3/32" {
 		t.Fatalf("explicit client selection failed: %+v, %v", selected, err)
 	}
-	if _, err := selectMihomoClient(clients, derivedB, "iphone"); err == nil {
-		t.Fatal("client selector accepted a mismatched private key")
-	}
-	if _, err := selectMihomoClient(clients, derivedB, "unknown"); err == nil {
-		t.Fatal("unknown client selector was accepted")
-	}
-
-	shared := []config.ResolvedClient{{Name: "shared", PublicKeys: []string{publicA, publicB}, TunnelIPv4: netip.MustParsePrefix("10.200.0.4/32")}}
-	selected, err = selectMihomoClient(shared, derivedB, "")
-	if err != nil || selected.TunnelIPv4.String() != "10.200.0.4/32" {
-		t.Fatalf("multiple public keys did not resolve to one client: %+v, %v", selected, err)
-	}
-	if _, err := selectMihomoClient(clients[:1], derivedB, ""); err == nil || !strings.Contains(err.Error(), "does not match") {
+	if _, err := selectMihomoClient(clients[:1], derivedB); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("unknown private key was not rejected: %v", err)
 	}
 }

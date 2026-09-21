@@ -8,21 +8,18 @@ quic:
   # Production default remains CUBIC. bbr is experimental; use only for
   # controlled field comparison against CUBIC on the same real WAN path.
   congestion_controller: cubic
-client:
-  # Example-only public key; replace it with the client's raw P-256 public key.
-  public_keys: [BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=]
-  tunnel_ipv4: 10.200.0.2/32
+clients:
+  - public_key: BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=
+    tunnel_ipv4: 10.200.0.2/32
   # Optional dual-stack address. It must be an IPv6 /128 inside server.tunnel_ipv6.
   # For tunnel-local dual stack, pair with server.tunnel_ipv6 below. The
   # generator includes only DNS address families assigned to this client.
   # tunnel_ipv6: fd00:200::2/128
-# For multiple devices, replace the legacy client block with:
+# For multiple devices:
 # clients:
-#   - name: iphone
-#     public_keys: [KEY_DEVICE_A]
+#   - public_key: KEY_DEVICE_A
 #     tunnel_ipv4: 10.200.0.2/32
-#   - name: mac
-#     public_keys: [KEY_DEVICE_B]
+#   - public_key: KEY_DEVICE_B
 #     tunnel_ipv4: 10.200.0.3/32
 server:
   tunnel_ipv4: 10.200.0.1/16
@@ -31,9 +28,3 @@ server:
   # Keep false for ULA/internal IPv6. Set true only when the VPS operator has
   # routed a public IPv6 prefix to the TUN path; this advertises ::/0 to clients.
   advertise_ipv6_default_route: false
-dns_gateway:
-  enabled: true
-  port: 5353
-  upstream: 127.0.0.1:53
-  timeout: 5s
-  concurrency: 32

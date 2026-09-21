@@ -10,7 +10,7 @@ import (
 const testClientKey = "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
 
 func validConfig() Config {
-	return Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Client: Client{PublicKeys: []string{testClientKey}, TunnelIPv4: "10.200.0.2/32"}, Server: Server{TunnelIPv4: "10.200.0.1/24"}}
+	return Config{Listen: "127.0.0.1:4434", TLS: TLS{Cert: "c", Key: "k"}, Clients: []Client{{PublicKey: testClientKey, TunnelIPv4: "10.200.0.2/32"}}, Server: Server{TunnelIPv4: "10.200.0.1/24"}}
 }
 
 func TestValidateAndProductionDefaults(t *testing.T) {
@@ -26,7 +26,7 @@ func TestValidateAndProductionDefaults(t *testing.T) {
 }
 
 func TestLoadDefaultsAndRetiredFields(t *testing.T) {
-	base := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclient:\n  public_keys: [" + testClientKey + "]\n  tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/24\n"
+	base := "listen: 127.0.0.1:4434\ntls:\n  cert: c\n  key: k\nclients:\n  - public_key: " + testClientKey + "\n    tunnel_ipv4: 10.200.0.2/32\nserver:\n  tunnel_ipv4: 10.200.0.1/24\n"
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestCongestionControllerValidation(t *testing.T) {
 func TestMultiClientAndDualStackValidation(t *testing.T) {
 	c := validConfig()
 	c.Server.TunnelIPv6 = "fd00:200::1/64"
-	c.Client.TunnelIPv6 = "fd00:200::2/128"
+	c.Clients[0].TunnelIPv6 = "fd00:200::2/128"
 	clients, err := c.ResolvedClients()
 	if err != nil || len(clients) != 1 {
 		t.Fatalf("resolved=%+v err=%v", clients, err)
@@ -78,7 +78,7 @@ func TestMultiClientAndDualStackValidation(t *testing.T) {
 func TestIPv6MTUAndPrefixValidation(t *testing.T) {
 	c := validConfig()
 	c.Server.TunnelIPv6 = "2001:4860:100::1/64"
-	c.Client.TunnelIPv6 = "2001:4860:100::2/128"
+	c.Clients[0].TunnelIPv6 = "2001:4860:100::2/128"
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,13 +86,5 @@ func TestIPv6MTUAndPrefixValidation(t *testing.T) {
 		if got := IsUsableGlobalIPv6TunnelPrefix(netip.MustParsePrefix(prefix)); got != want {
 			t.Errorf("usable(%s)=%t want %t", prefix, got, want)
 		}
-	}
-}
-
-func TestSessionIdleAndDNSDefaults(t *testing.T) {
-	c := validConfig()
-	c.DNSGateway.Enabled = nil
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
 	}
 }

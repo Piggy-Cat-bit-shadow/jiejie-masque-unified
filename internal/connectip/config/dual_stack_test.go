@@ -6,7 +6,7 @@ import (
 )
 
 func TestDualStackResolvedClients(t *testing.T) {
-	c := Config{Server: Server{TunnelIPv4: "10.0.0.1/24", TunnelIPv6: "fd00::1/64"}, Clients: []Client{{Name: "c", PublicKey: "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=", TunnelIPv4: "10.0.0.2/32", TunnelIPv6: "fd00::2/128"}}}
+	c := Config{Server: Server{TunnelIPv4: "10.0.0.1/24", TunnelIPv6: "fd00::1/64"}, Clients: []Client{{PublicKey: "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=", TunnelIPv4: "10.0.0.2/32", TunnelIPv6: "fd00::2/128"}}}
 	clients, err := c.ResolvedClients()
 	if err != nil {
 		t.Fatal(err)

@@ -17,8 +17,11 @@ func TestConnectIPRoutesByAddressFamily(t *testing.T) {
 	if got := connectIPRoutes(v6, server, true); len(got) != 1 || got[0].StartIP != netip.IPv6Unspecified() {
 		t.Fatalf("IPv6 routes: %+v", got)
 	}
-	if got := connectIPRoutes(config.TunnelAddresses{IPv4: v4.IPv4, IPv6: v6.IPv6}, server, false); len(got) != 2 {
+	if got := connectIPRoutes(config.TunnelAddresses{IPv4: v4.IPv4, IPv6: v6.IPv6}, server, false); len(got) != 1 {
 		t.Fatalf("dual routes: %+v", got)
+	}
+	if got := connectIPRoutes(config.TunnelAddresses{IPv4: v4.IPv4, IPv6: v6.IPv6}, server, true); len(got) != 2 {
+		t.Fatalf("dual default routes: %+v", got)
 	}
 }
 

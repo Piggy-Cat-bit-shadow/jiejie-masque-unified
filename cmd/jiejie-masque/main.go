@@ -21,7 +21,6 @@ import (
 	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
@@ -79,9 +78,7 @@ func serveConnectIPArgs(args []string) error {
 	}
 	byKey := make(map[string]config.ResolvedClient)
 	for _, cl := range clients {
-		for _, key := range cl.PublicKeys {
-			byKey[key] = cl
-		}
+		byKey[cl.PublicKey] = cl
 	}
 	cert, err := tls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key)
 	if err != nil {
@@ -105,18 +102,6 @@ func serveConnectIPArgs(args []string) error {
 	log.Printf("CONNECT-IP TUN mode: plain mtu=%d", tunnelMTU)
 	if err = tun.ConfigureAddresses(serverAddresses.Prefixes()); err != nil {
 		return fmt.Errorf("configure masque0: %w", err)
-	}
-	var dnsGateway *dnsgateway.Gateway
-	if c.DNSGateway.IsEnabled() {
-		dnsTimeout, _ := time.ParseDuration(c.DNSGateway.Timeout)
-		dnsGateway, err = dnsgateway.StartMany(dnsgateway.Config{
-			ListenAddr: serverAddresses.IPv4.Addr(), Port: c.DNSGateway.Port, Upstream: c.DNSGateway.Upstream,
-			Timeout: dnsTimeout, Concurrency: c.DNSGateway.Concurrency,
-		}, serverAddresses.Addresses())
-		if err != nil {
-			return fmt.Errorf("start tunnel DNS gateway: %w", err)
-		}
-		defer dnsGateway.Close()
 	}
 	packetConn, err := net.ListenPacket("udp", c.Listen)
 	if err != nil {
@@ -274,7 +259,7 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		conn.Close()
 		return
 	}
-	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.Name, conn, nil)
+	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.PublicKey, conn, nil)
 	old, err := mgr.Replace(s)
 	if err != nil {
 		log.Printf("session registration failed: %v", err)
@@ -286,7 +271,7 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		log.Printf("session takeover")
 	}
 	log.Printf("session=%d established", s.ID)
-	go sessionReaderWithAddresses(s, tun, serverAddresses, c.DNSGateway.IsEnabled(), uint16(c.DNSGateway.Port))
+	go sessionReaderWithAddresses(s, tun, serverAddresses)
 	select {
 	case <-r.Context().Done():
 	case <-s.Ctx.Done():
@@ -317,9 +302,6 @@ func connectIPRoutes(client, server config.TunnelAddresses, advertiseIPv6Default
 		if advertiseIPv6DefaultRoute {
 			routes = append(routes, connectip.IPRoute{StartIP: netip.IPv6Unspecified(), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
 		} else if server.IPv6.IsValid() {
-			// Keep the server-side IPv6 DNS gateway reachable even when the
-			// client is not advertising a full IPv6 default route.
-			routes = append(routes, connectip.IPRoute{StartIP: server.IPv6.Addr(), EndIP: server.IPv6.Addr()})
 		}
 	}
 	return routes
@@ -372,7 +354,7 @@ func dispatchTUNPacket(data []byte, mgr *session.Manager, tun tunPacketWriter) {
 	}
 }
 
-func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) {
+func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverAddresses config.TunnelAddresses) {
 	buf := make([]byte, tunnelMTU)
 	for s.Ctx.Err() == nil {
 		n, err := s.Conn.ReadPacket(buf)
@@ -386,7 +368,7 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 			return
 		}
 		pkt := buf[:n]
-		if !prepareSessionPacket(pkt, s, serverAddresses, dnsEnabled, dnsPort) {
+		if !prepareSessionPacket(pkt, s, serverAddresses) {
 			continue
 		}
 		if _, err = tun.Write(pkt); err != nil {
@@ -398,14 +380,13 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 	}
 }
 
-func prepareSessionPacket(pkt []byte, s *session.Session, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) bool {
+func prepareSessionPacket(pkt []byte, s *session.Session, serverAddresses config.TunnelAddresses) bool {
 	info, ok := packet.Parse(pkt)
 	if !ok || !s.OwnsAddress(info.Source) {
 		return false
 	}
 	dst := info.Destination
-	isDNS := dnsEnabled && containsAddress(serverAddresses, dst) && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
-	if !isDNS && containsPrefix(serverAddresses, dst) {
+	if containsPrefix(serverAddresses, dst) {
 		return false
 	}
 	select {
@@ -419,12 +400,9 @@ func prepareSessionPacket(pkt []byte, s *session.Session, serverAddresses config
 func containsPrefix(a config.TunnelAddresses, ip netip.Addr) bool {
 	return (a.IPv4.IsValid() && a.IPv4.Contains(ip)) || (a.IPv6.IsValid() && a.IPv6.Contains(ip))
 }
-func containsAddress(a config.TunnelAddresses, ip netip.Addr) bool {
-	return (a.IPv4.IsValid() && a.IPv4.Addr() == ip) || (a.IPv6.IsValid() && a.IPv6.Addr() == ip)
-}
 func protocolForParse(protocol string) (string, bool) {
 	switch protocol {
-	case "connect-ip", "cf-connect-ip":
+	case "connect-ip":
 		return "connect-ip", true
 	default:
 		return "", false

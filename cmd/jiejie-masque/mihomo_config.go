@@ -9,10 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"net/netip"
 	"os"
-	"strconv"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"go.yaml.in/yaml/v3"
@@ -28,7 +25,6 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	server := fs.String("server", "", "public server hostname or address")
 	port := fs.Int("port", 443, "public server UDP port")
 	privateKey := fs.String("private-key", "", "client P-256 private key")
-	clientName := fs.String("client", "", "configured client name to validate/select; private key must belong to it")
 	name := fs.String("name", "MASQUE", "node name")
 	sni := fs.String("sni", "", "optional TLS SNI")
 	if err := fs.Parse(args); err != nil {
@@ -57,7 +53,7 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	client, err := selectMihomoClient(clients, clientPublicKey, *clientName)
+	client, err := selectMihomoClient(clients, clientPublicKey)
 	if err != nil {
 		return err
 	}
@@ -81,8 +77,7 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	serverAddresses, err := c.ServerAddresses()
-	if err != nil {
+	if _, err := c.ServerAddresses(); err != nil {
 		return err
 	}
 	node := map[string]any{
@@ -101,34 +96,12 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	if *sni != "" {
 		node["sni"] = *sni
 	}
-	if c.DNSGateway.IsEnabled() {
-		dnsAddresses := compatibleDNSAddresses(client, serverAddresses)
-		dns := make([]string, 0, len(dnsAddresses))
-		for _, address := range dnsAddresses {
-			dns = append(dns, "udp://"+net.JoinHostPort(address.String(), strconv.Itoa(c.DNSGateway.Port)))
-		}
-		if len(dns) > 0 {
-			node["remote-dns-resolve"] = true
-			node["dns"] = dns
-		}
-	}
 	b, err := yaml.Marshal([]map[string]any{node})
 	if err != nil {
 		return err
 	}
 	_, err = out.Write(b)
 	return err
-}
-
-func compatibleDNSAddresses(client config.ResolvedClient, server config.TunnelAddresses) []netip.Addr {
-	addresses := make([]netip.Addr, 0, 2)
-	if client.TunnelIPv4.IsValid() && server.IPv4.IsValid() {
-		addresses = append(addresses, server.IPv4.Addr())
-	}
-	if client.TunnelIPv6.IsValid() && server.IPv6.IsValid() {
-		addresses = append(addresses, server.IPv6.Addr())
-	}
-	return addresses
 }
 
 func clientPublicKeyFromPrivateKey(encoded string) (string, error) {
@@ -199,39 +172,13 @@ func encodeServerEndpointPublicKey(pub *ecdsa.PublicKey) (string, error) {
 	return base64.StdEncoding.EncodeToString(der), nil
 }
 
-func selectMihomoClient(clients []config.ResolvedClient, publicKey, clientName string) (config.ResolvedClient, error) {
-	if clientName != "" {
-		foundName := false
-		for _, client := range clients {
-			if client.Name == clientName {
-				foundName = true
-				break
-			}
-		}
-		if !foundName {
-			return config.ResolvedClient{}, fmt.Errorf("configured client %q not found", clientName)
-		}
-	}
-
-	matches := make([]config.ResolvedClient, 0, 1)
+func selectMihomoClient(clients []config.ResolvedClient, publicKey string) (config.ResolvedClient, error) {
 	for _, client := range clients {
-		if clientName != "" && client.Name != clientName {
-			continue
-		}
-		for _, key := range client.PublicKeys {
-			if key == publicKey {
-				matches = append(matches, client)
-				break
-			}
+		if client.PublicKey == publicKey {
+			return client, nil
 		}
 	}
-	if len(matches) == 0 {
-		return config.ResolvedClient{}, fmt.Errorf("client private key does not match any configured client")
-	}
-	if len(matches) > 1 {
-		return config.ResolvedClient{}, fmt.Errorf("client private key matches multiple configured clients")
-	}
-	return matches[0], nil
+	return config.ResolvedClient{}, fmt.Errorf("client private key does not match any configured client")
 }
 
 func decodeFirstCertificate(b []byte) ([]byte, error) {
