@@ -90,6 +90,9 @@ if ! v6_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2
   ip -n "$server" -6 neigh show dev "js6${suffix}" >&2 || true
   echo 'WAN IPv6 neighbors:' >&2
   ip -n "$wan6" -6 neigh show dev "jw6${suffix}" >&2 || true
+  echo 'WAN IPv6 link/address:' >&2
+  ip -n "$wan6" -details link show dev "jw6${suffix}" >&2 || true
+  ip -n "$wan6" -6 addr show dev "jw6${suffix}" >&2 || true
   exit 1
 fi
 if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
