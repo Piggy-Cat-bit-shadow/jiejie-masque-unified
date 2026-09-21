@@ -15,7 +15,7 @@ fi
 
 version=$VERSION
 commit=$COMMIT
-connect_version=$(go list -m -f '{{.Version}}' github.com/Piggy-Cat-bit-shadow/connect-ip-go)
+connect_version=$(go list -m -f '{{with .Replace}}{{.Version}}{{end}}' github.com/metacubex/connect-ip-go)
 quic_version=$(go list -m -f '{{with .Replace}}{{.Version}}{{end}}' github.com/metacubex/quic-go)
 pseudo_commit() {
 	local module_version=$1
