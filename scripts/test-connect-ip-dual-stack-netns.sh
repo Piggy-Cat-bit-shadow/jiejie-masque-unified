@@ -67,7 +67,7 @@ ip netns exec "$server" sysctl -qw net.ipv6.conf.all.forwarding=1
 ip netns exec "$server" sysctl -qw "net.ipv6.conf.js6${suffix}.accept_ra=2"
 ip netns exec "$server" ip -6 route show default | grep -F "dev js6${suffix}" >/dev/null
 
-v4_route=$(ip netns exec "$server" route get 198.18.4.2 from 10.200.0.2)
+v4_route=$(ip netns exec "$server" ip route get 198.18.4.2 from 10.200.0.2)
 v6_route=$(ip netns exec "$server" ip -6 route get 2001:db8:6::2 from 2001:db8:200::2)
 [[ $v4_route == *"dev js4${suffix}"* ]]
 [[ $v6_route == *"dev js6${suffix}"* ]]
