@@ -6,7 +6,7 @@ toolchain go1.26.8
 
 require (
 	github.com/metacubex/http v0.1.7
-	github.com/metacubex/quic-go v0.61.1-0.20260921033412-327d53433eaf
+	github.com/metacubex/quic-go v0.61.1-0.20260921033957-4587e96afa35
 	github.com/metacubex/tls v0.1.8
 	github.com/yosida95/uritemplate/v3 v3.0.2
 	go.yaml.in/yaml/v3 v3.0.5
@@ -25,7 +25,7 @@ replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go 
 
 require (
 	github.com/dunglas/httpsfv v1.1.1 // indirect
-	github.com/metacubex/connect-ip-go v0.0.0-20260727083417-67ccdb0cf771
+	github.com/metacubex/connect-ip-go v0.0.0-20260921035501-0821cbbd9b16
 	github.com/metacubex/cpu v0.1.0 // indirect
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect
@@ -35,4 +35,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/metacubex/connect-ip-go => github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921034515-fc5bf33d1eb5
+replace github.com/metacubex/connect-ip-go => github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921035501-0821cbbd9b16

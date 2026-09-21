@@ -4,15 +4,12 @@ import (
 	"context"
 	"net/netip"
 	"testing"
-
-	"github.com/metacubex/quic-go"
 )
 
 type lookupBenchConn struct{}
 
-func (lookupBenchConn) ReadPacket([]byte) (int, error)     { return 0, nil }
+func (lookupBenchConn) ReadPacket() ([]byte, error)        { return nil, nil }
 func (lookupBenchConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
-func (lookupBenchConn) RuntimeStats() quic.RuntimeStats    { return quic.RuntimeStats{} }
 func (lookupBenchConn) Close() error                       { return nil }
 
 func BenchmarkManagerLookup(b *testing.B) {

@@ -3,27 +3,16 @@ package session
 import (
 	"context"
 	"net/netip"
-	"sync"
 	"testing"
-
-	"github.com/metacubex/quic-go"
 )
 
 type managerTestConn struct {
-	mu     sync.Mutex
-	stats  quic.RuntimeStats
 	closed bool
 }
 
-func (c *managerTestConn) ReadPacket([]byte) (int, error)     { return 0, context.Canceled }
+func (c *managerTestConn) ReadPacket() ([]byte, error)        { return nil, context.Canceled }
 func (c *managerTestConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
-func (c *managerTestConn) RuntimeStats() quic.RuntimeStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.stats
-}
-func (c *managerTestConn) Close() error                 { c.mu.Lock(); c.closed = true; c.mu.Unlock(); return nil }
-func (c *managerTestConn) setStats(s quic.RuntimeStats) { c.mu.Lock(); c.stats = s; c.mu.Unlock() }
+func (c *managerTestConn) Close() error                       { c.closed = true; return nil }
 
 func TestManagerDualStackTakeoverAndIdentityExclusion(t *testing.T) {
 	m := NewManager(2)
@@ -62,32 +51,6 @@ func TestManagerSessionLimit(t *testing.T) {
 	b := New(netip.MustParseAddr("10.0.0.3"), "b", &managerTestConn{}, nil)
 	if _, err := m.Replace(b); err == nil {
 		t.Fatal("session limit was not enforced")
-	}
-}
-
-func TestAggregateRuntimeCountersMonotonicAcrossGenerationChurn(t *testing.T) {
-	m := NewManager()
-	c1 := &managerTestConn{}
-	c1.setStats(quic.RuntimeStats{PacketsLost: 3, UDPWrites: 9, UDPWireBytes: 100, GSOMultiSegmentWrites: 2, GSOSegmentsTotal: 6})
-	s1 := New(netip.MustParseAddr("10.0.0.2"), "a", c1, nil)
-	if _, err := m.Replace(s1); err != nil {
-		t.Fatal(err)
-	}
-	_ = m.AggregateRuntimeStats()
-	s1.Close()
-	c2 := &managerTestConn{}
-	c2.setStats(quic.RuntimeStats{PacketsLost: 1, UDPWrites: 2, UDPWireBytes: 40, GSOMultiSegmentWrites: 1, GSOSegmentsTotal: 3})
-	s2 := New(netip.MustParseAddr("10.0.0.3"), "b", c2, nil)
-	if _, err := m.Replace(s2); err != nil {
-		t.Fatal(err)
-	}
-	got := m.AggregateRuntimeStats()
-	if got.PacketsLost != 4 || got.UDPWrites != 11 || got.UDPWireBytes != 140 || got.GSOMultiSegmentWrites != 3 || got.GSOSegmentsTotal != 9 {
-		t.Fatalf("aggregate counters = %+v", got)
-	}
-	s2.Close()
-	if m.Len() != 0 {
-		t.Fatal("closed session remains registered")
 	}
 }
 

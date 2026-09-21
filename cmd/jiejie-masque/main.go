@@ -132,9 +132,6 @@ func serveConnectIPArgs(args []string) error {
 	})}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
-	appCtx, stopDiagnostics := context.WithCancel(context.Background())
-	defer stopDiagnostics()
-	go connectIPDiagnostics(appCtx, mgr, tun)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -151,61 +148,12 @@ func serveConnectIPArgs(args []string) error {
 	for _, cl := range mgr.Snapshot() {
 		cl.Close()
 	}
-	stopDiagnostics()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err = s.Shutdown(ctx); err != nil {
 		_ = s.Close()
 	}
 	return runErr
-}
-
-// connectIPDiagnostics emits identity-free, rate-limited dataplane counters.
-// It is intentionally a periodic snapshot: packet-level logging would itself
-// distort the WAN path being diagnosed.
-func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel.Device) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	var previousTun tunnel.Stats
-	var previousRuntime session.AggregateRuntimeStats
-	previousAt := time.Now()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			t := tun.Stats()
-			q := mgr.AggregateRuntimeStats()
-			elapsed := now.Sub(previousAt)
-			if elapsed <= 0 {
-				elapsed = 30 * time.Second
-			}
-			delta := func(current, previous uint64) uint64 { return counterDelta(current, previous) }
-			mbps := func(n uint64) float64 { return rateMbps(n, elapsed) }
-			log.Printf("CONNECT-IP: sessions=%d tun_rx_mbps=%.2f tun_tx_mbps=%.2f udp_wire_mbps=%.2f cc=%s cwnd=%d inflight=%d pacing=%d rtt=%s loss=%d spurious=%d bbr_mode=%s bbr_bw=%d bbr_target_cwnd=%d bbr_app_limited=%t gso_writes=%d gso_segments=%d",
-				q.Connections, mbps(delta(t.RXBytes, previousTun.RXBytes)), mbps(delta(t.TXBytes, previousTun.TXBytes)),
-				mbps(delta(q.UDPWireBytes, previousRuntime.UDPWireBytes)), q.CongestionController, q.CongestionWindows,
-				q.BytesInFlight, q.PacingRate, q.SmoothedRTT, delta(q.PacketsLost, previousRuntime.PacketsLost),
-				delta(q.SpuriousLosses, previousRuntime.SpuriousLosses), q.BBRMode, q.BBRBandwidthEstimate,
-				q.BBRTargetCwnd, q.BBRAppLimited, delta(q.GSOMultiSegmentWrites, previousRuntime.GSOMultiSegmentWrites),
-				delta(q.GSOSegmentsTotal, previousRuntime.GSOSegmentsTotal))
-			previousTun, previousRuntime, previousAt = t, q, now
-		}
-	}
-}
-
-func counterDelta(now, before uint64) uint64 {
-	if now < before {
-		return now
-	}
-	return now - before
-}
-
-func rateMbps(bytes uint64, elapsed time.Duration) float64 {
-	if elapsed <= 0 {
-		return 0
-	}
-	return float64(bytes) * 8 / elapsed.Seconds() / 1e6
 }
 
 func isServerClosed(err error) bool {
@@ -260,7 +208,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request, c config.Config, serv
 		conn.Close()
 		return
 	}
-	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.PublicKey, &connectIPPacketConn{Conn: conn}, nil)
+	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.PublicKey, conn, nil)
 	old, err := mgr.Replace(s)
 	if err != nil {
 		log.Printf("session registration failed: %v", err)
@@ -280,25 +228,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request, c config.Config, serv
 	s.Close()
 	log.Printf("CONNECT-IP session closed")
 }
-
-// connectIPPacketConn adapts the clean upstream connect-ip-go packet API to
-// the server's bounded buffer-oriented session interface.
-type connectIPPacketConn struct{ *connectip.Conn }
-
-func (c *connectIPPacketConn) ReadPacket(dst []byte) (int, error) {
-	p, err := c.Conn.ReadPacket()
-	if err != nil {
-		return 0, err
-	}
-	if len(p) > len(dst) {
-		return 0, fmt.Errorf("connect-ip packet exceeds session buffer: %d > %d", len(p), len(dst))
-	}
-	return copy(dst, p), nil
-}
-
-func (c *connectIPPacketConn) WritePacket(p []byte) ([]byte, error) { return c.Conn.WritePacket(p) }
-
-func (c *connectIPPacketConn) RuntimeStats() quic.RuntimeStats { return quic.RuntimeStats{} }
 
 func firstPrefix(a config.TunnelAddresses) netip.Prefix {
 	if a.IPv4.IsValid() {
@@ -365,9 +294,8 @@ func dispatchTUNPacket(data []byte, mgr *session.Manager, tun tunPacketWriter) {
 }
 
 func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverAddresses config.TunnelAddresses) {
-	buf := make([]byte, tunnelMTU)
 	for s.Ctx.Err() == nil {
-		n, err := s.Conn.ReadPacket(buf)
+		pkt, err := s.Conn.ReadPacket()
 		if err != nil {
 			if normalSessionError(err, s.Ctx) {
 				return
@@ -376,7 +304,6 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 			s.Close()
 			return
 		}
-		pkt := buf[:n]
 		if !prepareSessionPacket(pkt, s, serverAddresses) {
 			continue
 		}

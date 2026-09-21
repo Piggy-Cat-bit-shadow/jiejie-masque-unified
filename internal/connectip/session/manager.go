@@ -6,17 +6,13 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	"github.com/metacubex/quic-go"
 )
 
 // PacketConn is the small CONNECT-IP API used by the server datapath. The
 // transport copies or consumes each payload before the call returns.
 type PacketConn interface {
-	ReadPacket([]byte) (int, error)
+	ReadPacket() ([]byte, error)
 	WritePacket([]byte) ([]byte, error)
-	RuntimeStats() quic.RuntimeStats
 	Close() error
 }
 
@@ -99,39 +95,8 @@ func (s *Session) Close() {
 	})
 }
 
-// AggregateRuntimeStats contains only connection state and counters needed by
-// the real-WAN CUBIC/BBR A/B. Cumulative counters remain monotonic across
-// session generations; identities and tunnel addresses never leave Manager.
-type AggregateRuntimeStats struct {
-	Connections           uint64
-	CongestionController  string
-	CongestionState       string
-	CongestionWindows     uint64
-	BytesInFlight         uint64
-	PacingRate            uint64
-	MinRTT                time.Duration
-	LatestRTT             time.Duration
-	SmoothedRTT           time.Duration
-	PacketsLost           uint64
-	BytesLost             uint64
-	SpuriousLosses        uint64
-	BBRConnections        uint64
-	BBRMode               string
-	BBRBandwidthEstimate  uint64
-	BBRTargetCwnd         uint64
-	BBRAppLimited         bool
-	UDPWrites             uint64
-	UDPWireBytes          uint64
-	GSOMultiSegmentWrites uint64
-	GSOSegmentsTotal      uint64
-	CurrentPMTU           uint64
-}
-
 type Manager struct {
 	mu             sync.RWMutex
-	runtimeStatsMu sync.Mutex
-	runtimeByGen   map[uint64]quic.RuntimeStats
-	runtimeTotals  AggregateRuntimeStats
 	sessions4      map[netip.Addr]*Session
 	sessions6      map[netip.Addr]*Session
 	maxSessions    int
@@ -183,7 +148,6 @@ func (m *Manager) Replace(s *Session) ([]*Session, error) {
 		return nil, fmt.Errorf("session capacity exhausted")
 	}
 	for old := range oldSet {
-		m.observeSessionRuntimeStatsLocked(old)
 		for _, ip := range old.ClientIPs {
 			if m.lookupLocked(ip) == old {
 				if ip.Is4() {
@@ -245,7 +209,6 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.observeSessionRuntimeStatsLocked(s)
 	removed := false
 	for _, ip := range s.ClientIPs {
 		if m.lookupLocked(ip) == s {
@@ -257,7 +220,6 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 			removed = true
 		}
 	}
-	m.forgetRuntimeGenerationLocked(s.Generation)
 	return removed
 }
 
@@ -295,45 +257,6 @@ func (m *Manager) Snapshot() []*Session {
 	return out
 }
 
-func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
-	var out AggregateRuntimeStats
-	m.mu.RLock()
-	for _, s := range m.snapshotLocked() {
-		stats := s.Conn.RuntimeStats()
-		m.observeRuntimeStatsLocked(s.Generation, stats)
-		out.Connections++
-		out.CongestionController = aggregateName(out.CongestionController, stats.CongestionController)
-		out.CongestionState = aggregateName(out.CongestionState, stats.CongestionState)
-		out.CongestionWindows += stats.CongestionWindow
-		out.BytesInFlight += stats.BytesInFlight
-		out.PacingRate += stats.PacingRate
-		if stats.MinRTT > 0 && (out.MinRTT == 0 || stats.MinRTT < out.MinRTT) {
-			out.MinRTT = stats.MinRTT
-		}
-		if stats.LatestRTT > out.LatestRTT {
-			out.LatestRTT = stats.LatestRTT
-		}
-		if stats.SmoothedRTT > out.SmoothedRTT {
-			out.SmoothedRTT = stats.SmoothedRTT
-		}
-		if stats.CongestionController == "bbr" {
-			out.BBRConnections++
-			out.BBRMode = aggregateName(out.BBRMode, stats.BBRMode)
-			out.BBRBandwidthEstimate += stats.BBRBandwidthEstimate
-			out.BBRTargetCwnd += stats.BBRTargetCwnd
-			out.BBRAppLimited = out.BBRAppLimited || stats.BBRAppLimited
-		}
-		if stats.CurrentPMTU > 0 && (out.CurrentPMTU == 0 || stats.CurrentPMTU < out.CurrentPMTU) {
-			out.CurrentPMTU = stats.CurrentPMTU
-		}
-	}
-	m.runtimeStatsMu.Lock()
-	applyRuntimeCounterTotals(&out, m.runtimeTotals)
-	m.runtimeStatsMu.Unlock()
-	m.mu.RUnlock()
-	return out
-}
-
 func (m *Manager) snapshotLocked() []*Session {
 	seen := make(map[*Session]struct{}, len(m.sessions4)+len(m.sessions6))
 	out := make([]*Session, 0, len(m.sessions4)+len(m.sessions6))
@@ -346,64 +269,4 @@ func (m *Manager) snapshotLocked() []*Session {
 		}
 	}
 	return out
-}
-
-func aggregateName(current, next string) string {
-	if current == "" {
-		return next
-	}
-	if current != next {
-		return "mixed"
-	}
-	return current
-}
-
-func (m *Manager) observeSessionRuntimeStatsLocked(s *Session) {
-	if s != nil && s.Conn != nil {
-		m.observeRuntimeStatsLocked(s.Generation, s.Conn.RuntimeStats())
-	}
-}
-
-func (m *Manager) observeRuntimeStatsLocked(generation uint64, current quic.RuntimeStats) {
-	if generation == 0 {
-		return
-	}
-	m.runtimeStatsMu.Lock()
-	defer m.runtimeStatsMu.Unlock()
-	if m.runtimeByGen == nil {
-		m.runtimeByGen = make(map[uint64]quic.RuntimeStats)
-	}
-	previous := m.runtimeByGen[generation]
-	t := &m.runtimeTotals
-	t.PacketsLost += monotonicDelta(current.PacketsLost, previous.PacketsLost)
-	t.BytesLost += monotonicDelta(current.BytesLost, previous.BytesLost)
-	t.SpuriousLosses += monotonicDelta(current.SpuriousLosses, previous.SpuriousLosses)
-	t.UDPWrites += monotonicDelta(current.UDPWrites, previous.UDPWrites)
-	t.UDPWireBytes += monotonicDelta(current.UDPWireBytes, previous.UDPWireBytes)
-	t.GSOMultiSegmentWrites += monotonicDelta(current.GSOMultiSegmentWrites, previous.GSOMultiSegmentWrites)
-	t.GSOSegmentsTotal += monotonicDelta(current.GSOSegmentsTotal, previous.GSOSegmentsTotal)
-	m.runtimeByGen[generation] = current
-}
-
-func (m *Manager) forgetRuntimeGenerationLocked(generation uint64) {
-	m.runtimeStatsMu.Lock()
-	delete(m.runtimeByGen, generation)
-	m.runtimeStatsMu.Unlock()
-}
-
-func monotonicDelta(current, previous uint64) uint64 {
-	if current < previous {
-		return current
-	}
-	return current - previous
-}
-
-func applyRuntimeCounterTotals(out *AggregateRuntimeStats, totals AggregateRuntimeStats) {
-	out.PacketsLost = totals.PacketsLost
-	out.BytesLost = totals.BytesLost
-	out.SpuriousLosses = totals.SpuriousLosses
-	out.UDPWrites = totals.UDPWrites
-	out.UDPWireBytes = totals.UDPWireBytes
-	out.GSOMultiSegmentWrites = totals.GSOMultiSegmentWrites
-	out.GSOSegmentsTotal = totals.GSOSegmentsTotal
 }

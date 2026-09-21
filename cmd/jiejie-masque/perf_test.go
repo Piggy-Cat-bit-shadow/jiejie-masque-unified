@@ -5,14 +5,12 @@ import (
 	"testing"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
-	"github.com/metacubex/quic-go"
 )
 
 type directBenchConn struct{}
 
-func (directBenchConn) ReadPacket([]byte) (int, error)     { return 0, nil }
+func (directBenchConn) ReadPacket() ([]byte, error)        { return nil, nil }
 func (directBenchConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
-func (directBenchConn) RuntimeStats() quic.RuntimeStats    { return quic.RuntimeStats{} }
 func (directBenchConn) Close() error                       { return nil }
 
 func BenchmarkTunToConnectIPDirect(b *testing.B) {
