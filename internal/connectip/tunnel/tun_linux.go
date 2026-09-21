@@ -3,6 +3,7 @@
 package tunnel
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -109,8 +111,18 @@ func (d *Device) Configure(prefix netip.Prefix) error {
 }
 
 var configureIPv6Address = func(name string, prefix netip.Prefix) error {
-	cmd := exec.Command("ip", "-6", "addr", "replace", prefix.String(), "dev", name)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	return configureIPv6AddressWithRunner(name, prefix, func(ctx context.Context, command string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, command, args...).CombinedOutput()
+	})
+}
+
+func configureIPv6AddressWithRunner(name string, prefix netip.Prefix, run func(context.Context, string, ...string) ([]byte, error)) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if out, err := run(ctx, "ip", "-6", "addr", "replace", prefix.String(), "dev", name, "nodad"); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("ip -6 addr replace timed out: %s", string(out))
+		}
 		return fmt.Errorf("ip -6 addr replace: %w: %s", err, string(out))
 	}
 	return nil

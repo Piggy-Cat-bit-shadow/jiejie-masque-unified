@@ -94,12 +94,60 @@ type DirectionStats struct {
 }
 
 type RuntimeStats struct {
-	QUIC           QUICStats           `json:"quic"`
-	Scheduler      SchedulerStats      `json:"scheduler"`
-	GSO            GSOStats            `json:"gso"`
-	Queues         QueueStats          `json:"queues"`
-	DATAGRAMWriter DATAGRAMWriterStats `json:"datagram_writer"`
-	TUN            TUNStats            `json:"tun"`
+	QUIC             QUICStats           `json:"quic"`
+	Scheduler        SchedulerStats      `json:"scheduler"`
+	GSO              GSOStats            `json:"gso"`
+	Queues           QueueStats          `json:"queues"`
+	DATAGRAMWriter   DATAGRAMWriterStats `json:"datagram_writer"`
+	TUN              TUNStats            `json:"tun"`
+	IPFamilies       IPFamilyStats       `json:"ip_families"`
+	IPFamilyInterval IPFamilyStats       `json:"ip_family_interval"`
+}
+
+// IPFamilyStats contains aggregate, identity-free inner-packet counters.
+type IPFamilyStats struct {
+	IPv4RXPackets           uint64 `json:"inner_ipv4_rx_packets"`
+	IPv4RXBytes             uint64 `json:"inner_ipv4_rx_bytes"`
+	IPv6RXPackets           uint64 `json:"inner_ipv6_rx_packets"`
+	IPv6RXBytes             uint64 `json:"inner_ipv6_rx_bytes"`
+	IPv4TXPackets           uint64 `json:"inner_ipv4_tx_packets"`
+	IPv4TXBytes             uint64 `json:"inner_ipv4_tx_bytes"`
+	IPv6TXPackets           uint64 `json:"inner_ipv6_tx_packets"`
+	IPv6TXBytes             uint64 `json:"inner_ipv6_tx_bytes"`
+	IPv4ParseDrops          uint64 `json:"ipv4_drop_parse"`
+	IPv6ParseDrops          uint64 `json:"ipv6_drop_parse"`
+	IPv4NoSessionDrops      uint64 `json:"ipv4_drop_no_session"`
+	IPv6NoSessionDrops      uint64 `json:"ipv6_drop_no_session"`
+	IPv4PolicyDrops         uint64 `json:"ipv4_drop_policy"`
+	IPv6PolicyDrops         uint64 `json:"ipv6_drop_policy"`
+	ICMPv4FragNeeded        uint64 `json:"icmpv4_frag_needed_generated"`
+	ICMPv6PacketTooBig      uint64 `json:"icmpv6_packet_too_big_generated"`
+	IPv6ExtensionParseDrops uint64 `json:"ipv6_extension_parse_drop"`
+}
+
+func (s IPFamilyStats) Delta(previous IPFamilyStats) IPFamilyStats {
+	d := func(now, before uint64) uint64 {
+		if now < before {
+			return now
+		}
+		return now - before
+	}
+	return IPFamilyStats{
+		IPv4RXPackets: d(s.IPv4RXPackets, previous.IPv4RXPackets), IPv4RXBytes: d(s.IPv4RXBytes, previous.IPv4RXBytes),
+		IPv6RXPackets: d(s.IPv6RXPackets, previous.IPv6RXPackets), IPv6RXBytes: d(s.IPv6RXBytes, previous.IPv6RXBytes),
+		IPv4TXPackets: d(s.IPv4TXPackets, previous.IPv4TXPackets), IPv4TXBytes: d(s.IPv4TXBytes, previous.IPv4TXBytes),
+		IPv6TXPackets: d(s.IPv6TXPackets, previous.IPv6TXPackets), IPv6TXBytes: d(s.IPv6TXBytes, previous.IPv6TXBytes),
+		IPv4ParseDrops: d(s.IPv4ParseDrops, previous.IPv4ParseDrops), IPv6ParseDrops: d(s.IPv6ParseDrops, previous.IPv6ParseDrops),
+		IPv4NoSessionDrops: d(s.IPv4NoSessionDrops, previous.IPv4NoSessionDrops), IPv6NoSessionDrops: d(s.IPv6NoSessionDrops, previous.IPv6NoSessionDrops),
+		IPv4PolicyDrops: d(s.IPv4PolicyDrops, previous.IPv4PolicyDrops), IPv6PolicyDrops: d(s.IPv6PolicyDrops, previous.IPv6PolicyDrops),
+		ICMPv4FragNeeded: d(s.ICMPv4FragNeeded, previous.ICMPv4FragNeeded), ICMPv6PacketTooBig: d(s.ICMPv6PacketTooBig, previous.ICMPv6PacketTooBig),
+		IPv6ExtensionParseDrops: d(s.IPv6ExtensionParseDrops, previous.IPv6ExtensionParseDrops),
+	}
+}
+
+type ipFamilyAtomic struct {
+	values       [2][8]atomic.Uint64
+	icmp4, icmp6 atomic.Uint64
 }
 
 type DATAGRAMWriterStats struct {
@@ -291,7 +339,88 @@ type stageCounters struct {
 // Probe is safe to share across all CONNECT-IP sessions and dataplane loops.
 // A nil *Probe is the intended disabled fast path at call sites.
 type Probe struct {
-	stages [len(stages)]stageCounters
+	stages   [len(stages)]stageCounters
+	ipFamily ipFamilyAtomic
+}
+
+const (
+	familyRXPackets = iota
+	familyRXBytes
+	familyTXPackets
+	familyTXBytes
+	familyParseDrops
+	familyNoSessionDrops
+	familyPolicyDrops
+	familyExtensionDrops
+)
+
+func (p *Probe) AddInnerRX(packet []byte) { p.addInnerPacket(packet, true) }
+func (p *Probe) AddInnerTX(packet []byte) { p.addInnerPacket(packet, false) }
+
+func (p *Probe) addInnerPacket(packet []byte, rx bool) {
+	if p == nil || len(packet) == 0 {
+		return
+	}
+	family := int(packet[0] >> 4)
+	if family != 4 && family != 6 {
+		return
+	}
+	packets, bytes := familyRXPackets, familyRXBytes
+	if !rx {
+		packets, bytes = familyTXPackets, familyTXBytes
+	}
+	index := 0
+	if family == 6 {
+		index = 1
+	}
+	p.ipFamily.values[index][packets].Add(1)
+	p.ipFamily.values[index][bytes].Add(uint64(len(packet)))
+}
+
+func (p *Probe) AddIPDrop(version uint8, parse, noSession, extension bool) {
+	if p == nil || (version != 4 && version != 6) {
+		return
+	}
+	index := 0
+	if version == 6 {
+		index = 1
+	}
+	if parse {
+		p.ipFamily.values[index][familyParseDrops].Add(1)
+	}
+	if noSession {
+		p.ipFamily.values[index][familyNoSessionDrops].Add(1)
+	}
+	if !parse && !noSession {
+		p.ipFamily.values[index][familyPolicyDrops].Add(1)
+	}
+	if extension {
+		p.ipFamily.values[1][familyExtensionDrops].Add(1)
+	}
+}
+
+func (p *Probe) AddGeneratedICMP(packet []byte) {
+	if p == nil || len(packet) < 2 {
+		return
+	}
+	switch packet[0] >> 4 {
+	case 4:
+		if len(packet) >= 22 && packet[9] == 1 && packet[20] == 3 && packet[21] == 4 {
+			p.ipFamily.icmp4.Add(1)
+		}
+	case 6:
+		if len(packet) >= 41 && packet[6] == 58 && packet[40] == 2 {
+			p.ipFamily.icmp6.Add(1)
+		}
+	}
+}
+
+func (p *Probe) IPFamilySnapshot() IPFamilyStats {
+	if p == nil {
+		return IPFamilyStats{}
+	}
+	v4, v6 := &p.ipFamily.values[0], &p.ipFamily.values[1]
+	return IPFamilyStats{IPv4RXPackets: v4[familyRXPackets].Load(), IPv4RXBytes: v4[familyRXBytes].Load(), IPv6RXPackets: v6[familyRXPackets].Load(), IPv6RXBytes: v6[familyRXBytes].Load(), IPv4TXPackets: v4[familyTXPackets].Load(), IPv4TXBytes: v4[familyTXBytes].Load(), IPv6TXPackets: v6[familyTXPackets].Load(), IPv6TXBytes: v6[familyTXBytes].Load(), IPv4ParseDrops: v4[familyParseDrops].Load(), IPv6ParseDrops: v6[familyParseDrops].Load(), IPv4NoSessionDrops: v4[familyNoSessionDrops].Load(), IPv6NoSessionDrops: v6[familyNoSessionDrops].Load(), IPv4PolicyDrops: v4[familyPolicyDrops].Load(), IPv6PolicyDrops: v6[familyPolicyDrops].Load(), ICMPv4FragNeeded: p.ipFamily.icmp4.Load(), ICMPv6PacketTooBig: p.ipFamily.icmp6.Load(), IPv6ExtensionParseDrops: v6[familyExtensionDrops].Load()}
 }
 
 func (p *Probe) index(stage Stage) (int, bool) {

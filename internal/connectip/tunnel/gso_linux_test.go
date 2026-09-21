@@ -37,11 +37,26 @@ func testTCPv4Aggregate() []byte {
 func testTCPv6Aggregate() []byte {
 	p := make([]byte, 40+20+200)
 	p[0], p[6], p[7] = 0x60, unix.IPPROTO_TCP, 64
+	binary.BigEndian.PutUint16(p[4:6], uint16(len(p)-40))
 	copy(p[8:40], []byte{0x20, 1, 0xdb, 8, 1, 0, 0, 0, 0x20, 1, 0xdb, 8, 2, 0, 0, 0})
 	binary.BigEndian.PutUint32(p[44:], 1000)
 	p[52], p[53] = 0x50, 0x18
 	for i := range p[60:] {
 		p[60+i] = byte(i)
+	}
+	return p
+}
+
+func testTCPv6DestinationOptionsAggregate() []byte {
+	p := make([]byte, 40+8+20+200)
+	p[0], p[6], p[7] = 0x60, 60, 64
+	binary.BigEndian.PutUint16(p[4:6], uint16(len(p)-40))
+	copy(p[8:40], []byte{0x20, 1, 0xdb, 8, 1, 0, 0, 0, 0x20, 1, 0xdb, 8, 2, 0, 0, 0})
+	p[40], p[41] = unix.IPPROTO_TCP, 0 // Destination Options -> TCP, 8 bytes.
+	binary.BigEndian.PutUint32(p[52:], 1000)
+	p[60], p[61] = 0x50, 0x19 // TCP data offset; ACK, PSH, FIN.
+	for i := range p[68:] {
+		p[68+i] = byte(i)
 	}
 	return p
 }
@@ -88,6 +103,44 @@ func TestHandleVirtioReadGSOTCPv4AndV6(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleVirtioReadGSOTCPv6DestinationOptions(t *testing.T) {
+	aggregate := testTCPv6DestinationOptionsAggregate()
+	bufs, sizes := [][]byte{make([]byte, 256), make([]byte, 256)}, make([]int, 2)
+	n, err := handleVirtioRead(testVirtio(virtioNetHdr{gsoType: unix.VIRTIO_NET_HDR_GSO_TCPV6, gsoSize: 100, csumStart: 48, csumOffset: 16}, aggregate), bufs, sizes, 0)
+	if err != nil || n != 2 {
+		t.Fatalf("split = %d, %v", n, err)
+	}
+	for i := 0; i < n; i++ {
+		p := bufs[i][:sizes[i]]
+		if p[6] != 60 || p[40] != unix.IPPROTO_TCP || p[41] != 0 {
+			t.Fatalf("segment %d lost destination options: %x", i, p[:48])
+		}
+		if got, want := int(binary.BigEndian.Uint16(p[4:6])), len(p)-40; got != want {
+			t.Fatalf("segment %d IPv6 payload length = %d, want %d", i, got, want)
+		}
+		if got, want := binary.BigEndian.Uint32(p[52:]), uint32(1000+i*100); got != want {
+			t.Fatalf("segment %d TCP sequence = %d, want %d", i, got, want)
+		}
+		wantFlags := byte(0x19)
+		if i == 0 {
+			wantFlags = 0x10 // Intermediate segments clear PSH and FIN.
+		}
+		if p[61] != wantFlags {
+			t.Fatalf("segment %d TCP flags = %#x, want %#x", i, p[61], wantFlags)
+		}
+		pseudo := pseudoChecksum(unix.IPPROTO_TCP, p[8:24], p[24:40], uint16(len(p)-48))
+		if ^checksum(p[48:], pseudo) != 0 {
+			t.Fatalf("segment %d TCP checksum invalid", i)
+		}
+	}
+
+	// A next-header chain inconsistent with csumStart must never be guessed.
+	_, err = handleVirtioRead(testVirtio(virtioNetHdr{gsoType: unix.VIRTIO_NET_HDR_GSO_TCPV6, gsoSize: 100, csumStart: 40, csumOffset: 16}, aggregate), bufs, sizes, 0)
+	if !errors.Is(err, ErrMalformedGSO) {
+		t.Fatalf("mismatched transport offset error = %v", err)
 	}
 }
 

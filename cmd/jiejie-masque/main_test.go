@@ -1,13 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"io"
 	"net"
 	"net/netip"
@@ -15,7 +13,34 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
+	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 )
+
+func TestConnectIPRoutesByAddressFamily(t *testing.T) {
+	v4 := config.TunnelAddresses{IPv4: netip.MustParsePrefix("10.200.0.2/32")}
+	v6 := config.TunnelAddresses{IPv6: netip.MustParsePrefix("fd00:200::2/128")}
+	server := config.TunnelAddresses{IPv6: netip.MustParsePrefix("fd00:200::1/64")}
+	assertRoutes := func(name string, got []connectip.IPRoute, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s routes = %#v, want %v", name, got, want)
+		}
+		for i, route := range got {
+			if route.StartIP.String()+"-"+route.EndIP.String() != want[i] {
+				t.Fatalf("%s route[%d] = %s-%s, want %s", name, i, route.StartIP, route.EndIP, want[i])
+			}
+		}
+	}
+	assertRoutes("IPv4-only", connectIPRoutes(v4, config.TunnelAddresses{}, false), "0.0.0.0-255.255.255.255")
+	assertRoutes("IPv6-only local", connectIPRoutes(v6, server, false), "fd00:200::1-fd00:200::1")
+	assertRoutes("IPv6-only default", connectIPRoutes(v6, server, true), "::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
+	dual := config.TunnelAddresses{IPv4: v4.IPv4, IPv6: v6.IPv6}
+	assertRoutes("dual-stack", connectIPRoutes(dual, server, false), "0.0.0.0-255.255.255.255", "fd00:200::1-fd00:200::1")
+}
 
 type scriptedTunReader struct {
 	packets [][]byte
@@ -709,7 +734,7 @@ func TestReapIdleSessions(t *testing.T) {
 	now := time.Unix(1000, 0)
 	idle.Touch(now.Add(-time.Hour))
 	active.Touch(now.Add(-time.Minute))
-	if got := reapIdle(m, now, 30*time.Minute); got != 1 || m.Len() != 1 || m.Lookup(active.ShadowIP) != active {
+	if got := reapIdle(m, now, 30*time.Minute); got != 1 || m.Len() != 1 || m.Lookup(active.ShadowIPv4) != active {
 		t.Fatalf("reap result=%d len=%d", got, m.Len())
 	}
 	if idle.CloseReason() != "idle-timeout" {
@@ -735,6 +760,76 @@ func TestIPv4PacketValidation(t *testing.T) {
 			t.Fatal("malformed/non-IPv4 packet accepted")
 		}
 	}
+}
+
+func TestDualStackShadowRewritesIPv4AndPreservesIPv6(t *testing.T) {
+	ctx := context.Background()
+	pool := session.NewPacketPool(1500)
+	mgr := session.NewShadowManager(netip.MustParsePrefix("10.200.0.128/30"), 4, nil)
+	v4 := netip.MustParseAddr("10.200.0.2")
+	v6 := netip.MustParseAddr("fd00:200::2")
+	s := session.NewWithAddressesAndPacketPoolAndQueue(ctx, []netip.Addr{v4, v6}, "dual", testPacketConn{}, pool, 8, func(s *session.Session) { mgr.RemoveIfCurrent(s) })
+	if err := mgr.Register(s); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	server := config.TunnelAddresses{IPv4: netip.MustParsePrefix("10.200.0.1/24"), IPv6: netip.MustParsePrefix("fd00:200::1/64")}
+
+	out4 := make([]byte, 20)
+	out4[0], out4[9] = 0x45, 17
+	binary.BigEndian.PutUint16(out4[2:4], uint16(len(out4)))
+	v4.As4()
+	copy(out4[12:16], v4.AsSlice())
+	copy(out4[16:20], []byte{1, 1, 1, 1})
+	if !prepareSessionPacket(out4, s, mgr, server, false, 0) {
+		t.Fatal("IPv4 packet rejected")
+	}
+	if got := netip.AddrFrom4([4]byte(out4[12:16])); got != s.ShadowIPv4 {
+		t.Fatalf("IPv4 source = %s, want shadow %s", got, s.ShadowIPv4)
+	}
+
+	out6 := make([]byte, 41)
+	out6[0], out6[6] = 0x60, 59
+	binary.BigEndian.PutUint16(out6[4:6], 1)
+	copy(out6[8:24], v6.AsSlice())
+	copy(out6[24:40], netip.MustParseAddr("2606:4700:4700::1111").AsSlice())
+	before6 := append([]byte(nil), out6...)
+	if !prepareSessionPacket(out6, s, mgr, server, false, 0) {
+		t.Fatal("IPv6 packet rejected")
+	}
+	if !bytes.Equal(out6, before6) {
+		t.Fatal("IPv6 source/destination was rewritten")
+	}
+
+	in4 := make([]byte, 20)
+	in4[0], in4[9] = 0x45, 17
+	binary.BigEndian.PutUint16(in4[2:4], uint16(len(in4)))
+	copy(in4[12:16], []byte{1, 1, 1, 1})
+	copy(in4[16:20], s.ShadowIPv4.AsSlice())
+	pkt4 := pool.Get(len(in4))
+	copy(pkt4.Data, in4)
+	if !dispatchTUNPacket(pkt4, mgr, pool) {
+		t.Fatal("IPv4 return packet rejected")
+	}
+	queued4 := <-s.Outbound
+	if got := netip.AddrFrom4([4]byte(queued4.Data[16:20])); got != v4 {
+		t.Fatalf("IPv4 return destination = %s, want %s", got, v4)
+	}
+	s.ReleasePacket(queued4)
+
+	in6 := append([]byte(nil), before6...)
+	copy(in6[8:24], netip.MustParseAddr("2606:4700:4700::1111").AsSlice())
+	copy(in6[24:40], v6.AsSlice())
+	pkt6 := pool.Get(len(in6))
+	copy(pkt6.Data, in6)
+	if !dispatchTUNPacket(pkt6, mgr, pool) {
+		t.Fatal("IPv6 direct return packet rejected")
+	}
+	queued6 := <-s.Outbound
+	if !bytes.Equal(queued6.Data, in6) {
+		t.Fatal("IPv6 return packet was rewritten")
+	}
+	s.ReleasePacket(queued6)
 }
 
 func TestTUNDispatcherReadsDirectlyIntoQueuedPacket(t *testing.T) {

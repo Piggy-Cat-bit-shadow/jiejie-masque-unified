@@ -29,8 +29,10 @@ type Session struct {
 	ID            uint64
 	ClientIP      netip.Addr
 	ClientIPs     []netip.Addr
-	VisibleIP     netip.Addr
-	ShadowIP      netip.Addr
+	ClientIPv4    netip.Addr
+	ClientIPv6    netip.Addr
+	VisibleIPv4   netip.Addr
+	ShadowIPv4    netip.Addr
 	Identity      string
 	Conn          PacketConn
 	Ctx           context.Context
@@ -226,7 +228,26 @@ func NewWithAddressesAndPacketPoolAndQueue(parent context.Context, ips []netip.A
 		panic("session requires at least one client address")
 	}
 	addresses := append([]netip.Addr(nil), ips...)
-	s := &Session{ClientIP: addresses[0], ClientIPs: addresses, VisibleIP: addresses[0], Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, queueSize), packetPool: packetPool, onClose: onClose}
+	s := &Session{ClientIP: addresses[0], ClientIPs: addresses, Identity: identity, Conn: conn, Ctx: ctx, Cancel: cancel, Outbound: make(chan *PacketBuffer, queueSize), packetPool: packetPool, onClose: onClose}
+	for _, address := range addresses {
+		if !address.IsValid() || address.Is4In6() || address.Zone() != "" {
+			cancel()
+			panic("session requires unzoned IPv4 and/or IPv6 addresses")
+		}
+		if address.Is4() {
+			if s.ClientIPv4.IsValid() {
+				cancel()
+				panic("session has multiple IPv4 addresses")
+			}
+			s.ClientIPv4, s.VisibleIPv4 = address, address
+		} else if address.Is6() {
+			if s.ClientIPv6.IsValid() {
+				cancel()
+				panic("session has multiple IPv6 addresses")
+			}
+			s.ClientIPv6 = address
+		}
+	}
 	s.Touch(time.Now())
 	return s
 }
@@ -585,17 +606,29 @@ func (m *Manager) Register(s *Session) error {
 	if len(m.sessionsByID) >= m.max {
 		return fmt.Errorf("session capacity exhausted")
 	}
-	ip, ok := m.allocateLocked()
-	if !ok {
-		return fmt.Errorf("shadow address pool exhausted")
+	if s.ClientIPv6.IsValid() && m.sessions[s.ClientIPv6] != nil {
+		return fmt.Errorf("IPv6 address %s is already owned by an active session", s.ClientIPv6)
+	}
+	var shadowIPv4 netip.Addr
+	if s.ClientIPv4.IsValid() {
+		ip, ok := m.allocateLocked()
+		if !ok {
+			return fmt.Errorf("shadow address pool exhausted")
+		}
+		shadowIPv4 = ip
 	}
 	m.next++
 	s.ID = m.next
 	s.Generation = m.next
-	s.ShadowIP = ip
+	s.ShadowIPv4 = shadowIPv4
 	m.sessionsByID[s.ID] = s
 	m.activeByIdentity[s.Identity]++
-	m.sessionsByShadow[ip] = s
+	if shadowIPv4.IsValid() {
+		m.sessionsByShadow[shadowIPv4] = s
+	}
+	if s.ClientIPv6.IsValid() {
+		m.sessions[s.ClientIPv6] = s
+	}
 	return nil
 }
 func (m *Manager) allocateLocked() (netip.Addr, bool) {
@@ -671,20 +704,25 @@ func (m *Manager) RemoveIfCurrent(s *Session) bool {
 		m.observeSessionRuntimeStatsLocked(s)
 		m.forgetRuntimeGenerationLocked(s.Generation)
 		delete(m.sessionsByID, s.ID)
-		delete(m.sessionsByShadow, s.ShadowIP)
+		if s.ShadowIPv4.IsValid() {
+			delete(m.sessionsByShadow, s.ShadowIPv4)
+		}
+		if s.ClientIPv6.IsValid() && m.sessions[s.ClientIPv6] == s {
+			delete(m.sessions, s.ClientIPv6)
+		}
 		cleanup := m.cleanup
 		executor := m.cleanupExecutor
-		shadowIP := s.ShadowIP
+		shadowIP := s.ShadowIPv4
 		if m.activeByIdentity[s.Identity] > 0 {
 			m.activeByIdentity[s.Identity]--
 			if m.activeByIdentity[s.Identity] == 0 {
 				delete(m.activeByIdentity, s.Identity)
 			}
 		}
-		pending := cleanup != nil && executor != nil
+		pending := shadowIP.IsValid() && cleanup != nil && executor != nil
 		if pending {
 			m.cleanupPending[shadowIP] = struct{}{}
-		} else if m.reuseDelay > 0 {
+		} else if shadowIP.IsValid() && m.reuseDelay > 0 {
 			m.cooling[shadowIP] = m.now().Add(m.reuseDelay)
 		}
 		m.mu.Unlock()
@@ -711,7 +749,10 @@ func (m *Manager) Lookup(ip netip.Addr) *Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.shadow {
-		return m.sessionsByShadow[ip]
+		if s := m.sessionsByShadow[ip]; s != nil {
+			return s
+		}
+		return m.sessions[ip]
 	}
 	return m.sessions[ip]
 }

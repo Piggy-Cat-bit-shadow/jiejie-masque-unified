@@ -45,7 +45,7 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `6f63f5dec0a9df5ab4fb973c5e79a92a256eed9c`
+- Pinned commit: `dc51b49c832bd421dc88252fd8d9d4f11a59b5dc`
 - License: MIT
 - Used interfaces: owned packet-buffer send and prefix-accepting batch send,
   borrowed packet-buffer receive, bounded DATAGRAM ownership, and CONNECT-IP

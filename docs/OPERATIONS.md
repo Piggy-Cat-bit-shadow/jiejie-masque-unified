@@ -66,8 +66,8 @@ jiejie-masque keygen
 - `listen`、TLS certificate/key 和 QUIC stateless reset key path。
 - `server.tunnel_ipv4` / 可选的 `server.tunnel_ipv6`、`server.mtu` 与 client tunnel address；双栈时同一 client 同时配置 `/32` 和 `/128`。启用 IPv6 tunnel 时 MTU 至少为 1280。
 - `server.advertise_ipv6_default_route` 默认关闭。ULA/私有 IPv6 只提供 tunnel connectivity，不等于公网 IPv6 egress；只有 operator 已将 public IPv6 prefix 路由到 TUN 时才允许打开该选项。
-- `host_network.external_interface`；留空时程序根据 default route 自动检测。
-- `server.session_nat` 的 pool 必须位于 server network 内，且不能包含 server tunnel address；它目前只支持 IPv4，启用 IPv6 时必须关闭。
+- `host_network.external_interface` 是向后兼容的 v4/v6 共用 override；双上游路径可分别设置 `external_interface_ipv4` / `external_interface_ipv6`，优先级为 per-family、legacy、各自的 default-route 自动检测。
+- `server.session_nat` 的 shadow pool 仍是 IPv4；dual-stack Session 只改写 IPv4，IPv6 使用直连地址映射，不做 NAT66。IPv6-only client 可在同时配置 IPv4 shadow pool 的 server 上不分配 shadow 地址。
 - `dns_gateway.upstream` 默认是 `127.0.0.1:53`，gateway 只绑定 tunnel address。
 
 示例默认保持 `tun_offload: false`、`tun_tx_gro: false`。如果开启 TX GRO，
@@ -86,10 +86,37 @@ jiejie-masque check-config --config /etc/jiejie-masque/connect-ip.yaml
 jiejie-masque doctor --config /etc/jiejie-masque/connect-ip.yaml
 ```
 
-`doctor` 会检查配置、启用地址族的 forwarding、`masque0` 的每个 IPv4/IPv6 prefix、external interface、NAT
-MASQUERADE、active UFW 的 tunnel DNS/forward 规则，以及 stateless reset key。
+`doctor` 会分别检查 IPv4/IPv6 forwarding、TUN、external interface 和对应的数据路径。IPv4 检查 MASQUERADE；IPv6 检查可用公网 prefix、IPv6 default route 的接口及从 tunnel source 做的本机 route lookup，不会把 NAT66 当作成功。它会明确警告本机无法证明 provider 已将整个 prefix 路由回来；active UFW 必须确认 IPv6 已启用并具备 family-specific forward 规则。tunnel-local DNS 使用 server IPv6 地址的最小 `/128` route，不会因此开放整段 tunnel prefix。
 它只执行查询；缺失 reset key 是 WARN（服务首次启动会创建它），UFW 未安装或未启用
 是 SKIP。任何运行必需项失败时会以非零状态退出并输出 `doctor: FAIL`。
+
+IPv6 能力边界：
+
+| 模式 | 状态 | 说明 |
+| --- | --- | --- |
+| IPv4-only + Session NAT | Supported | 维持现有 IPv4 shadow pool。 |
+| Dual-stack + Session NAT | Supported | IPv4 shadow translation；IPv6 direct/routed。 |
+| IPv6-only client | Supported | direct IPv6 mapping；同一 active `/128` 不可重复分配。 |
+| ULA tunnel-local IPv6 / DNS | Supported | 只保证 tunnel-local route/service，不是公网 egress。 |
+| Public routed IPv6 prefix | Supported with provider route | 需要 operator/provider 路由 prefix；doctor 只能检查本机条件。 |
+| 单个 public `/128`、无 delegated/routed prefix | Insufficient for client egress | 缺少可靠 client-prefix 回程路由。 |
+| NAT66 / NPTv6 | Not implemented | 不会自动启用 IPv6 masquerade。 |
+| On-link-only prefix requiring proxy NDP | Not implemented | 不支持 proxy NDP；需要 provider route 或另行设计。 |
+
+可选示例（仅 tunnel-local dual-stack，不代表公网 IPv6）：
+
+```yaml
+server:
+  tunnel_ipv4: 10.200.0.1/16
+  tunnel_ipv6: fd00:200::1/64
+  advertise_ipv6_default_route: false
+clients:
+  - name: device
+    tunnel_ipv4: 10.200.0.2/32
+    tunnel_ipv6: fd00:200::2/128
+```
+
+Public routed-prefix 示例应使用 provider 实际分配并路由到本机的 prefix；不要将 `2001:db8::/32` 文档地址当作生产配置。确认 prefix 的回程路由后，才可启用 `advertise_ipv6_default_route: true`。
 
 ### 高 RTT 吞吐与 UDP socket buffer
 

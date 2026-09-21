@@ -209,25 +209,46 @@ func serveConnectIPArgs(args []string) error {
 	}
 	defer ql.Close()
 	defer transport.Close()
-	externalInterface := c.HostNetwork.ExternalInterface
-	if externalInterface == "" {
-		externalInterface, err = hostnet.DefaultExternalInterface()
+	externalIPv4, externalIPv6 := c.HostNetwork.ExternalInterfaceIPv4, c.HostNetwork.ExternalInterfaceIPv6
+	if externalIPv4 == "" {
+		externalIPv4 = c.HostNetwork.ExternalInterface
+	}
+	if externalIPv6 == "" {
+		externalIPv6 = c.HostNetwork.ExternalInterface
+	}
+	if serverAddresses.IPv4.IsValid() && externalIPv4 == "" {
+		externalIPv4, err = hostnet.DefaultExternalInterface4()
 		if err != nil {
-			return fmt.Errorf("detect external interface: %w", err)
+			return fmt.Errorf("detect IPv4 external interface: %w", err)
+		}
+	}
+	if serverAddresses.IPv6.IsValid() && c.Server.AdvertiseIPv6DefaultRoute && externalIPv6 == "" {
+		externalIPv6, err = hostnet.DefaultExternalInterface6()
+		if err != nil {
+			return fmt.Errorf("detect IPv6 external interface: %w", err)
 		}
 	}
 	checkInterval, _ := time.ParseDuration(c.HostNetwork.CheckInterval)
 	probe := hostnet.Probe{
 		TunnelName: "masque0", TunnelPrefix: firstPrefix(serverAddresses), TunnelPrefixes: serverAddresses.Prefixes(), TunnelMTU: c.Server.MTU,
-		ExternalInterface: externalInterface,
-		TunnelCheck:       tunnel.CheckInterface,
-		ForwardingCheck:   func() error { return hostnet.CheckForwarding(serverAddresses.Prefixes()) },
-		NATCheck:          hostnet.CheckNAT,
+		ExternalInterfaceIPv4: externalIPv4,
+		ExternalInterfaceIPv6: externalIPv6,
+		TunnelCheck:           tunnel.CheckInterface,
+		ForwardingCheck:       func() error { return hostnet.CheckForwarding(serverAddresses.Prefixes()) },
+		NATCheck:              hostnet.CheckNAT,
+		IPv6EgressCheck:       hostnet.CheckIPv6Egress,
+		RequireIPv6Egress:     c.Server.AdvertiseIPv6DefaultRoute,
 	}
 	if err := probe.Check(); err != nil {
 		return fmt.Errorf("data-plane unhealthy: %w", err)
 	}
 	log.Printf("CONNECT-IP QUIC congestion controller: %s", c.QUIC.CongestionController)
+	if serverAddresses.IPv6.IsValid() && !c.Server.AdvertiseIPv6DefaultRoute {
+		log.Printf("IPv6 egress note: routed public egress is not advertised; ULA is suitable only for tunnel-local services, provider prefix routing is not verified locally")
+	}
+	if serverAddresses.IPv6.IsValid() && serverAddresses.IPv6.Bits() == 128 {
+		log.Printf("IPv6 egress warning: server tunnel is configured as a single /128; a routed client prefix/provider return path is not established")
+	}
 	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		handleRequest(w, r, c, serverAddresses, byKey, mgr, tun, packetPool)
 	})}
@@ -286,6 +307,8 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 	var previousRuntime session.AggregateRuntimeStats
 	var previousTun tunnel.Stats
 	var previousWriterWaitNS uint64
+	var previousFamily diagnostics.IPFamilyStats
+	var previousFamilyAt time.Time
 	intervalAt := time.Now()
 	for {
 		select {
@@ -295,6 +318,18 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			intervalNow := time.Now()
 			intervalElapsed := intervalNow.Sub(intervalAt)
 			intervalAt = intervalNow
+			familyNow, familyDelta := diagnostics.IPFamilyStats{}, diagnostics.IPFamilyStats{}
+			familyProbe := connectIPPipeline.Load()
+			if familyProbe != nil {
+				familyNow = familyProbe.IPFamilySnapshot()
+				familyWarmup := previousFamilyAt.IsZero()
+				familyDelta = familyNow.Delta(previousFamily)
+				if familyWarmup {
+					familyDelta = diagnostics.IPFamilyStats{}
+				}
+				previousFamily, previousFamilyAt = familyNow, intervalNow
+				logIPFamilyInterval(intervalElapsed, familyDelta, familyWarmup)
+			}
 			if probe := connectIPPipeline.Load(); cfg.Enabled && probe != nil {
 				now := time.Now()
 				baseline := previousAt.IsZero()
@@ -338,6 +373,7 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 				logReleaseIntervalTelemetry(intervalElapsed, tunStats, previousTun, runtimeStats, previousRuntime, writerStats.WritableWaitNS, previousWriterWaitNS, baseline)
 				snapshot.Runtime = diagnostics.RuntimeStats{
 					DATAGRAMWriter: writerStats,
+					IPFamilies:     familyNow, IPFamilyInterval: familyDelta,
 					QUIC: diagnostics.QUICStats{
 						Connections: runtimeStats.Connections, CC: runtimeStats.CongestionController, CCState: runtimeStats.CongestionState,
 						BBRConnections: runtimeStats.BBRConnections, BBRMode: runtimeStats.BBRMode,
@@ -464,6 +500,10 @@ func connectIPDiagnostics(ctx context.Context, mgr *session.Manager, tun *tunnel
 			previousTun, previousWriterWaitNS = t, writerStats.WritableWaitNS
 		}
 	}
+}
+
+func logIPFamilyInterval(elapsed time.Duration, s diagnostics.IPFamilyStats, warmup bool) {
+	log.Printf("CONNECT-IP IP family interval: duration=%s warmup=%t inner_ipv4_rx_packets=%d inner_ipv4_rx_bytes=%d inner_ipv6_rx_packets=%d inner_ipv6_rx_bytes=%d inner_ipv4_tx_packets=%d inner_ipv4_tx_bytes=%d inner_ipv6_tx_packets=%d inner_ipv6_tx_bytes=%d ipv4_drop_parse=%d ipv6_drop_parse=%d ipv4_drop_no_session=%d ipv6_drop_no_session=%d ipv4_drop_policy=%d ipv6_drop_policy=%d icmpv4_frag_needed_generated=%d icmpv6_packet_too_big_generated=%d ipv6_extension_parse_drop=%d", elapsed, warmup, s.IPv4RXPackets, s.IPv4RXBytes, s.IPv6RXPackets, s.IPv6RXBytes, s.IPv4TXPackets, s.IPv4TXBytes, s.IPv6TXPackets, s.IPv6TXBytes, s.IPv4ParseDrops, s.IPv6ParseDrops, s.IPv4NoSessionDrops, s.IPv6NoSessionDrops, s.IPv4PolicyDrops, s.IPv6PolicyDrops, s.ICMPv4FragNeeded, s.ICMPv6PacketTooBig, s.IPv6ExtensionParseDrops)
 }
 
 func setRuntimeStage(snapshot *diagnostics.Stats, stage diagnostics.Stage, bytes, packets, bytesDelta, packetsDelta uint64, elapsed time.Duration) {
@@ -701,7 +741,7 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		conn.Close()
 		return
 	}
-	if err = conn.AdvertiseRoute(fullTunnelRoutes(clientAddresses, c.Server.AdvertiseIPv6DefaultRoute)); err != nil {
+	if err = conn.AdvertiseRoute(connectIPRoutes(clientAddresses, serverAddresses, c.Server.AdvertiseIPv6DefaultRoute)); err != nil {
 		log.Printf("AdvertiseRoute failed: %v", err)
 		conn.Close()
 		return
@@ -745,13 +785,19 @@ func firstPrefix(a config.TunnelAddresses) netip.Prefix {
 	}
 	return a.IPv6
 }
-func fullTunnelRoutes(a config.TunnelAddresses, advertiseIPv6DefaultRoute bool) []connectip.IPRoute {
-	routes := make([]connectip.IPRoute, 0, 2)
-	if a.IPv4.IsValid() {
+func connectIPRoutes(client, server config.TunnelAddresses, advertiseIPv6DefaultRoute bool) []connectip.IPRoute {
+	routes := make([]connectip.IPRoute, 0, 3)
+	if client.IPv4.IsValid() {
 		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("0.0.0.0"), EndIP: netip.MustParseAddr("255.255.255.255")})
 	}
-	if a.IPv6.IsValid() && advertiseIPv6DefaultRoute {
-		routes = append(routes, connectip.IPRoute{StartIP: netip.MustParseAddr("::"), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
+	if client.IPv6.IsValid() {
+		if advertiseIPv6DefaultRoute {
+			routes = append(routes, connectip.IPRoute{StartIP: netip.IPv6Unspecified(), EndIP: netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")})
+		} else if server.IPv6.IsValid() {
+			// Keep the server-side IPv6 DNS gateway reachable even when the
+			// client is not advertising a full IPv6 default route.
+			routes = append(routes, connectip.IPRoute{StartIP: server.IPv6.Addr(), EndIP: server.IPv6.Addr()})
+		}
 	}
 	return routes
 }
@@ -793,25 +839,42 @@ func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, packetPool *session
 }
 
 func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, packetPool *session.PacketPool) bool {
+	if probe := connectIPPipeline.Load(); probe != nil {
+		probe.AddInnerRX(pkt.Data)
+	}
 	dst, ok := packet.Destination(pkt.Data)
 	if !ok {
+		recordIPDrop(pkt.Data, true, false)
 		packetPool.Put(pkt)
 		return false
 	}
 	s := mgr.Lookup(dst)
 	if s == nil {
+		recordIPDrop(pkt.Data, false, true)
 		packetPool.Put(pkt)
 		return false
 	}
 	if mgr.IsShadow() {
-		if pkt.Data[9] == 1 {
-			if !packet.TranslateICMP(pkt.Data, s.VisibleIP, s.ShadowIP, false) {
+		info, valid := packet.Parse(pkt.Data)
+		if !valid {
+			recordIPDrop(pkt.Data, true, false)
+			packetPool.Put(pkt)
+			return false
+		}
+		// Session shadow translation is deliberately IPv4-only. IPv6 client
+		// addresses are routed directly and must never enter IPv4 rewrite code.
+		if info.Version == 4 && s.ShadowIPv4.IsValid() && s.ShadowIPv4 != s.VisibleIPv4 {
+			if info.Protocol == 1 {
+				if !packet.TranslateICMP(pkt.Data, s.VisibleIPv4, s.ShadowIPv4, false) {
+					recordIPDrop(pkt.Data, false, false)
+					packetPool.Put(pkt)
+					return false
+				}
+			} else if !packet.RewriteDestinationIPv4(pkt.Data, s.ShadowIPv4, s.VisibleIPv4) {
+				recordIPDrop(pkt.Data, false, false)
 				packetPool.Put(pkt)
 				return false
 			}
-		} else if !packet.RewriteDestinationIPv4(pkt.Data, s.ShadowIP, s.VisibleIP) {
-			packetPool.Put(pkt)
-			return false
 		}
 	}
 	if !s.TryEnqueue(pkt) {
@@ -826,6 +889,23 @@ func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, packetPo
 		probe.Add(diagnostics.TunDispatchSuccess, 1, uint64(len(pkt.Data)))
 	}
 	return true
+}
+
+func recordIPDrop(data []byte, parse, noSession bool) {
+	if len(data) == 0 {
+		return
+	}
+	version := data[0] >> 4
+	extension := false
+	if version == 6 && len(data) > 6 {
+		switch data[6] {
+		case 0, 43, 44, 51, 60:
+			extension = true
+		}
+	}
+	if probe := connectIPPipeline.Load(); probe != nil {
+		probe.AddIPDrop(version, parse, noSession, parse && extension)
+	}
 }
 
 func tunDispatcherBatchLoop(tun *tunnel.Device, mgr *session.Manager, packetPool *session.PacketPool, fatal chan<- error) {
@@ -993,7 +1073,7 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 				continue
 			}
 			pkt := pending[i]
-			if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
+			if info, valid := packet.Parse(icmp); valid && info.Version == 4 && s.ShadowIPv4.IsValid() && s.ShadowIPv4 != s.VisibleIPv4 && !packet.TranslateICMP(icmp, s.VisibleIPv4, s.ShadowIPv4, true) {
 				continue
 			}
 			if _, writeErr := tun.Write(icmp); writeErr != nil {
@@ -1002,6 +1082,10 @@ func (w sessionPacketWriter) writeBatch(s *session.Session, tun tunPacketWriter,
 				log.Printf("session=%d ICMP write failed: %v", s.ID, writeErr)
 				s.Close()
 				return false
+			}
+			if probe := connectIPPipeline.Load(); probe != nil {
+				probe.AddInnerTX(icmp)
+				probe.AddGeneratedICMP(icmp)
 			}
 			_ = pkt // packet ownership was consumed with the ICMP response
 		}
@@ -1181,7 +1265,7 @@ func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int
 				}
 			}
 			if len(icmp) > 0 {
-				if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP && !packet.TranslateICMP(icmp, s.VisibleIP, s.ShadowIP, true) {
+				if info, valid := packet.Parse(icmp); valid && info.Version == 4 && s.ShadowIPv4.IsValid() && s.ShadowIPv4 != s.VisibleIPv4 && !packet.TranslateICMP(icmp, s.VisibleIPv4, s.ShadowIPv4, true) {
 					// Do not let an untranslated response skip error handling for
 					// this packet or disrupt the rest of the burst.
 				} else if _, werr := tun.Write(icmp); werr != nil {
@@ -1193,6 +1277,9 @@ func sessionWriterWithTUNWriter(s *session.Session, tun tunPacketWriter, mtu int
 					log.Printf("session=%d ICMP write failed: %v", s.ID, werr)
 					s.Close()
 					return
+				} else if probe := connectIPPipeline.Load(); probe != nil {
+					probe.AddInnerTX(icmp)
+					probe.AddGeneratedICMP(icmp)
 				}
 			}
 			if err != nil {
@@ -1336,6 +1423,11 @@ func sessionReaderWithAddresses(s *session.Session, tun *tunnel.Device, mgr *ses
 		for _, done := range releases {
 			done()
 		}
+		if probe := connectIPPipeline.Load(); probe != nil {
+			for _, written := range batch {
+				probe.AddInnerTX(written)
+			}
+		}
 		s.Touch(time.Now())
 	}
 }
@@ -1356,28 +1448,34 @@ func tunnelAddressesFromArg(arg any) config.TunnelAddresses {
 
 func prepareSessionPacket(pkt []byte, s *session.Session, mgr *session.Manager, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) bool {
 	info, ok := packet.Parse(pkt)
-	if !ok || !s.OwnsAddress(info.Source) {
+	if !ok {
+		recordIPDrop(pkt, true, false)
+		return false
+	}
+	if !s.OwnsAddress(info.Source) {
+		recordIPDrop(pkt, false, false)
 		return false
 	}
 	dst := info.Destination
 	isDNS := dnsEnabled && containsAddress(serverAddresses, dst) && packet.IsTCPOrUDPDestinationPort(pkt, dnsPort)
 	if !ok || (!isDNS && containsPrefix(serverAddresses, dst)) || mgr.IsShadowAddress(dst) {
+		recordIPDrop(pkt, false, false)
 		return false
 	}
 	select {
 	case <-s.Ctx.Done():
+		recordIPDrop(pkt, false, false)
 		return false
 	default:
 	}
-	if s.ShadowIP.IsValid() && s.ShadowIP != s.VisibleIP {
-		if len(pkt) < 10 {
-			return false
-		}
-		if pkt[9] == 1 {
-			if !packet.TranslateICMP(pkt, s.VisibleIP, s.ShadowIP, true) {
+	if info.Version == 4 && s.ShadowIPv4.IsValid() && s.ShadowIPv4 != s.VisibleIPv4 {
+		if info.Protocol == 1 {
+			if !packet.TranslateICMP(pkt, s.VisibleIPv4, s.ShadowIPv4, true) {
+				recordIPDrop(pkt, false, false)
 				return false
 			}
-		} else if !packet.RewriteSourceIPv4(pkt, s.VisibleIP, s.ShadowIP) {
+		} else if !packet.RewriteSourceIPv4(pkt, s.VisibleIPv4, s.ShadowIPv4) {
+			recordIPDrop(pkt, false, false)
 			return false
 		}
 	}

@@ -55,6 +55,22 @@ func TestProbeChecksEveryConfiguredPrefix(t *testing.T) {
 	}
 }
 
+func TestProbeUsesFamilySpecificExternalInterfaces(t *testing.T) {
+	q := healthyProbe()
+	q.TunnelPrefixes = []netip.Prefix{netip.MustParsePrefix("10.200.0.1/24"), netip.MustParsePrefix("2001:4860:100::1/64")}
+	q.ExternalInterfaceIPv4, q.ExternalInterfaceIPv6 = "v4wan", "v6wan"
+	q.RequireIPv6Egress = true
+	var natIface, ipv6Iface string
+	q.NATCheck = func(iface string, _ netip.Prefix) error { natIface = iface; return nil }
+	q.IPv6EgressCheck = func(iface string, _ netip.Prefix) error { ipv6Iface = iface; return nil }
+	if err := q.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if natIface != "v4wan" || ipv6Iface != "v6wan" {
+		t.Fatalf("family interfaces: ipv4 NAT=%q ipv6 egress=%q", natIface, ipv6Iface)
+	}
+}
+
 func TestSupervisorRequiresTwoConsecutiveFailures(t *testing.T) {
 	p := healthyProbe()
 	var unhealthy atomic.Bool

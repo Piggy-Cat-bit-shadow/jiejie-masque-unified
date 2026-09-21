@@ -11,14 +11,18 @@ import (
 )
 
 type Probe struct {
-	TunnelName        string
-	TunnelPrefix      netip.Prefix
-	TunnelPrefixes    []netip.Prefix
-	TunnelMTU         int
-	ExternalInterface string
-	TunnelCheck       func(string, netip.Prefix, int) error
-	ForwardingCheck   func() error
-	NATCheck          func(string, netip.Prefix) error
+	TunnelName            string
+	TunnelPrefix          netip.Prefix
+	TunnelPrefixes        []netip.Prefix
+	TunnelMTU             int
+	ExternalInterface     string
+	ExternalInterfaceIPv4 string
+	ExternalInterfaceIPv6 string
+	TunnelCheck           func(string, netip.Prefix, int) error
+	ForwardingCheck       func() error
+	NATCheck              func(string, netip.Prefix) error
+	IPv6EgressCheck       func(string, netip.Prefix) error
+	RequireIPv6Egress     bool
 }
 
 func (p Probe) Check() error {
@@ -37,8 +41,22 @@ func (p Probe) Check() error {
 		if err := p.TunnelCheck(p.TunnelName, prefix, p.TunnelMTU); err != nil {
 			return fmt.Errorf("TUN %s (%s): %w", family, prefix, err)
 		}
-		if err := p.NATCheck(p.ExternalInterface, prefix); err != nil {
-			return fmt.Errorf("host MASQUERADE rule (%s): %w", prefix, err)
+		if prefix.Addr().Is4() {
+			iface := p.ExternalInterfaceIPv4
+			if iface == "" {
+				iface = p.ExternalInterface
+			}
+			if err := p.NATCheck(iface, prefix); err != nil {
+				return fmt.Errorf("host IPv4 MASQUERADE rule (%s): %w", prefix, err)
+			}
+		} else if prefix.Addr().Is6() && p.RequireIPv6Egress && p.IPv6EgressCheck != nil {
+			iface := p.ExternalInterfaceIPv6
+			if iface == "" {
+				iface = p.ExternalInterface
+			}
+			if err := p.IPv6EgressCheck(iface, prefix); err != nil {
+				return fmt.Errorf("local IPv6 egress prerequisites (%s): %w", prefix, err)
+			}
 		}
 	}
 	return nil

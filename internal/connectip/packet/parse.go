@@ -57,8 +57,14 @@ func parseIPv6(b []byte) (Info, bool) {
 		return Info{}, false
 	}
 	payload := int(binary.BigEndian.Uint16(b[4:6]))
+	// IPv6 jumbograms require Hop-by-Hop Jumbo Payload processing, which this
+	// bounded dataplane parser intentionally does not implement. Requiring an
+	// exact payload length also prevents silently accepting trailing bytes.
+	if payload == 0 || payload != len(b)-40 {
+		return Info{}, false
+	}
 	total := 40 + payload
-	if total < 40 || total > len(b) {
+	if total < 40 || total != len(b) {
 		return Info{}, false
 	}
 	info := Info{Version: 6, Source: netip.AddrFrom16([16]byte(b[8:24])), Destination: netip.AddrFrom16([16]byte(b[24:40])), Protocol: b[6], FirstFragment: true}

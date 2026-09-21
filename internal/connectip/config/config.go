@@ -47,8 +47,10 @@ type QUIC struct {
 	CongestionController  string `yaml:"congestion_controller"`
 }
 type HostNetwork struct {
-	ExternalInterface string `yaml:"external_interface"`
-	CheckInterval     string `yaml:"check_interval"`
+	ExternalInterface     string `yaml:"external_interface"`
+	ExternalInterfaceIPv4 string `yaml:"external_interface_ipv4,omitempty"`
+	ExternalInterfaceIPv6 string `yaml:"external_interface_ipv6,omitempty"`
+	CheckInterval         string `yaml:"check_interval"`
 }
 type TLS struct {
 	Cert string `yaml:"cert"`
@@ -133,6 +135,38 @@ func optionalPrefix(value string, family int, field string) (netip.Prefix, error
 		return netip.Prefix{}, fmt.Errorf("%s uses a reserved address", field)
 	}
 	return p, nil
+}
+
+// isUsableGlobalIPv6TunnelPrefix is deliberately conservative, not a complete
+// bogon database. netip supplies semantic address classes; the small explicit
+// exclusions below cover documentation, benchmarking, and discard-only
+// ranges that are otherwise reported as global unicast by the standard library.
+func isUsableGlobalIPv6TunnelPrefix(prefix netip.Prefix) bool {
+	if !prefix.IsValid() || !prefix.Addr().Is6() || prefix.Addr().Is4In6() {
+		return false
+	}
+	a := prefix.Addr()
+	if !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsLoopback() || a.IsUnspecified() {
+		return false
+	}
+	for _, reserved := range []netip.Prefix{
+		netip.MustParsePrefix("100::/64"),      // Discard-only.
+		netip.MustParsePrefix("2001:2::/48"),   // Benchmarking.
+		netip.MustParsePrefix("2001:db8::/32"), // Documentation.
+		netip.MustParsePrefix("3fff::/20"),     // Documentation.
+	} {
+		if prefix.Contains(reserved.Addr()) || reserved.Contains(prefix.Addr()) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsUsableGlobalIPv6TunnelPrefix reports whether a prefix is semantically
+// suitable for advertising routed public IPv6 egress. It is intentionally not
+// a complete bogon database or proof of upstream routing.
+func IsUsableGlobalIPv6TunnelPrefix(prefix netip.Prefix) bool {
+	return isUsableGlobalIPv6TunnelPrefix(prefix)
 }
 
 type SessionNat struct {
@@ -278,8 +312,8 @@ func (c Config) Validate() error {
 		if !addresses.IPv6.IsValid() {
 			return fmt.Errorf("server.advertise_ipv6_default_route requires server.tunnel_ipv6")
 		}
-		if addresses.IPv6.Addr().IsPrivate() {
-			return fmt.Errorf("server.advertise_ipv6_default_route requires a routed public IPv6 prefix; ULA/private IPv6 cannot provide public egress")
+		if !isUsableGlobalIPv6TunnelPrefix(addresses.IPv6) {
+			return fmt.Errorf("server.advertise_ipv6_default_route requires a usable global IPv6 prefix; ULA, link-local, and special-use prefixes cannot provide public egress")
 		}
 	}
 	if c.Server.OutboundQueueSize != 0 && (c.Server.OutboundQueueSize < 64 || c.Server.OutboundQueueSize > 4096) {
@@ -331,8 +365,8 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.Server.SessionNat.Enabled {
-		if c.Server.TunnelIPv6 != "" {
-			return fmt.Errorf("server.session_nat with IPv6 is unsupported; disable session_nat for dual-stack")
+		if c.Server.TunnelIPv4 == "" {
+			return fmt.Errorf("server.session_nat requires server.tunnel_ipv4 for IPv4 shadow allocation; IPv6-only clients may still use direct IPv6")
 		}
 		pool, e := netip.ParsePrefix(c.Server.SessionNat.Pool)
 		if e != nil || !pool.Addr().Is4() {

@@ -76,6 +76,37 @@ func TestProbeJSONIsAggregateOnly(t *testing.T) {
 	}
 }
 
+func TestProbeIPFamilyCountersAndIntervalDelta(t *testing.T) {
+	p := &Probe{}
+	v4 := make([]byte, 20)
+	v4[0] = 0x45
+	v6 := make([]byte, 48)
+	v6[0], v6[6] = 0x60, 17
+	p.AddInnerRX(v4)
+	p.AddInnerRX(v6)
+	p.AddInnerTX(v6)
+	p.AddIPDrop(4, true, false, false)
+	p.AddIPDrop(6, true, false, true)
+	p.AddIPDrop(4, false, true, false)
+	p.AddIPDrop(6, false, false, false)
+	icmp4 := make([]byte, 28)
+	icmp4[0], icmp4[9], icmp4[20], icmp4[21] = 0x45, 1, 3, 4
+	icmp6 := make([]byte, 48)
+	icmp6[0], icmp6[6], icmp6[40] = 0x60, 58, 2
+	p.AddGeneratedICMP(icmp4)
+	p.AddGeneratedICMP(icmp6)
+	first := p.IPFamilySnapshot()
+	if first.IPv4RXPackets != 1 || first.IPv4RXBytes != 20 || first.IPv6RXPackets != 1 || first.IPv6TXPackets != 1 || first.IPv6ParseDrops != 1 || first.IPv6ExtensionParseDrops != 1 || first.IPv4NoSessionDrops != 1 || first.ICMPv4FragNeeded != 1 || first.ICMPv6PacketTooBig != 1 {
+		t.Fatalf("family counters = %+v", first)
+	}
+	p.AddInnerRX(v6)
+	second := p.IPFamilySnapshot()
+	interval := second.Delta(first)
+	if interval.IPv6RXPackets != 1 || interval.IPv6RXBytes != 48 || interval.IPv4RXPackets != 0 || interval.IPv6ExtensionParseDrops != 0 {
+		t.Fatalf("family interval delta = %+v", interval)
+	}
+}
+
 func BenchmarkProbeAdd(b *testing.B) {
 	b.Run("off", func(b *testing.B) {
 		var p *Probe

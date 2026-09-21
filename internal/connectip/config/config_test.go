@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -297,6 +298,30 @@ func TestIPv6DefaultRouteRequiresRoutedPublicPrefix(t *testing.T) {
 	}
 }
 
+func TestUsableGlobalIPv6TunnelPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		prefix string
+		want   bool
+	}{
+		{"2001:4860:100::/48", true},
+		{"fd00:200::/64", false},
+		{"fe80::/64", false},
+		{"::/0", false},
+		{"::1/128", false},
+		{"ff02::/16", false},
+		{"::ffff:192.0.2.1/128", false},
+		{"2001:db8::/32", false},
+		{"2001:2::/48", false},
+		{"3fff::/20", false},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			if got := isUsableGlobalIPv6TunnelPrefix(netip.MustParsePrefix(tc.prefix)); got != tc.want {
+				t.Fatalf("usable(%s) = %t, want %t", tc.prefix, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSessionNatValidation(t *testing.T) {
 	key := "BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M="
 	c := Config{
@@ -307,6 +332,17 @@ func TestSessionNatValidation(t *testing.T) {
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	dual := c
+	dual.Server.TunnelIPv6 = "fd00:200::1/64"
+	dual.Client.TunnelIPv6 = "fd00:200::2/128"
+	if err := dual.Validate(); err != nil {
+		t.Fatalf("hybrid dual-stack Session NAT rejected: %v", err)
+	}
+	ipv6OnlyClient := dual
+	ipv6OnlyClient.Client.TunnelIPv4 = ""
+	if err := ipv6OnlyClient.Validate(); err != nil {
+		t.Fatalf("IPv6-only client with IPv4 shadow pool rejected: %v", err)
 	}
 	c.Server.SessionNat.Pool = "10.200.0.0/25"
 	if err := c.Validate(); err == nil {

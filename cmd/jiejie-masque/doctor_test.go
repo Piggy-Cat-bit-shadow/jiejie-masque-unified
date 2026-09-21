@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,63 @@ func TestDoctorPassAndReadOnlyCommands(t *testing.T) {
 	if len(*calls) != 2 || (*calls)[0] != "ufw status verbose" || (*calls)[1] != "ufw show added" {
 		t.Fatalf("commands = %v; doctor must only query UFW", *calls)
 	}
+}
+
+func TestDoctorDistinguishesLocalIPv6PrerequisitesFromProviderRouting(t *testing.T) {
+	dns := false
+	c := doctorTestConfig(dns)
+	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64", MTU: 1280, AdvertiseIPv6DefaultRoute: true}
+	rt, _ := doctorTestRuntime(t, "Status: inactive\n", "")
+	rt.checkIPv6Forwarding = func() error { return nil }
+	rt.checkIPv6Egress = func(iface string, prefix netip.Prefix) error {
+		if iface != "eth6" || prefix.String() != "2001:4860:100::1/64" {
+			t.Fatalf("IPv6 check args: %s %s", iface, prefix)
+		}
+		return nil
+	}
+	rt.externalIface6 = func() (string, error) { return "eth6", nil }
+	rt.lookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	results := doctorChecks(c, *rt)
+	seenLocalPass, seenProviderWarn, seenLegacyFakePass := false, false, false
+	for _, result := range results {
+		if result.Name == "ipv6-local-egress-prerequisites" && result.Level == doctorPass {
+			seenLocalPass = true
+		}
+		if result.Name == "routed-prefix-return-path" && result.Level == doctorWarn && strings.Contains(result.Detail, "cannot prove") {
+			seenProviderWarn = true
+		}
+		if result.Name == "ipv6-egress" && result.Level == doctorPass {
+			seenLegacyFakePass = true
+		}
+	}
+	if !seenLocalPass || !seenProviderWarn || seenLegacyFakePass {
+		t.Fatalf("IPv6 doctor results=%+v", results)
+	}
+}
+
+func TestDoctorFailsWhenActiveUFWDoesNotEnableIPv6(t *testing.T) {
+	c := doctorTestConfig(false)
+	c.Server = config.Server{TunnelIPv6: "2001:4860:100::1/64", MTU: 1280}
+	rt, _ := doctorTestRuntime(t, "Status: active\n", "")
+	rt.checkIPv6Forwarding = func() error { return nil }
+	rt.checkIPv6Egress = func(string, netip.Prefix) error { return nil }
+	rt.externalIface6 = func() (string, error) { return "eth6", nil }
+	rt.readFile = func(path string) ([]byte, error) {
+		if path == "/etc/default/ufw" {
+			return []byte("IPV6=no\n"), nil
+		}
+		return make([]byte, quicstate.ResetKeySize), nil
+	}
+	results := doctorChecks(c, *rt)
+	for _, result := range results {
+		if result.Name == "ufw-ipv6" {
+			if result.Level != doctorFail || !result.Failure {
+				t.Fatalf("UFW IPv6 result = %+v", result)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing UFW IPv6 capability result: %+v", results)
 }
 
 func TestDoctorHardFailures(t *testing.T) {

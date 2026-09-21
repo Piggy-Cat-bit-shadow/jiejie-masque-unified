@@ -3,6 +3,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"sync"
@@ -356,6 +357,26 @@ func TestTXGROFragmentFieldSemantics(t *testing.T) {
 				t.Fatalf("fragment field %#x candidate = %t, want %t", tc.field, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestTXGROIPv6ExtensionHeaderFallsBackWithoutMutation(t *testing.T) {
+	plain := makeTCPv6Segment(1000, 100, false)
+	withDestinationOptions := make([]byte, len(plain)+8)
+	copy(withDestinationOptions[:40], plain[:40])
+	withDestinationOptions[6] = 60
+	withDestinationOptions[40], withDestinationOptions[41] = unix.IPPROTO_TCP, 0
+	copy(withDestinationOptions[48:], plain[40:])
+	binary.BigEndian.PutUint16(withDestinationOptions[4:6], uint16(len(withDestinationOptions)-40))
+	tcpAt := 48
+	addrSum := pseudoChecksum(unix.IPPROTO_TCP, withDestinationOptions[8:24], withDestinationOptions[24:40], uint16(len(withDestinationOptions)-tcpAt))
+	binary.BigEndian.PutUint16(withDestinationOptions[tcpAt+16:], ^checksum(withDestinationOptions[tcpAt:], addrSum))
+	before := append([]byte(nil), withDestinationOptions...)
+	if _, ok := tcpGROMetaFor(withDestinationOptions); ok {
+		t.Fatal("IPv6 extension-header packet unexpectedly accepted for TX GRO")
+	}
+	if !bytes.Equal(withDestinationOptions, before) {
+		t.Fatal("GRO eligibility check mutated fallback packet")
 	}
 }
 

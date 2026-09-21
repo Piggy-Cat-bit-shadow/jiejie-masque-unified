@@ -135,6 +135,35 @@ func TestMihomoConfigEmitsFamilyAccurateDualStackYAML(t *testing.T) {
 	}
 }
 
+func TestCompatibleDNSAddressFamilies(t *testing.T) {
+	server := config.TunnelAddresses{
+		IPv4: netip.MustParsePrefix("10.200.0.1/24"),
+		IPv6: netip.MustParsePrefix("fd00:200::1/64"),
+	}
+	tests := []struct {
+		name   string
+		client config.ResolvedClient
+		want   []string
+	}{
+		{name: "IPv4 only", client: config.ResolvedClient{TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32")}, want: []string{"10.200.0.1"}},
+		{name: "IPv6 only", client: config.ResolvedClient{TunnelIPv6: netip.MustParsePrefix("fd00:200::2/128")}, want: []string{"fd00:200::1"}},
+		{name: "dual stack", client: config.ResolvedClient{TunnelIPv4: netip.MustParsePrefix("10.200.0.2/32"), TunnelIPv6: netip.MustParsePrefix("fd00:200::2/128")}, want: []string{"10.200.0.1", "fd00:200::1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compatibleDNSAddresses(tt.client, server)
+			if len(got) != len(tt.want) {
+				t.Fatalf("DNS addresses = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i].String() != tt.want[i] {
+					t.Fatalf("DNS addresses = %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestMihomoConfigServerPublicKeyUsesMihomoPKIXContract(t *testing.T) {
 	privateKey, publicKey, err := generateClientKey()
 	if err != nil {

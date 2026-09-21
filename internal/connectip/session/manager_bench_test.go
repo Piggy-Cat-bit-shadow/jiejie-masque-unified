@@ -22,7 +22,7 @@ func benchmarkShadowManager(b *testing.B, pool string, max, initial int, reuseDe
 
 func BenchmarkManagerLookup(b *testing.B) {
 	m, sessions := benchmarkShadowManager(b, "10.200.0.0/24", 256, 128, 0)
-	target := sessions[0].ShadowIP
+	target := sessions[0].ShadowIPv4
 	b.Cleanup(func() {
 		for _, s := range sessions {
 			s.Close()
@@ -40,7 +40,7 @@ func BenchmarkManagerLookup(b *testing.B) {
 
 func BenchmarkManagerLookupUnderChurn(b *testing.B) {
 	m, sessions := benchmarkShadowManager(b, "10.201.0.0/16", 256, 128, 0)
-	target := sessions[0].ShadowIP
+	target := sessions[0].ShadowIPv4
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {

@@ -41,7 +41,9 @@ type doctorRuntime struct {
 	checkIPv6Forwarding func() error
 	checkTunnel         func(string, netip.Prefix, int) error
 	checkNAT            func(string, netip.Prefix) error
+	checkIPv6Egress     func(string, netip.Prefix) error
 	externalIface       func() (string, error)
+	externalIface6      func() (string, error)
 	lookPath            func(string) (string, error)
 	run                 doctorRunner
 	readFile            func(string) ([]byte, error)
@@ -54,7 +56,9 @@ func defaultDoctorRuntime() doctorRuntime {
 		checkIPv6Forwarding: hostnet.CheckIPv6Forwarding,
 		checkTunnel:         tunnel.CheckInterface,
 		checkNAT:            hostnet.CheckNAT,
+		checkIPv6Egress:     hostnet.CheckIPv6Egress,
 		externalIface:       hostnet.DefaultExternalInterface,
+		externalIface6:      hostnet.DefaultExternalInterface6,
 		lookPath:            exec.LookPath,
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -99,6 +103,11 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 		}
 	}
 	if addresses.IPv6.IsValid() {
+		if _, err := rt.lookPath("ip"); err != nil {
+			results = append(results, doctorResult{Name: "ipv6-tun-config-tool", Level: doctorFail, Detail: "iproute2 command unavailable", Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ipv6-tun-config-tool", Level: doctorPass})
+		}
 		if err := rt.checkIPv6Forwarding(); err != nil {
 			results = append(results, doctorResult{Name: "ipv6-forwarding", Level: doctorFail, Detail: err.Error(), Failure: true})
 		} else {
@@ -116,36 +125,65 @@ func doctorChecks(c config.Config, rt doctorRuntime) []doctorResult {
 			results = append(results, doctorResult{Name: name, Level: doctorPass, Detail: prefix.String()})
 		}
 	}
-	external := c.HostNetwork.ExternalInterface
-	if external == "" {
+	external4 := c.HostNetwork.ExternalInterfaceIPv4
+	if external4 == "" {
+		external4 = c.HostNetwork.ExternalInterface
+	}
+	if external4 == "" && addresses.IPv4.IsValid() {
 		var detectErr error
-		external, detectErr = rt.externalIface()
+		external4, detectErr = rt.externalIface()
 		if detectErr != nil {
-			results = append(results, doctorResult{Name: "external-interface", Level: doctorFail, Detail: detectErr.Error(), Failure: true})
+			results = append(results, doctorResult{Name: "external-interface-ipv4", Level: doctorFail, Detail: detectErr.Error(), Failure: true})
 		} else {
-			results = append(results, doctorResult{Name: "external-interface", Level: doctorPass})
+			results = append(results, doctorResult{Name: "external-interface-ipv4", Level: doctorPass, Detail: external4})
 		}
-	} else {
-		results = append(results, doctorResult{Name: "external-interface", Level: doctorPass, Detail: "configured override"})
+	} else if external4 != "" {
+		results = append(results, doctorResult{Name: "external-interface-ipv4", Level: doctorPass, Detail: external4})
 	}
-	if external != "" {
-		for _, prefix := range addresses.Prefixes() {
-			name := "ipv4-nat"
-			if prefix.Addr().Is6() {
-				name = "ipv6-egress"
-			}
-			if err := rt.checkNAT(external, prefix); err != nil {
-				results = append(results, doctorResult{Name: name, Level: doctorFail, Detail: err.Error(), Failure: true})
-			} else if prefix.Addr().Is6() && !c.Server.AdvertiseIPv6DefaultRoute {
-				results = append(results, doctorResult{Name: name, Level: doctorWarn, Detail: "tunnel IPv6 is configured; public IPv6 egress is not advertised"})
-			} else {
-				results = append(results, doctorResult{Name: name, Level: doctorPass})
-			}
+	if addresses.IPv4.IsValid() {
+		if external4 == "" {
+			results = append(results, doctorResult{Name: "ipv4-nat", Level: doctorFail, Detail: "IPv4 external interface unavailable", Failure: true})
+		} else if err := rt.checkNAT(external4, addresses.IPv4); err != nil {
+			results = append(results, doctorResult{Name: "ipv4-nat", Level: doctorFail, Detail: err.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ipv4-nat", Level: doctorPass})
 		}
-	} else {
-		results = append(results, doctorResult{Name: "nat", Level: doctorSkip, Detail: "external interface unavailable"})
 	}
-	results = append(results, doctorUFWChecks(c, external, rt, addresses)...)
+	external6 := c.HostNetwork.ExternalInterfaceIPv6
+	if external6 == "" {
+		external6 = c.HostNetwork.ExternalInterface
+	}
+	if external6 == "" && addresses.IPv6.IsValid() && c.Server.AdvertiseIPv6DefaultRoute && rt.externalIface6 != nil {
+		var detectErr error
+		external6, detectErr = rt.externalIface6()
+		if detectErr != nil {
+			results = append(results, doctorResult{Name: "external-interface-ipv6", Level: doctorFail, Detail: detectErr.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "external-interface-ipv6", Level: doctorPass, Detail: external6})
+		}
+	}
+	if addresses.IPv6.IsValid() {
+		if !config.IsUsableGlobalIPv6TunnelPrefix(addresses.IPv6) {
+			results = append(results, doctorResult{Name: "ipv6-local-service", Level: doctorPass, Detail: "non-public IPv6 is valid for tunnel-local services only"}, doctorResult{Name: "ipv6-public-egress", Level: doctorWarn, Detail: "ULA/special-use prefix cannot provide public routed egress"})
+		} else if !c.Server.AdvertiseIPv6DefaultRoute {
+			results = append(results, doctorResult{Name: "ipv6-local-service", Level: doctorPass, Detail: "public IPv6 configured but ::/0 is not advertised"}, doctorResult{Name: "ipv6-public-egress", Level: doctorWarn, Detail: "public routed egress is not enabled for clients"})
+		} else if external6 == "" || rt.checkIPv6Egress == nil {
+			results = append(results, doctorResult{Name: "ipv6-local-egress-prerequisites", Level: doctorFail, Detail: "IPv6 egress checker or external interface unavailable", Failure: true})
+		} else if err := rt.checkIPv6Egress(external6, addresses.IPv6); err != nil {
+			results = append(results, doctorResult{Name: "ipv6-local-egress-prerequisites", Level: doctorFail, Detail: err.Error(), Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ipv6-local-egress-prerequisites", Level: doctorPass, Detail: "local routes/forwarding checked; upstream prefix return path is not proven"})
+		}
+		if c.Server.AdvertiseIPv6DefaultRoute {
+			results = append(results, doctorResult{Name: "routed-prefix-return-path", Level: doctorWarn, Detail: "cannot prove the provider routes this IPv6 prefix back to the server from local inspection"})
+		}
+		if c.DNSGateway.IsEnabled() {
+			results = append(results, doctorResult{Name: "ipv6-tunnel-dns-route", Level: doctorPass, Detail: "each IPv6-capable session receives the server DNS address as a host route"})
+		} else {
+			results = append(results, doctorResult{Name: "ipv6-tunnel-dns-route", Level: doctorSkip, Detail: "DNS gateway disabled"})
+		}
+	}
+	results = append(results, doctorUFWChecks(c, external4, external6, rt, addresses)...)
 	results = append(results, doctorResetKeyCheck(c.QUIC.StatelessResetKeyFile, rt))
 	results = append(results, doctorUDPBufferChecks(rt)...)
 	return results
@@ -172,7 +210,7 @@ func doctorUDPBufferChecks(rt doctorRuntime) []doctorResult {
 	return []doctorResult{{Name: "udp-buffer-sysctl", Level: doctorPass, Detail: fmt.Sprintf("rmem_max=%d wmem_max=%d", rmem, wmem)}}
 }
 
-func doctorUFWChecks(c config.Config, external string, rt doctorRuntime, addresses config.TunnelAddresses) []doctorResult {
+func doctorUFWChecks(c config.Config, external4, external6 string, rt doctorRuntime, addresses config.TunnelAddresses) []doctorResult {
 	if _, err := rt.lookPath("ufw"); err != nil {
 		return []doctorResult{{Name: "ufw", Level: doctorSkip, Detail: "command unavailable"}}
 	}
@@ -185,7 +223,16 @@ func doctorUFWChecks(c config.Config, external string, rt doctorRuntime, address
 	if !strings.Contains(string(status), "Status: active") {
 		return []doctorResult{{Name: "ufw", Level: doctorSkip, Detail: "inactive"}}
 	}
-	if external == "" {
+	results := make([]doctorResult, 0, 5)
+	if addresses.IPv6.IsValid() {
+		b, readErr := rt.readFile("/etc/default/ufw")
+		if readErr != nil || !ufwIPv6Enabled(b) {
+			results = append(results, doctorResult{Name: "ufw-ipv6", Level: doctorFail, Detail: "UFW is active but /etc/default/ufw does not confirm IPV6=yes", Failure: true})
+		} else {
+			results = append(results, doctorResult{Name: "ufw-ipv6", Level: doctorPass, Detail: "IPV6=yes"})
+		}
+	}
+	if (addresses.IPv4.IsValid() && external4 == "") || (addresses.IPv6.IsValid() && c.Server.AdvertiseIPv6DefaultRoute && external6 == "") {
 		return []doctorResult{{Name: "ufw", Level: doctorFail, Detail: "external interface unavailable", Failure: true}}
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
@@ -201,7 +248,6 @@ func doctorUFWChecks(c config.Config, external string, rt doctorRuntime, address
 		}
 		return doctorResult{Name: name, Level: doctorFail, Detail: "required project rule missing", Failure: true}
 	}
-	results := make([]doctorResult, 0, 3)
 	if c.DNSGateway.IsEnabled() {
 		for _, address := range addresses.Addresses() {
 			name := address.String()
@@ -215,13 +261,33 @@ func doctorUFWChecks(c config.Config, external string, rt doctorRuntime, address
 		results = append(results, doctorResult{Name: "ufw-dns", Level: doctorSkip, Detail: "DNS gateway disabled"})
 	}
 	for _, prefix := range addresses.Prefixes() {
+		if prefix.Addr().Is6() && !c.Server.AdvertiseIPv6DefaultRoute {
+			continue
+		}
 		name := "ufw-forward-" + prefix.String()
+		external := external6
 		if prefix.Addr().Is4() {
 			name = "ufw-forward"
+			external = external4
 		}
 		results = append(results, check(name, fmt.Sprintf("route allow in on masque0 out on %s from %s comment jiejie-masque-connect-ip-forward", external, prefix.Masked())))
 	}
 	return results
+}
+
+func ufwIPv6Enabled(contents []byte) bool {
+	for _, line := range strings.Split(string(contents), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(key) == "IPV6" {
+			value = strings.TrimSpace(strings.Trim(value, `"'`))
+			return strings.EqualFold(value, "yes")
+		}
+	}
+	return false
 }
 
 func normalizedUFWRules(added string) map[string]struct{} {

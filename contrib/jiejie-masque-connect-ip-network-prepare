@@ -3,24 +3,35 @@ set -eu
 
 config=/etc/jiejie-masque/connect-ip.yaml
 external_interface=${MASQUE_EXTERNAL_INTERFACE:-}
-external_interface_override=0
+external_ipv4=${MASQUE_EXTERNAL_INTERFACE_IPV4:-$external_interface}
+external_ipv6=${MASQUE_EXTERNAL_INTERFACE_IPV6:-$external_interface}
+external_ipv4_override=0
+external_ipv6_override=0
 masque_bin=${JIEJIE_MASQUE_BIN:-/usr/local/bin/jiejie-masque}
+ip_bin=${JIEJIE_MASQUE_IP:-ip}
 nft_bin=${JIEJIE_MASQUE_NFT:-nft}
 ufw_bin=${JIEJIE_MASQUE_UFW:-ufw}
 ip_forward_path=${JIEJIE_MASQUE_IP_FORWARD_PATH:-/proc/sys/net/ipv4/ip_forward}
 ip6_forward_path=${JIEJIE_MASQUE_IP6_FORWARD_PATH:-/proc/sys/net/ipv6/conf/all/forwarding}
+ipv6_sysctl_root=${JIEJIE_MASQUE_IPV6_SYSCTL_ROOT:-/proc/sys/net/ipv6/conf}
+ufw_ipv6_config=${JIEJIE_MASQUE_UFW_IPV6_CONFIG:-/etc/default/ufw}
 tunnel_interface=${JIEJIE_MASQUE_TUN_INTERFACE:-masque0}
 dns_comment=jiejie-masque-connect-ip-dns
 forward_comment=jiejie-masque-connect-ip-forward
 
 if [ -n "$external_interface" ]; then
-	external_interface_override=1
+	external_ipv4_override=1
+	external_ipv6_override=1
 fi
+if [ -n "${MASQUE_EXTERNAL_INTERFACE_IPV4:-}" ]; then external_ipv4_override=1; fi
+if [ -n "${MASQUE_EXTERNAL_INTERFACE_IPV6:-}" ]; then external_ipv6_override=1; fi
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--config) config=$2; shift 2 ;;
-		--interface) external_interface=$2; external_interface_override=1; shift 2 ;;
+		--interface) external_interface=$2; external_ipv4=$2; external_ipv6=$2; external_ipv4_override=1; external_ipv6_override=1; shift 2 ;;
+		--interface-ipv4) external_ipv4=$2; external_ipv4_override=1; shift 2 ;;
+		--interface-ipv6) external_ipv6=$2; external_ipv6_override=1; shift 2 ;;
 		--binary) masque_bin=$2; shift 2 ;;
 		*) echo "usage: $0 [--config PATH] [--interface IFACE] [--binary PATH]" >&2; exit 2 ;;
 	esac
@@ -31,27 +42,64 @@ if [ "$tunnel_interface" != "masque0" ]; then
 	exit 1
 fi
 
-if [ "$external_interface_override" -eq 0 ]; then
-	external_interface=$("$masque_bin" network-prepare-info --config "$config" --field external-interface)
+tunnel_ipv4_prefix=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-ipv4-prefix)
+tunnel_ipv6_prefix=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-ipv6-prefix)
+advertise_ipv6_default_route=$("$masque_bin" network-prepare-info --config "$config" --field advertise-ipv6-default-route)
+
+if [ "$external_ipv4_override" -eq 0 ] && [ -n "$tunnel_ipv4_prefix" ]; then
+	external_ipv4=$("$masque_bin" network-prepare-info --config "$config" --field external-interface-ipv4)
 fi
-if [ -z "$external_interface" ]; then
-	external_interface=$(awk '$2 == "00000000" && $4 != "0" { print $1; exit }' /proc/net/route)
+if [ "$external_ipv6_override" -eq 0 ] && [ "$advertise_ipv6_default_route" = true ]; then
+	external_ipv6=$("$masque_bin" network-prepare-info --config "$config" --field external-interface-ipv6)
 fi
-if [ -z "$external_interface" ]; then
-	echo "jiejie-masque-connect-ip-network-prepare: external interface not found" >&2
+if [ -n "$tunnel_ipv4_prefix" ] && [ -z "$external_ipv4" ]; then
+	external_ipv4=$(awk '$2 == "00000000" && $4 != "0" { print $1; exit }' /proc/net/route)
+fi
+if [ "$advertise_ipv6_default_route" = true ] && [ -z "$external_ipv6" ]; then
+	external_ipv6=$("$ip_bin" -6 route show default 2>/dev/null | awk '{ for (i=1; i<NF; i++) if ($i == "dev") { print $(i+1); exit } }')
+fi
+if { [ -n "$tunnel_ipv4_prefix" ] && [ -z "$external_ipv4" ]; } || { [ "$advertise_ipv6_default_route" = true ] && [ -z "$external_ipv6" ]; }; then
+	echo "jiejie-masque-connect-ip-network-prepare: tunnel address family has no external interface" >&2
 	exit 1
 fi
 
-tunnel_ipv4=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-prefix)
 tunnel_prefixes=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-prefixes)
-tunnel_addresses=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-addresses)
-[ -n "$tunnel_prefixes" ] || tunnel_prefixes=$tunnel_ipv4
-tunnel_address=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-address)
-tunnel_network=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-network)
-[ -n "$tunnel_addresses" ] || tunnel_addresses=$tunnel_address
-tunnel_ipv6_address=$(printf '%s\n' "$tunnel_addresses" | awk '/:/{print; exit}')
-tunnel_ipv6_prefix=$(printf '%s\n' "$tunnel_prefixes" | awk '/:/{print; exit}')
+tunnel_network=
+if [ -n "$tunnel_ipv4_prefix" ]; then
+	tunnel_network=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-network)
+fi
+tunnel_ipv4_address=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-ipv4-address)
+tunnel_ipv6_address=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-ipv6-address)
+tunnel_ipv6_network=$("$masque_bin" network-prepare-info --config "$config" --field tunnel-ipv6-network)
 dns_port=$("$masque_bin" network-prepare-info --config "$config" --field dns-port)
+
+if [ -n "$tunnel_ipv4_prefix" ] && [ -z "$external_ipv4" ]; then
+	echo "jiejie-masque-connect-ip-network-prepare: IPv4 tunnel requires an IPv4 external interface" >&2
+	exit 1
+fi
+
+ipv6_default_before=
+ipv6_ra_accept_path=
+ipv6_ra_original=
+if [ -n "$tunnel_ipv6_prefix" ] && [ -n "$external_ipv6" ]; then
+	ipv6_default_before=$("$ip_bin" -6 route show default ${external_ipv6:+dev "$external_ipv6"} 2>/dev/null || true)
+	if [ "$advertise_ipv6_default_route" = true ]; then
+		if [ -z "$ipv6_default_before" ]; then
+			echo "jiejie-masque-connect-ip-network-prepare: IPv6 default route is missing on configured external interface $external_ipv6" >&2
+			exit 1
+		fi
+	fi
+	if printf '%s\n' "$ipv6_default_before" | grep -q 'proto ra'; then
+		ipv6_ra_accept_path=$ipv6_sysctl_root/$external_ipv6/accept_ra
+		if [ -r "$ipv6_ra_accept_path" ]; then
+			ipv6_ra_original=$(cat "$ipv6_ra_accept_path")
+			if [ "$ipv6_ra_original" -lt 2 ]; then printf '%s\n' 2 > "$ipv6_ra_accept_path"; fi
+		else
+			echo "jiejie-masque-connect-ip-network-prepare: IPv6 default route is RA-derived but accept_ra cannot be inspected on $external_ipv6" >&2
+			exit 1
+		fi
+	fi
+fi
 
 printf '%s\n' "$tunnel_prefixes" | while IFS= read -r tunnel_prefix; do
 	[ -n "$tunnel_prefix" ] || continue
@@ -64,13 +112,24 @@ printf '%s\n' "$tunnel_prefixes" | while IFS= read -r tunnel_prefix; do
 			"$nft_bin" add table ip masque_lite 2>/dev/null || true
 			"$nft_bin" flush table ip masque_lite
 			"$nft_bin" 'add chain ip masque_lite postrouting { type nat hook postrouting priority srcnat; policy accept; }'
-			"$nft_bin" add rule ip masque_lite postrouting oifname "$external_interface" ip saddr "$tunnel_prefix" masquerade
+			"$nft_bin" add rule ip masque_lite postrouting oifname "$external_ipv4" ip saddr "$tunnel_prefix" masquerade
 			;;
 	esac
 done
 
-if [ "$(cat "$ip_forward_path")" != "1" ]; then
+if [ -n "$tunnel_ipv4_prefix" ] && [ "$(cat "$ip_forward_path")" != "1" ]; then
 	printf '%s\n' 1 > "$ip_forward_path"
+fi
+
+if [ -n "$tunnel_ipv6_prefix" ]; then
+	if [ "$(cat "$ip6_forward_path")" != "1" ]; then printf '%s\n' 1 > "$ip6_forward_path"; fi
+	if [ -n "$ipv6_default_before" ]; then
+		ipv6_default_after=$("$ip_bin" -6 route show default ${external_ipv6:+dev "$external_ipv6"} 2>/dev/null || true)
+		if [ -z "$ipv6_default_after" ]; then
+			echo "jiejie-masque-connect-ip-network-prepare: IPv6 default route disappeared after forwarding was enabled; WAN connectivity is not preserved (accept_ra remains 2 on $external_ipv6 for recovery)" >&2
+			exit 1
+		fi
+	fi
 fi
 
 # UFW owns its generated nftables chains, so add rules through UFW instead of
@@ -83,21 +142,30 @@ if command -v "$ufw_bin" >/dev/null 2>&1; then
 	}
 	case "$ufw_status" in
 		*"Status: active"*)
+			ufw_ipv6_value=
+			if [ -r "$ufw_ipv6_config" ]; then ufw_ipv6_value=$(sed -n 's/^[[:space:]]*IPV6[[:space:]]*=[[:space:]]*//p' "$ufw_ipv6_config" | head -n 1 | tr -d "\"'" | awk '{print $1}'); fi
+			if [ -n "$tunnel_ipv6_prefix" ] && [ "$ufw_ipv6_value" != "yes" ]; then
+				echo "jiejie-masque-connect-ip-network-prepare: UFW is active but IPv6 is disabled or cannot be verified; set IPV6=yes in $ufw_ipv6_config" >&2
+				exit 1
+			fi
 			desired_dns_udp=""
 			desired_dns_tcp=""
-			desired_forward="route allow in on $tunnel_interface out on $external_interface from $tunnel_network comment $forward_comment"
+			desired_forward=""
+			if [ -n "$tunnel_ipv4_prefix" ]; then desired_forward="route allow in on $tunnel_interface out on $external_ipv4 from $tunnel_network comment $forward_comment"; fi
 			desired_dns_udp_v6=""
 			desired_dns_tcp_v6=""
 			desired_forward_v6=""
 			if [ -n "$dns_port" ]; then
-				desired_dns_udp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto udp comment $dns_comment"
-				desired_dns_tcp="allow in on $tunnel_interface to $tunnel_address port $dns_port proto tcp comment $dns_comment"
+				if [ -n "$tunnel_ipv4_address" ]; then
+					desired_dns_udp="allow in on $tunnel_interface to $tunnel_ipv4_address port $dns_port proto udp comment $dns_comment"
+					desired_dns_tcp="allow in on $tunnel_interface to $tunnel_ipv4_address port $dns_port proto tcp comment $dns_comment"
+				fi
 				if [ -n "$tunnel_ipv6_address" ]; then
 					desired_dns_udp_v6="allow in on $tunnel_interface to $tunnel_ipv6_address port $dns_port proto udp comment $dns_comment"
 					desired_dns_tcp_v6="allow in on $tunnel_interface to $tunnel_ipv6_address port $dns_port proto tcp comment $dns_comment"
 				fi
 			fi
-			if [ -n "$tunnel_ipv6_prefix" ]; then desired_forward_v6="route allow in on $tunnel_interface out on $external_interface from $tunnel_ipv6_prefix comment $forward_comment"; fi
+			if [ "$advertise_ipv6_default_route" = true ]; then desired_forward_v6="route allow in on $tunnel_interface out on $external_ipv6 from $tunnel_ipv6_network comment $forward_comment"; fi
 
 			added_rules=$("$ufw_bin" show added) || {
 				echo "jiejie-masque-connect-ip-network-prepare: unable to inspect UFW rules" >&2
@@ -113,7 +181,7 @@ if command -v "$ufw_bin" >/dev/null 2>&1; then
 			for desired_rule in "$desired_dns_udp_v6" "$desired_dns_tcp_v6" "$desired_forward_v6"; do
 				if [ -n "$desired_rule" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_rule"; then "$ufw_bin" $desired_rule; fi
 			done
-			if ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_forward"; then
+			if [ -n "$desired_forward" ] && ! printf '%s\n' "$normalized_rules" | grep -Fqx -- "$desired_forward"; then
 				"$ufw_bin" $desired_forward
 			fi
 

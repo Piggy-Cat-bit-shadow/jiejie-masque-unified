@@ -97,6 +97,39 @@ func TestNetworkPrepareInfoExternalInterfaceOmitted(t *testing.T) {
 	}
 }
 
+func TestNetworkPrepareInfoPerFamilyValuesAndOverrides(t *testing.T) {
+	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(content), "server:\n  tunnel_ipv4: 10.200.0.1/16\n", "server:\n  tunnel_ipv4: 10.200.0.1/16\n  tunnel_ipv6: fd00:200::1/64\n", 1) + "host_network:\n  external_interface: legacy0\n  external_interface_ipv4: v4wan0\n  external_interface_ipv6: v6wan0\n"
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ field, want string }{
+		{"tunnel-ipv4-prefix", "10.200.0.1/16\n"},
+		{"tunnel-ipv6-prefix", "fd00:200::1/64\n"},
+		{"tunnel-ipv4-address", "10.200.0.1\n"},
+		{"tunnel-ipv6-address", "fd00:200::1\n"},
+		{"tunnel-ipv4-network", "10.200.0.0/16\n"},
+		{"tunnel-ipv6-network", "fd00:200::/64\n"},
+		{"external-interface-ipv4", "v4wan0\n"},
+		{"external-interface-ipv6", "v6wan0\n"},
+		{"advertise-ipv6-default-route", "false\n"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := networkPrepareInfo(&out, path, tc.field); err != nil {
+				t.Fatal(err)
+			}
+			if out.String() != tc.want {
+				t.Fatalf("%s = %q, want %q", tc.field, out.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestNetworkPrepareInfoFirewallFields(t *testing.T) {
 	path := writeNetworkPrepareConfig(t, "10.200.0.1/16")
 	for _, tc := range []struct{ field, want string }{

@@ -36,8 +36,32 @@ func TestParseIPv6NonFirstFragmentHasNoTransport(t *testing.T) {
 	}
 }
 
+func TestParseIPv6RejectsJumbogramAndLengthMismatch(t *testing.T) {
+	base := make([]byte, 40)
+	base[0], base[6] = 0x60, 59
+	if _, ok := Parse(base); ok {
+		t.Fatal("unsupported zero-payload jumbogram accepted")
+	}
+	withPayload := append(append([]byte(nil), base...), 0, 0, 0, 0, 0, 0, 0, 0)
+	binary.BigEndian.PutUint16(withPayload[4:6], 8)
+	if _, ok := Parse(withPayload); !ok {
+		t.Fatal("well-formed IPv6 payload rejected")
+	}
+	if _, ok := Parse(append(withPayload, 0)); ok {
+		t.Fatal("IPv6 packet with trailing bytes accepted")
+	}
+	binary.BigEndian.PutUint16(withPayload[4:6], 7)
+	if _, ok := Parse(withPayload); ok {
+		t.Fatal("IPv6 packet with truncated declared payload accepted")
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add([]byte{0x60, 0, 0, 0, 0, 8, 17})
+	validIPv6UDP := make([]byte, 48)
+	validIPv6UDP[0], validIPv6UDP[6] = 0x60, 17
+	binary.BigEndian.PutUint16(validIPv6UDP[4:6], 8)
+	f.Add(validIPv6UDP)
 	f.Add([]byte{0x45, 0, 0, 20})
 	f.Fuzz(func(t *testing.T, b []byte) { _, _ = Parse(b); _ = IsTCPOrUDPDestinationPort(b, 53) })
 }

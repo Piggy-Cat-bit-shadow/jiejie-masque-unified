@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 
@@ -101,12 +102,15 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 		node["sni"] = *sni
 	}
 	if c.DNSGateway.IsEnabled() {
-		node["remote-dns-resolve"] = true
-		dns := make([]string, 0, len(serverAddresses.Addresses()))
-		for _, address := range serverAddresses.Addresses() {
+		dnsAddresses := compatibleDNSAddresses(client, serverAddresses)
+		dns := make([]string, 0, len(dnsAddresses))
+		for _, address := range dnsAddresses {
 			dns = append(dns, "udp://"+net.JoinHostPort(address.String(), strconv.Itoa(c.DNSGateway.Port)))
 		}
-		node["dns"] = dns
+		if len(dns) > 0 {
+			node["remote-dns-resolve"] = true
+			node["dns"] = dns
+		}
 	}
 	b, err := yaml.Marshal([]map[string]any{node})
 	if err != nil {
@@ -114,6 +118,17 @@ func mihomoConfigTo(out io.Writer, args []string) error {
 	}
 	_, err = out.Write(b)
 	return err
+}
+
+func compatibleDNSAddresses(client config.ResolvedClient, server config.TunnelAddresses) []netip.Addr {
+	addresses := make([]netip.Addr, 0, 2)
+	if client.TunnelIPv4.IsValid() && server.IPv4.IsValid() {
+		addresses = append(addresses, server.IPv4.Addr())
+	}
+	if client.TunnelIPv6.IsValid() && server.IPv6.IsValid() {
+		addresses = append(addresses, server.IPv6.Addr())
+	}
+	return addresses
 }
 
 func clientPublicKeyFromPrivateKey(encoded string) (string, error) {

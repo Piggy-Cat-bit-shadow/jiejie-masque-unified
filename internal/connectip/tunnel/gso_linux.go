@@ -130,7 +130,7 @@ func handleVirtioRead(in []byte, bufs [][]byte, sizes []int, offset int) (int, e
 		if len(in) < 20 || int(in[0]&0x0f)*4 != int(hdr.csumStart) {
 			return 0, fmt.Errorf("%w: invalid IPv4 header length", ErrMalformedGSO)
 		}
-	} else if len(in) < 40 || hdr.csumStart < 40 {
+	} else if len(in) < 40 || hdr.csumStart < 40 || !validIPv6TCPGSOOffset(in, int(hdr.csumStart)) {
 		return 0, fmt.Errorf("%w: invalid IPv6 transport offset", ErrMalformedGSO)
 	}
 	if int(hdr.csumStart)+13 > len(in) {
@@ -152,10 +152,11 @@ func handleVirtioRead(in []byte, bufs [][]byte, sizes []int, offset int) (int, e
 }
 
 func gsoSplit(in []byte, hdr virtioNetHdr, out [][]byte, sizes []int, offset int, isV6 bool) (int, error) {
-	ipLen, addrAt, addrLen := int(hdr.csumStart), 12, 4
+	transportOffset, addrAt, addrLen := int(hdr.csumStart), 12, 4
+	ipv6PayloadBase := 0
 	if isV6 {
-		addrAt, addrLen = 8, 16
-	} else if ipLen < 20 || len(in) < 12 {
+		addrAt, addrLen, ipv6PayloadBase = 8, 16, 40
+	} else if transportOffset < 20 || len(in) < 12 {
 		return 0, errors.New("invalid IPv4 header")
 	}
 	csumAt := int(hdr.csumStart + hdr.csumOffset)
@@ -178,23 +179,23 @@ func gsoSplit(in []byte, hdr virtioNetHdr, out [][]byte, sizes []int, offset int
 			return 0, errors.New("GSO segment exceeds MTU")
 		}
 		p := out[count][offset : offset+total]
-		copy(p[:ipLen], in[:ipLen])
+		copy(p[:transportOffset], in[:transportOffset])
 		copy(p[hdr.csumStart:hdr.hdrLen], in[hdr.csumStart:hdr.hdrLen])
 		copy(p[hdr.hdrLen:], in[start:end])
 		if isV6 {
-			binary.BigEndian.PutUint16(p[4:], uint16(total-ipLen))
+			binary.BigEndian.PutUint16(p[4:], uint16(total-ipv6PayloadBase))
 		} else {
 			if count > 0 {
 				binary.BigEndian.PutUint16(p[4:], binary.BigEndian.Uint16(p[4:])+uint16(count))
 			}
 			binary.BigEndian.PutUint16(p[2:], uint16(total))
-			binary.BigEndian.PutUint16(p[10:], ^checksum(p[:ipLen], 0))
+			binary.BigEndian.PutUint16(p[10:], ^checksum(p[:transportOffset], 0))
 		}
 		binary.BigEndian.PutUint32(p[hdr.csumStart+4:], seq+uint32(hdr.gsoSize)*uint32(count))
 		if end != len(in) {
 			p[hdr.csumStart+13] &^= 0x09
 		}
-		length := uint16(total - ipLen)
+		length := uint16(total - transportOffset)
 		pseudo := pseudoChecksum(unix.IPPROTO_TCP, in[addrAt:addrAt+addrLen], in[addrAt+addrLen:addrAt+addrLen*2], length)
 		binary.BigEndian.PutUint16(p[csumAt:], ^checksum(p[hdr.csumStart:], pseudo))
 		sizes[count] = total
@@ -202,6 +203,45 @@ func gsoSplit(in []byte, hdr virtioNetHdr, out [][]byte, sizes []int, offset int
 		start = end
 	}
 	return count, nil
+}
+
+func validIPv6TCPGSOOffset(packet []byte, wantOffset int) bool {
+	if len(packet) < 40 || wantOffset < 40 || wantOffset > len(packet) {
+		return false
+	}
+	next, offset, extBytes := packet[6], 40, 0
+	for count := 0; count < 8; count++ {
+		if next == unix.IPPROTO_TCP {
+			return offset == wantOffset
+		}
+		var length int
+		switch next {
+		case 0, 43, 60:
+			if offset+2 > len(packet) {
+				return false
+			}
+			length = (int(packet[offset+1]) + 1) * 8
+		case 51:
+			if offset+2 > len(packet) || packet[offset+1] < 1 {
+				return false
+			}
+			length = (int(packet[offset+1]) + 2) * 4
+		default:
+			// Fragmented, ESP, unknown, and non-TCP payloads aren't supported
+			// by this TCP GSO splitter.
+			return false
+		}
+		if length < 8 || offset+length > len(packet) {
+			return false
+		}
+		extBytes += length
+		if extBytes > 256 {
+			return false
+		}
+		next = packet[offset]
+		offset += length
+	}
+	return false
 }
 
 func gsoNoneChecksum(p []byte, start, off uint16) error {

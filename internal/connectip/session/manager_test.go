@@ -333,14 +333,14 @@ func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {
 	if err := m.Register(b); err != nil {
 		t.Fatal(err)
 	}
-	if a.ShadowIP == b.ShadowIP || m.Len() != 2 {
-		t.Fatalf("shadow sessions = %s, %s; len=%d", a.ShadowIP, b.ShadowIP, m.Len())
+	if a.ShadowIPv4 == b.ShadowIPv4 || m.Len() != 2 {
+		t.Fatalf("shadow sessions = %s, %s; len=%d", a.ShadowIPv4, b.ShadowIPv4, m.Len())
 	}
-	if m.Lookup(a.ShadowIP) != a || m.Lookup(b.ShadowIP) != b {
+	if m.Lookup(a.ShadowIPv4) != a || m.Lookup(b.ShadowIPv4) != b {
 		t.Fatal("shadow lookup mismatch")
 	}
 	a.Close()
-	if m.Lookup(a.ShadowIP) != nil || m.Lookup(b.ShadowIP) != b {
+	if m.Lookup(a.ShadowIPv4) != nil || m.Lookup(b.ShadowIPv4) != b {
 		t.Fatal("closing A affected B")
 	}
 	c := New(netip.MustParseAddr("10.200.0.2"), "c", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
@@ -349,6 +349,64 @@ func TestShadowManagerAllowsSameVisibleIP(t *testing.T) {
 	}
 	c.Close()
 	b.Close()
+}
+
+func TestShadowManagerHybridDualStackAndIPv6Only(t *testing.T) {
+	m := NewShadowManager(netip.MustParsePrefix("10.200.0.128/30"), 4, nil)
+	newSession := func(addresses ...netip.Addr) *Session {
+		return NewWithAddressesAndPacketPoolAndQueue(context.Background(), addresses, "hybrid", &fakeConn{}, nil, 8, func(s *Session) { m.RemoveIfCurrent(s) })
+	}
+	v4 := netip.MustParseAddr("10.200.0.2")
+	v6a := netip.MustParseAddr("2001:db8:200::2")
+	v6b := netip.MustParseAddr("2001:db8:200::3")
+	dual := newSession(v4, v6a)
+	if err := m.Register(dual); err != nil {
+		t.Fatal(err)
+	}
+	if !dual.ShadowIPv4.IsValid() || dual.ClientIPv4 != v4 || dual.ClientIPv6 != v6a || m.Lookup(v6a) != dual || m.Lookup(dual.ShadowIPv4) != dual {
+		t.Fatalf("dual-stack mapping incorrect: session=%+v", dual)
+	}
+	duplicate := newSession(v6a)
+	if err := m.Register(duplicate); err == nil {
+		t.Fatal("duplicate active IPv6 address was accepted")
+	}
+	ipv6Only := newSession(v6b)
+	if err := m.Register(ipv6Only); err != nil {
+		t.Fatalf("IPv6-only session should not consume shadow IPv4: %v", err)
+	}
+	if ipv6Only.ShadowIPv4.IsValid() || m.Lookup(v6b) != ipv6Only {
+		t.Fatalf("IPv6-only mapping allocated a shadow address: %+v", ipv6Only)
+	}
+	dual.Close()
+	if m.Lookup(v6a) != nil || m.Lookup(dual.ShadowIPv4) != nil {
+		t.Fatal("closing dual-stack session left a stale mapping")
+	}
+	reused := newSession(v6a)
+	if err := m.Register(reused); err != nil {
+		t.Fatalf("IPv6 address could not be reused after close: %v", err)
+	}
+	reused.Close()
+	ipv6Only.Close()
+}
+
+func TestIPv6DirectMappingTakeoverLeavesNoStaleOwner(t *testing.T) {
+	m := NewManager()
+	ip := netip.MustParseAddr("2001:db8:200::8")
+	old := NewWithAddressesAndPacketPoolAndQueue(context.Background(), []netip.Addr{ip}, "old", &fakeConn{}, nil, 2, func(s *Session) { m.RemoveIfCurrent(s) })
+	if replaced := m.Replace(old); replaced != nil {
+		t.Fatalf("first replace evicted %v", replaced)
+	}
+	newSession := NewWithAddressesAndPacketPoolAndQueue(context.Background(), []netip.Addr{ip}, "new", &fakeConn{}, nil, 2, func(s *Session) { m.RemoveIfCurrent(s) })
+	if replaced := m.Replace(newSession); replaced != old {
+		t.Fatalf("replaced = %p, want %p", replaced, old)
+	}
+	if m.Lookup(ip) != newSession || m.Len() != 1 {
+		t.Fatal("IPv6 direct mapping retained a stale owner")
+	}
+	newSession.Close()
+	if m.Lookup(ip) != nil {
+		t.Fatal("closing new owner did not remove direct IPv6 mapping")
+	}
 }
 
 func TestShadowManagerReuseCooldown(t *testing.T) {
@@ -362,7 +420,7 @@ func TestShadowManagerReuseCooldown(t *testing.T) {
 	if err := m.Register(b); err != nil {
 		t.Fatal(err)
 	}
-	shadow := a.ShadowIP
+	shadow := a.ShadowIPv4
 	a.Close()
 	c := New(netip.MustParseAddr("10.200.0.2"), "c", &fakeConn{}, func(x *Session) { m.RemoveIfCurrent(x) })
 	if err := m.Register(c); err == nil {
@@ -372,8 +430,8 @@ func TestShadowManagerReuseCooldown(t *testing.T) {
 	if err := m.Register(c); err != nil {
 		t.Fatal(err)
 	}
-	if c.ShadowIP != shadow {
-		t.Fatalf("shadow = %s, want %s", c.ShadowIP, shadow)
+	if c.ShadowIPv4 != shadow {
+		t.Fatalf("shadow = %s, want %s", c.ShadowIPv4, shadow)
 	}
 	b.Close()
 	c.Close()
@@ -400,10 +458,10 @@ func TestShadowManagerAllocatesManySameVisibleSessions(t *testing.T) {
 		if err := m.Register(s); err != nil {
 			t.Fatal(err)
 		}
-		if seen[s.ShadowIP] {
-			t.Fatalf("duplicate shadow address %s", s.ShadowIP)
+		if seen[s.ShadowIPv4] {
+			t.Fatalf("duplicate shadow address %s", s.ShadowIPv4)
 		}
-		seen[s.ShadowIP] = true
+		seen[s.ShadowIPv4] = true
 		sessions = append(sessions, s)
 	}
 	if m.Len() != 100 {
@@ -652,7 +710,7 @@ func TestShadowCleanupFailureQuarantinesAddress(t *testing.T) {
 	if err := m.Register(s); err != nil {
 		t.Fatal(err)
 	}
-	shadow := s.ShadowIP
+	shadow := s.ShadowIPv4
 	s.Close()
 	select {
 	case got := <-called:
@@ -688,7 +746,7 @@ func TestShadowCleanupSuccessDoesNotQuarantineAddress(t *testing.T) {
 	if err := m.Register(s); err != nil {
 		t.Fatal(err)
 	}
-	shadow := s.ShadowIP
+	shadow := s.ShadowIPv4
 	s.Close()
 	deadline := time.After(time.Second)
 	for m.CleanupStats().Completed != 1 {
@@ -706,8 +764,8 @@ func TestShadowCleanupSuccessDoesNotQuarantineAddress(t *testing.T) {
 	if err := m.Register(next); err != nil {
 		t.Fatal(err)
 	}
-	if next.ShadowIP != shadow {
-		t.Fatalf("successful cleanup reused %s, want %s", next.ShadowIP, shadow)
+	if next.ShadowIPv4 != shadow {
+		t.Fatalf("successful cleanup reused %s, want %s", next.ShadowIPv4, shadow)
 	}
 	next.Close()
 }

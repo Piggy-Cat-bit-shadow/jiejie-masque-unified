@@ -11,15 +11,32 @@ cat >"$tmp/bin/jiejie-masque" <<'EOF'
 field=
 for arg in "$@"; do
   case "$arg" in
-    tunnel-prefix|tunnel-address|tunnel-network|dns-port|external-interface) field=$arg ;;
+    tunnel-prefix|tunnel-ipv4-prefix|tunnel-ipv6-prefix|tunnel-ipv4-address|tunnel-ipv6-address|tunnel-ipv4-network|tunnel-ipv6-network|tunnel-address|tunnel-network|dns-port|external-interface|external-interface-ipv4|external-interface-ipv6|advertise-ipv6-default-route) field=$arg ;;
   esac
 done
 case "$field" in
   tunnel-prefix) echo 10.200.0.1/16 ;;
+  tunnel-ipv4-prefix) if [ "${TEST_IPV4_ENABLED:-1}" = 1 ]; then echo 10.200.0.1/16; fi ;;
+  tunnel-ipv6-prefix) if [ -n "${TEST_TUNNEL_IPV6_PREFIX:-}" ]; then echo "$TEST_TUNNEL_IPV6_PREFIX"; fi ;;
+  tunnel-ipv4-address) if [ "${TEST_IPV4_ENABLED:-1}" = 1 ]; then echo 10.200.0.1; fi ;;
+  tunnel-ipv6-address) if [ -n "${TEST_TUNNEL_IPV6_PREFIX:-}" ]; then echo "${TEST_TUNNEL_IPV6_PREFIX%/*}"; fi ;;
+  tunnel-ipv6-network) if [ -n "${TEST_TUNNEL_IPV6_PREFIX:-}" ]; then echo 2001:4860:100::/64; fi ;;
   tunnel-address) echo 10.200.0.1 ;;
   tunnel-network) echo 10.200.0.0/16 ;;
   dns-port) [ "${DNS_DISABLED:-0}" = 1 ] || echo 5353 ;;
   external-interface) echo eth0 ;;
+  external-interface-ipv4) echo eth0 ;;
+  external-interface-ipv6) if [ -n "${TEST_EXTERNAL_IPV6:-}" ]; then echo "$TEST_EXTERNAL_IPV6"; fi ;;
+  advertise-ipv6-default-route) echo "${TEST_IPV6_ADVERTISE:-false}" ;;
+esac
+EOF
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/sh
+case " $* " in
+  *" route show default "*)
+    if [ "${ROUTE_DROPS_AFTER_FORWARD:-0}" = 1 ] && [ "$(cat "$JIEJIE_MASQUE_IP6_FORWARD_PATH")" = 1 ]; then exit 0; fi
+    printf '%s\n' "default via fe80::1 dev eth1 proto ra metric 100 pref medium"
+    ;;
 esac
 EOF
 cat >"$tmp/bin/nft" <<'EOF'
@@ -162,3 +179,66 @@ if grep -Eq 'allow in on masque0|route allow in on masque0' "$tmp/ufw-idempotent
   exit 1
 fi
 echo 'connect-ip-network-prepare: active UFW rules passed'
+
+# An RA-derived IPv6 WAN must retain its route after forwarding is enabled.
+mkdir -p "$tmp/sysctl/eth1"
+printf '1\n' >"$tmp/sysctl/eth1/accept_ra"
+printf '0\n' >"$tmp/ip6_forward-ra"
+printf '0\n' >"$tmp/ip_forward-ra"
+TEST_IPV4_ENABLED=0 TEST_IPV6_ADVERTISE=true UFW_LOG="$tmp/ufw-ra.log" UFW_MODE=inactive \
+TEST_TUNNEL_IPV6_PREFIX=2001:4860:100::1/64 TEST_EXTERNAL_IPV6=eth1 \
+JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" JIEJIE_MASQUE_IP="$tmp/bin/ip" \
+JIEJIE_MASQUE_NFT="$tmp/bin/nft" JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-ra" JIEJIE_MASQUE_IP6_FORWARD_PATH="$tmp/ip6_forward-ra" \
+JIEJIE_MASQUE_IPV6_SYSCTL_ROOT="$tmp/sysctl" \
+  "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null
+[ "$(cat "$tmp/sysctl/eth1/accept_ra")" = 2 ]
+[ "$(cat "$tmp/ip6_forward-ra")" = 1 ]
+[ "$(cat "$tmp/ip_forward-ra")" = 0 ]
+
+# An active firewall with IPv6 disabled must fail before adding any rules.
+printf 'IPV6=no\n' >"$tmp/ufw-default-no"
+: >"$tmp/ufw-v6-disabled.log"
+if TEST_IPV4_ENABLED=0 UFW_LOG="$tmp/ufw-v6-disabled.log" UFW_MODE=active \
+  TEST_TUNNEL_IPV6_PREFIX=2001:4860:100::1/64 TEST_EXTERNAL_IPV6=eth1 \
+  JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" JIEJIE_MASQUE_IP="$tmp/bin/ip" \
+  JIEJIE_MASQUE_NFT="$tmp/bin/nft" JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+  JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-ra" JIEJIE_MASQUE_IP6_FORWARD_PATH="$tmp/ip6_forward-ra" \
+  JIEJIE_MASQUE_IPV6_SYSCTL_ROOT="$tmp/sysctl" JIEJIE_MASQUE_UFW_IPV6_CONFIG="$tmp/ufw-default-no" \
+  "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null 2>"$tmp/ufw-v6-disabled.stderr"; then
+  echo 'network prepare accepted active UFW with IPv6 disabled' >&2
+  exit 1
+fi
+grep -F 'UFW is active but IPv6 is disabled' "$tmp/ufw-v6-disabled.stderr"
+if grep -Eq 'allow|delete' "$tmp/ufw-v6-disabled.log"; then
+  echo 'UFW IPv6-disabled path mutated rules' >&2
+  exit 1
+fi
+
+# With IPv6 enabled, the route rule must use the independent IPv6 WAN.
+printf 'IPV6=yes\n' >"$tmp/ufw-default-yes"
+: >"$tmp/ufw-v6-enabled.log"
+TEST_IPV4_ENABLED=0 TEST_IPV6_ADVERTISE=true UFW_LOG="$tmp/ufw-v6-enabled.log" UFW_MODE=active \
+TEST_TUNNEL_IPV6_PREFIX=2001:4860:100::1/64 TEST_EXTERNAL_IPV6=eth1 \
+JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" JIEJIE_MASQUE_IP="$tmp/bin/ip" \
+JIEJIE_MASQUE_NFT="$tmp/bin/nft" JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-ra" JIEJIE_MASQUE_IP6_FORWARD_PATH="$tmp/ip6_forward-ra" \
+JIEJIE_MASQUE_IPV6_SYSCTL_ROOT="$tmp/sysctl" JIEJIE_MASQUE_UFW_IPV6_CONFIG="$tmp/ufw-default-yes" \
+  "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null
+grep -F 'route allow in on masque0 out on eth1 from 2001:4860:100::/64' "$tmp/ufw-v6-enabled.log"
+
+# If the route disappears, fail closed and retain accept_ra=2 for recovery.
+printf '1\n' >"$tmp/sysctl/eth1/accept_ra"
+printf '0\n' >"$tmp/ip6_forward-loss"
+if TEST_IPV4_ENABLED=0 TEST_IPV6_ADVERTISE=true UFW_MODE=inactive \
+  TEST_TUNNEL_IPV6_PREFIX=2001:4860:100::1/64 TEST_EXTERNAL_IPV6=eth1 ROUTE_DROPS_AFTER_FORWARD=1 \
+  JIEJIE_MASQUE_BIN="$tmp/bin/jiejie-masque" JIEJIE_MASQUE_IP="$tmp/bin/ip" \
+  JIEJIE_MASQUE_NFT="$tmp/bin/nft" JIEJIE_MASQUE_UFW="$tmp/bin/ufw" \
+  JIEJIE_MASQUE_IP_FORWARD_PATH="$tmp/ip_forward-ra" JIEJIE_MASQUE_IP6_FORWARD_PATH="$tmp/ip6_forward-loss" \
+  JIEJIE_MASQUE_IPV6_SYSCTL_ROOT="$tmp/sysctl" \
+  "$root/contrib/jiejie-masque-connect-ip-network-prepare" --config /dev/null 2>"$tmp/ra-loss.stderr"; then
+  echo 'network prepare accepted a lost IPv6 WAN route' >&2
+  exit 1
+fi
+grep -F 'IPv6 default route disappeared' "$tmp/ra-loss.stderr"
+[ "$(cat "$tmp/sysctl/eth1/accept_ra")" = 2 ]
