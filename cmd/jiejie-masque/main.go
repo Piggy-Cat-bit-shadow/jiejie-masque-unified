@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,14 +17,16 @@ import (
 	"syscall"
 	"time"
 
-	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
+	connectip "github.com/metacubex/connect-ip-go"
+	"github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
+	"github.com/metacubex/tls"
 	"github.com/yosida95/uritemplate/v3"
 )
 
@@ -126,7 +127,7 @@ func serveConnectIPArgs(args []string) error {
 	if serverAddresses.IPv6.IsValid() && serverAddresses.IPv6.Bits() == 128 {
 		log.Printf("IPv6 egress warning: server tunnel is configured as a single /128; a routed client prefix/provider return path is not established")
 	}
-	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleRequest(w, r, c, serverAddresses, byKey, mgr, tun)
 	})}
 	serveErr := make(chan error, 1)
@@ -211,36 +212,36 @@ func isServerClosed(err error) bool {
 	return errors.Is(err, stdhttp.ErrServerClosed) || errors.Is(err, quic.ErrServerClosed) || errors.Is(err, net.ErrClosed)
 }
 
-func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, serverAddresses config.TunnelAddresses, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device) {
+func handleRequest(w http.ResponseWriter, r *http.Request, c config.Config, serverAddresses config.TunnelAddresses, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device) {
 	parseProtocol, ok := protocolForParse(r.Proto)
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unsupported protocol %q", r.Proto)
-		stdhttp.Error(w, "only CONNECT-IP is supported", stdhttp.StatusNotImplemented)
+		http.Error(w, "only CONNECT-IP is supported", http.StatusNotImplemented)
 		return
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) != 1 {
 		log.Printf("CONNECT-IP rejected: missing client certificate")
-		stdhttp.Error(w, "client certificate required", stdhttp.StatusUnauthorized)
+		http.Error(w, "client certificate required", http.StatusUnauthorized)
 		return
 	}
 	client, ok := byKey[auth.PublicKeyBytes(r.TLS.PeerCertificates[0])]
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unauthorized client")
-		stdhttp.Error(w, "client certificate not authorized", stdhttp.StatusUnauthorized)
+		http.Error(w, "client certificate not authorized", http.StatusUnauthorized)
 		return
 	}
 	template, err := requestTemplate(r.Host)
 	if err != nil {
 		log.Printf("CONNECT-IP rejected: invalid authority: %v", err)
-		stdhttp.Error(w, "invalid authority", stdhttp.StatusBadRequest)
+		http.Error(w, "invalid authority", http.StatusBadRequest)
 		return
 	}
 	copyReq := r.Clone(r.Context())
 	copyReq.Proto = parseProtocol
-	req, err := connectip.ParseProxyRequest(copyReq, template)
+	req, err := connectip.ParseRequest(copyReq, template)
 	if err != nil {
 		log.Printf("CONNECT-IP request parse failed: %v", err)
-		stdhttp.Error(w, err.Error(), stdhttp.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	conn, err := (&connectip.Proxy{}).Proxy(w, req)
@@ -249,22 +250,22 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 		return
 	}
 	clientAddresses := config.TunnelAddresses{IPv4: client.TunnelIPv4, IPv6: client.TunnelIPv6}
-	if err = conn.AssignAddresses(clientAddresses.Prefixes()); err != nil {
+	if err = conn.AssignAddresses(r.Context(), clientAddresses.Prefixes()); err != nil {
 		log.Printf("AssignAddresses failed: %v", err)
 		conn.Close()
 		return
 	}
-	if err = conn.AdvertiseRoute(connectIPRoutes(clientAddresses, serverAddresses, c.Server.AdvertiseIPv6DefaultRoute)); err != nil {
+	if err = conn.AdvertiseRoute(r.Context(), connectIPRoutes(clientAddresses, serverAddresses, c.Server.AdvertiseIPv6DefaultRoute)); err != nil {
 		log.Printf("AdvertiseRoute failed: %v", err)
 		conn.Close()
 		return
 	}
-	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.PublicKey, conn, nil)
+	s := session.NewWithAddresses(r.Context(), clientAddresses.Addresses(), client.PublicKey, &connectIPPacketConn{Conn: conn}, nil)
 	old, err := mgr.Replace(s)
 	if err != nil {
 		log.Printf("session registration failed: %v", err)
 		s.Close()
-		stdhttp.Error(w, "tunnel address unavailable", stdhttp.StatusConflict)
+		http.Error(w, "tunnel address unavailable", http.StatusConflict)
 		return
 	}
 	if len(old) != 0 {
@@ -279,6 +280,25 @@ func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config
 	s.Close()
 	log.Printf("CONNECT-IP session closed")
 }
+
+// connectIPPacketConn adapts the clean upstream connect-ip-go packet API to
+// the server's bounded buffer-oriented session interface.
+type connectIPPacketConn struct{ *connectip.Conn }
+
+func (c *connectIPPacketConn) ReadPacket(dst []byte) (int, error) {
+	p, err := c.Conn.ReadPacket()
+	if err != nil {
+		return 0, err
+	}
+	if len(p) > len(dst) {
+		return 0, fmt.Errorf("connect-ip packet exceeds session buffer: %d > %d", len(p), len(dst))
+	}
+	return copy(dst, p), nil
+}
+
+func (c *connectIPPacketConn) WritePacket(p []byte) ([]byte, error) { return c.Conn.WritePacket(p) }
+
+func (c *connectIPPacketConn) RuntimeStats() quic.RuntimeStats { return quic.RuntimeStats{} }
 
 func firstPrefix(a config.TunnelAddresses) netip.Prefix {
 	if a.IPv4.IsValid() {
