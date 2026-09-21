@@ -108,6 +108,36 @@ func TestAggregateRuntimeStatsUsesSafeMultiConnectionSemantics(t *testing.T) {
 	b.Close()
 }
 
+func TestAggregateBBRRuntimeStatsUsesExplicitMultiConnectionSemantics(t *testing.T) {
+	m := NewManager()
+	a := New(netip.MustParseAddr("10.200.0.40"), "identity-a", &runtimeStatsConn{stats: quic.RuntimeStats{
+		CongestionController: "bbr", BBRMode: "probe_bw", BBRBandwidthEstimate: 8_000_000,
+		BBRMinRTT: 20 * time.Millisecond, BBRPacingGain: 1.25, BBRCwndGain: 2,
+		BBRTargetCwnd: 24_000, BBRRoundTripCount: 7, BBRFullBandwidthReached: true,
+		BBRRecoveryState: "not_in_recovery", BBRAppLimited: false, BBRRecoveryWindow: 40_000,
+	}}, nil)
+	b := New(netip.MustParseAddr("10.200.0.41"), "identity-b", &runtimeStatsConn{stats: quic.RuntimeStats{
+		CongestionController: "bbr", BBRMode: "probe_rtt", BBRBandwidthEstimate: 12_000_000,
+		BBRMinRTT: 15 * time.Millisecond, BBRPacingGain: 1, BBRCwndGain: 2,
+		BBRTargetCwnd: 12_000, BBRRoundTripCount: 9, BBRRecoveryState: "conservation",
+		BBRAppLimited: true, BBRAckAggregationHeight: 1500, BBRRecoveryWindow: 30_000,
+	}}, nil)
+	m.Replace(a)
+	m.Replace(b)
+	got := m.AggregateRuntimeStats()
+	if got.CongestionController != "bbr" || got.BBRConnections != 2 || got.BBRMode != "mixed" || got.BBRRecoveryState != "mixed" {
+		t.Fatalf("controller/mode aggregation = %+v", got)
+	}
+	if got.BBRBandwidthEstimate != 20_000_000 || got.BBRMinRTT != 15*time.Millisecond || !got.BBRGainsMixed || got.BBRPacingGain != 0 || got.BBRCwndGain != 0 {
+		t.Fatalf("rate/gain aggregation = %+v", got)
+	}
+	if got.BBRTargetCwnd != 36_000 || got.BBRRoundTripCount != 9 || !got.BBRFullBandwidthReached || !got.BBRAppLimited || got.BBRAckAggregationHeight != 1500 || got.BBRRecoveryWindow != 70_000 {
+		t.Fatalf("BBR model aggregation = %+v", got)
+	}
+	a.Close()
+	b.Close()
+}
+
 func TestAggregateRuntimeCountersRemainMonotonicAcrossSessionChurn(t *testing.T) {
 	m := NewManager()
 	aConn := &runtimeStatsConn{stats: quic.RuntimeStats{PacketsPacked: 100, UDPWrites: 10, ReceivedPackets: 20, PacketsLost: 4, SpuriousLosses: 2, ReorderingEvents: 8, SendQueueHardBlockedDuration: 5 * time.Millisecond, GSOBatchBreakShortPacket: 4, GSOMultiSegmentWrites: 8, GSOSegmentsTotal: 32, PackedPacketSizeBuckets: [8]uint64{0, 2}}}

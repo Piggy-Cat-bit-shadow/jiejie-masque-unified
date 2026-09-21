@@ -158,8 +158,8 @@ func TestCongestionControllerValidation(t *testing.T) {
 		t.Fatalf("cubic rejected: %v", err)
 	}
 	c.QUIC.CongestionController = "bbr"
-	if err := c.Validate(); err == nil {
-		t.Fatal("expected unsupported BBR to be rejected")
+	if err := c.Validate(); err != nil {
+		t.Fatalf("experimental BBR rejected: %v", err)
 	}
 	c.QUIC.CongestionController = "reno"
 	if err := c.Validate(); err == nil {

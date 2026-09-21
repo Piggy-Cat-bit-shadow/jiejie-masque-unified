@@ -257,11 +257,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("listen, tls.cert and tls.key are required")
 	}
 	switch c.QUIC.CongestionController {
-	case "", "default", "cubic":
-	case "bbr":
-		return fmt.Errorf("quic.congestion_controller=bbr is unavailable in this build; choose default or cubic")
+	case "", "default", "cubic", "bbr":
 	default:
-		return fmt.Errorf("quic.congestion_controller must be default or cubic")
+		return fmt.Errorf("quic.congestion_controller must be default, cubic, or bbr")
 	}
 	if len(c.Clients) > 0 && (len(c.Client.PublicKeys) > 0 || c.Client.PublicKey != "" || c.Client.TunnelIPv4 != "" || c.Client.TunnelIPv6 != "") {
 		return fmt.Errorf("client and clients cannot both be configured")

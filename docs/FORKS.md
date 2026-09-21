@@ -4,12 +4,13 @@
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/quic-go`
 - Sync branch: `sync/quic-go-v062-runtime`
-- Pinned commit: `97d32595e581cd1811fd6c48f59651dd357337ae`
+- Pinned commit: `ce9e71dbb523246036abadda35e84ce8df82b0eb`
 - Upstream family: MetaCubeX/quic-go v0.61.1 development line
 - License: MIT
-- Local patches in the pinned fork: owned DATAGRAM buffers, nonblocking and
+- Local patches in the maintained fork: owned DATAGRAM buffers, nonblocking and
   prefix-accepting batch submission, retained receive budget, reusable borrowed
-  parsing, native CUBIC selector, runtime counters, and qlog/ECN/PMTU behavior.
+  parsing, native CUBIC and experimental BBRv1 selectors, runtime counters, and
+  qlog/ECN/PMTU behavior.
 - Transport runtime snapshots include aggregate UDP write/GSO syscall counts,
   confirmed multi-segment kernel writes, fallback and GSO send errors; the
   legacy `gso_writes` counter now counts only successful multi-segment sends.
@@ -28,10 +29,12 @@
   CONNECT and HTTP/3 `:path` parsing changes). They alter request-target
   semantics and need a separate compatibility review against this fork's
   MASQUE request-template behavior.
-- This performance pass adds no unreviewed BBRv3 code to the fork. The current
-  fork still selects native CUBIC through the existing connection hook; a
-  future pluggable-controller change must be made and tested in the fork first,
-  then consumed by this repository at a published commit.
+- BBRv1 is an explicit experimental opt-in. Its MIT port is attributed to
+  `tdragoun/quic-go:bbr_v1` commit
+  `a07eb48492755adb24d4f278a92f5e054f1eccad` and checked against QUICHE
+  `66dea072431f94095dfc3dd2743cb94ef365f7ef`; no GPL Mihomo/MetaCubeX BBR
+  source is included. CUBIC remains production default until real WAN A/B
+  demonstrates acceptable throughput and loaded RTT.
 
 The current IETF CCWG BBRv3 document is `draft-ietf-ccwg-bbr-06` (Experimental,
 July 2026). It is treated as an algorithm specification reference, not as a
@@ -42,7 +45,7 @@ correct. No MetaCubeX/Mihomo BBR implementation is copied here.
 
 - Repository: `github.com/Piggy-Cat-bit-shadow/connect-ip-go`
 - Sync branch: `sync/connect-ip-v0.3.0`
-- Pinned commit: `1d40bb89500aef681a7b97d001ca021d2ecbece7`
+- Pinned commit: `6cde461225f7cffb95127ef9419b09baff3d444a`
 - License: MIT
 - Used interfaces: owned packet-buffer send and prefix-accepting batch send,
   borrowed packet-buffer receive, bounded DATAGRAM ownership, and CONNECT-IP

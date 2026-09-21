@@ -7,7 +7,7 @@ session NAT remains supported; IPv6 session NAT is intentionally rejected.
 |---|---|---|
 | CONNECT-IP RX/TX | bounded session queue, owned packet buffers, bounded drains | P0: retain ownership and map both families to one session |
 | CONNECT-UDP/TCP | implemented by connect-ip-go and QUIC | P2: no protocol rewrite without a measured defect |
-| DATAGRAM, CUBIC, pacing, loss | maintained quic-go fork with bounded queues and CUBIC | P2: observe with qlog/benchmarks; no BBR insertion |
+| DATAGRAM, congestion control, pacing, loss | maintained quic-go fork with bounded queues, production CUBIC, experimental BBRv1 | P2: retain CUBIC default; measure before any promotion |
 | TUN RX/TX, GSO/GRO | Linux offload already has IPv4/IPv6 flags; setup was IPv4-only | P0: configure both families; keep offload defaults unchanged |
 | Packet parser | IPv4-only source/destination/port helpers | P0: bounded IPv4/IPv6 parser with extension-header and fragment rules |
 | Session NAT | IPv4 shadow allocation and rewrite | P0: reject IPv6 + shadow mode; P1: design IPv6 NAT separately |

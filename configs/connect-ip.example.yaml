@@ -17,8 +17,8 @@ tls:
   key: /etc/jiejie-masque/connect-ip/server.key
 quic:
   stateless_reset_key_file: /var/lib/jiejie-masque-connect-ip/stateless-reset.key
-  # Field-tested WAN starting point. "default" remains the library fallback;
-  # cubic selects the native non-Reno CUBIC sender before data streams begin.
+  # Production default remains CUBIC. bbr is experimental; use only for
+  # controlled field comparison against CUBIC on the same real WAN path.
   congestion_controller: cubic
 host_network:
   # Optional; otherwise the default-route interface is detected.

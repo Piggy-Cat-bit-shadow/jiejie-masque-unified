@@ -11,8 +11,8 @@ ledger and does not preserve superseded release narratives.
 The main module must use the maintained forks below:
 
 ```text
-current connect-ip-go version: v0.0.0-20260920235011-1d40bb89500a
-current quic-go replacement version: v0.61.1-0.20260920234923-97d32595e581
+current connect-ip-go version: v0.0.0-20260921002806-6cde461225f7
+current quic-go replacement version: v0.61.1-0.20260921002656-ce9e71dbb523
 ```
 
 The replacement must remain explicit in `go.mod`. Run both

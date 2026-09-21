@@ -89,6 +89,21 @@ type AggregateRuntimeStats struct {
 	Connections                  uint64
 	CongestionController         string
 	CongestionState              string
+	BBRConnections               uint64
+	BBRMode                      string
+	BBRBandwidthEstimate         uint64        // sum of independent per-connection bit/s estimates
+	BBRMinRTT                    time.Duration // minimum non-zero connection estimate
+	BBRPacingGain                float64       // zero when active BBR connections disagree
+	BBRCwndGain                  float64       // zero when active BBR connections disagree
+	BBRGainsMixed                bool
+	BBRTargetCwnd                uint64 // sum of per-connection targets
+	BBRRoundTripCount            int64  // maximum across active BBR connections
+	BBRFullBandwidthReached      bool   // true if any active BBR sender reached full bandwidth
+	BBRRecoveryState             string
+	BBRAppLimited                bool   // true if any active BBR sender is app-limited
+	BBRAckAggregationHeight      uint64 // sum of per-connection heights
+	BBRProbeBWCycleIndex         int
+	BBRRecoveryWindow            uint64 // sum of per-connection recovery windows
 	CongestionWindows            uint64
 	BytesInFlight                uint64
 	PacingRate                   uint64
@@ -832,6 +847,39 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 			out.CongestionState = "mixed"
 		}
 		out.CongestionWindows += stats.CongestionWindow
+		if stats.CongestionController == "bbr" {
+			out.BBRConnections++
+			if out.BBRMode == "" {
+				out.BBRMode = stats.BBRMode
+			} else if out.BBRMode != stats.BBRMode {
+				out.BBRMode = "mixed"
+			}
+			out.BBRBandwidthEstimate += stats.BBRBandwidthEstimate
+			if stats.BBRMinRTT > 0 && (out.BBRMinRTT == 0 || stats.BBRMinRTT < out.BBRMinRTT) {
+				out.BBRMinRTT = stats.BBRMinRTT
+			}
+			if out.BBRPacingGain == 0 {
+				out.BBRPacingGain = stats.BBRPacingGain
+			} else if out.BBRPacingGain != stats.BBRPacingGain {
+				out.BBRGainsMixed = true
+			}
+			if out.BBRCwndGain == 0 {
+				out.BBRCwndGain = stats.BBRCwndGain
+			} else if out.BBRCwndGain != stats.BBRCwndGain {
+				out.BBRGainsMixed = true
+			}
+			out.BBRTargetCwnd += stats.BBRTargetCwnd
+			out.BBRRoundTripCount = max(out.BBRRoundTripCount, stats.BBRRoundTripCount)
+			out.BBRFullBandwidthReached = out.BBRFullBandwidthReached || stats.BBRFullBandwidthReached
+			if out.BBRRecoveryState == "" {
+				out.BBRRecoveryState = stats.BBRRecoveryState
+			} else if out.BBRRecoveryState != stats.BBRRecoveryState {
+				out.BBRRecoveryState = "mixed"
+			}
+			out.BBRAppLimited = out.BBRAppLimited || stats.BBRAppLimited
+			out.BBRAckAggregationHeight += stats.BBRAckAggregationHeight
+			out.BBRRecoveryWindow += stats.BBRRecoveryWindow
+		}
 		out.BytesInFlight += stats.BytesInFlight
 		out.PacingRate += stats.PacingRate
 		out.PacketsLost += stats.PacketsLost
@@ -928,6 +976,9 @@ func (m *Manager) AggregateRuntimeStats() AggregateRuntimeStats {
 		if stats.GSO {
 			out.GSOConnections++
 		}
+	}
+	if out.BBRGainsMixed {
+		out.BBRPacingGain, out.BBRCwndGain = 0, 0
 	}
 	m.runtimeStatsMu.Lock()
 	applyRuntimeCounterTotals(&out, m.runtimeTotals)

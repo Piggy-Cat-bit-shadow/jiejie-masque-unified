@@ -25,6 +25,8 @@ CONNECT-IP CC selector (once, ConnContext)
         |
         +-- cubic   -> pinned MetaCubeX native CUBIC sender
         |
+        +-- bbr     -> experimental BBRv1 (explicit opt-in only)
+        |
         v
 HTTP/3 control stream and CONNECT-IP data plane
 ```
@@ -34,37 +36,56 @@ HTTP/3 control stream and CONNECT-IP data plane
 `github.com/metacubex/quic-go` is replaced by
 `github.com/Piggy-Cat-bit-shadow/quic-go` commit
 `bc10ff1536061eeabfbb92aae28c4fae35377e7c`.
+The maintained fork is pinned at `ce9e71dbb523246036abadda35e84ce8df82b0eb`.
 It is based on canonical quic-go v0.62.0 commit
-`793f74d8e03368c5aded128af6f48d21dbb47f73`; the fork
-adds the project's DATAGRAM/ownership integration and selected congestion-control
-support, plus the
+`793f74d8e03368c5aded128af6f48d21dbb47f73`; the fork adds the project's
+DATAGRAM/ownership integration, CUBIC and experimental BBRv1 selection, and
 bounded DATAGRAM ownership, retained receive-buffer, and reusable borrowed
-parser paths used by this project. It does not change HTTP/3 wire behavior,
-ECN, GSO, PMTU, or loss-recovery policy. Both upstream and fork are MIT
-licensed.
+parser paths. BBR changes its per-connection congestion and pacing model only;
+it does not alter HTTP/3 wire behavior or QUIC loss-recovery policy. Both
+upstream and fork are MIT licensed.
 
-## BBR status
+## Experimental BBRv1 status
 
-BBR is deliberately not exposed in this MIT project build. The current
-MetaCubeX Mihomo source at `26c635f69bbe` selects its BBR implementation from
-`transport/tuic/congestion_v2` (`NewBbrSender`); that repository's `LICENSE`
-is GPL-3.0. The BBR-v1 source header identifies Google quiche commit
-`66dea072431f94095dfc3dd2743cb94ef365f7ef`; BBR-v2 identifies Google quiche
-commit `e7872fc9e12bb1d46a118949c3d4da36de58aa44`. Copying the resulting
-MetaCubeX GPL package into this MIT distribution is therefore not an acceptable
-route.
+`quic.congestion_controller: bbr` explicitly selects an experimental BBRv1
+sender for that connection. It is opt-in only; the production default remains
+`cubic`, with no automatic switching or fallback. This is a test candidate,
+not a claim that BBR is faster or production-ready. CUBIC and BBR real-WAN A/B
+results are still required before considering a default change.
 
-The other located candidate, `tdragoun/quic-go` branch `bbr_v1`
-(`a07eb48492755adb24d4f278a92f5e054f1eccad`), is an MIT-licensed proof of
-concept against an older, incompatible quic-go API. It requires porting its
-private congestion package and lifecycle wiring, so it is neither a maintained
-drop-in dependency nor a permissible "minimal native factory" patch. It is not
-included. `bbr` fails config validation explicitly rather than silently falling
-back to CUBIC; there is no BBR profile setting in this build. The IETF CCWG
-now has an Experimental BBRv3 draft (`draft-ietf-ccwg-bbr-06`, July 2026), but
-that does not make an unvalidated QUIC port production-ready. This project
-therefore keeps BBR out of the production build until pacing, loss, ECN,
-reordering, and WAN regression coverage exist.
+The implementation is a selective port/adaptation of
+`tdragoun/quic-go:bbr_v1` at
+`a07eb48492755adb24d4f278a92f5e054f1eccad`, licensed MIT. Its algorithm
+semantics were checked against Google QUICHE commit
+`66dea072431f94095dfc3dd2743cb94ef365f7ef` (`bbr_sender.cc`). The BBR source
+files retain explicit upstream/source attribution. No source was copied from
+MetaCubeX/Mihomo GPL congestion code. QUICHE is a semantic reference; this is
+not a direct C++ source translation.
+
+The port deliberately does not copy the PoC's `false &&` / `true ||` constant
+expressions. The former represented an optional app-limited-recovery branch
+disabled by default at the referenced QUICHE revision. The latter represented
+the default-off `quic_bbr_no_bytes_acked_in_startup_recovery` flag, so the
+effective default still permits ACK growth during STARTUP recovery. The
+recovery boundary was also corrected so ordinary ACKs do not keep moving it to
+the latest sent packet. QUIC loss detection, PTO, ECN validation, and packet
+reordering remain owned by quic-go; BBR consumes the resulting events only.
+
+BBR uses the same per-connection RTTStats object as loss detection, tracks only
+1-RTT packet-number state (the packet number spaces reuse numbers), and is
+recreated as BBR after path migration so its bandwidth/RTT model resets for the
+new path. It uses the shared pacer with its own gain-adjusted BBR rate (without
+CUBIC's additional 1.25 pacing factor). Runtime snapshots expose BBR mode,
+bandwidth estimate in bit/s, min RTT, gains, target CWND, round, full-bandwidth,
+recovery, and app-limited gauges. For multiple BBR connections, bandwidth and
+target CWND are summed, min RTT is the minimum non-zero value, round is the
+maximum, and mixed mode/recovery/gain states are labeled accordingly (mixed
+gains are reported as unavailable/zero).
+
+The implementation has unit, lifecycle, and deterministic synthetic WAN and
+two-flow fairness coverage. The local simulator is not a substitute for real
+high-RTT/mobile/reordered-path VPS A/B. Do not infer real-world throughput or
+bufferbloat behavior from these tests; keep CUBIC as production default.
 
 ## WAN queue / congestion findings
 
@@ -87,7 +108,7 @@ test path, use the existing reversible harness in a separate terminal:
 sudo scripts/benchmark-netem.sh eth0 150ms 0.5% 10ms
 ```
 
-For each `default` and `cubic`, restart only CONNECT-IP after changing
+For each `default`, `cubic`, and experimental `bbr`, restart only CONNECT-IP after changing
 `quic.congestion_controller`, then collect the same short transfer plus 100 MB
 and 500 MB downloads from Mihomo. Repeat at 50/100/150/200 ms and 0/0.1/0.5/1%
 loss. Record throughput, ramp-up time, loaded/p95 RTT, loss recovery, and CPU.
@@ -96,7 +117,8 @@ by this repository. A field observation recorded about 33 Mbps with
 `default + queue=256`, frequent Session queue overflow, and about 45 Mbps with
 `cubic + queue=1024`. That is evidence for a starting production profile, not a
 universal guarantee: use `cubic + 1024` for new WAN deployments, then A/B
-against `default + 256`, `cubic + 256`, `cubic + 512`, `cubic + 2048` on the
+against `default + 256`, `cubic + 256`, `cubic + 512`, `cubic + 2048`, and
+experimental `bbr + 1024` on the
 actual path. Keep the queue bounded; 1024 at MTU 1280 is about 1.25 MiB per
 session and 2048 is about 2.5 MiB.
 
