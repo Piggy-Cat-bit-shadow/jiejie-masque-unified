@@ -337,7 +337,7 @@ func containsPrefix(a config.TunnelAddresses, ip netip.Addr) bool {
 }
 func protocolForParse(protocol string) (string, bool) {
 	switch protocol {
-	case "connect-ip":
+	case "connect-ip", "cf-connect-ip":
 		return "connect-ip", true
 	default:
 		return "", false

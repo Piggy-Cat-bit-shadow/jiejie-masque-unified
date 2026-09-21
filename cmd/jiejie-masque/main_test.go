@@ -35,3 +35,23 @@ func TestRequestTemplateRejectsMalformedAuthority(t *testing.T) {
 		t.Fatalf("valid authority rejected: %v", err)
 	}
 }
+
+func TestProtocolForParse(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol string
+		want     string
+		ok       bool
+	}{
+		{name: "connect-ip", protocol: "connect-ip", want: "connect-ip", ok: true},
+		{name: "cf-connect-ip", protocol: "cf-connect-ip", want: "connect-ip", ok: true},
+		{name: "unsupported", protocol: "other", ok: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := protocolForParse(test.protocol)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("protocolForParse(%q) = (%q, %t), want (%q, %t)", test.protocol, got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
