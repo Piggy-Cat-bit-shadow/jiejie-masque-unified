@@ -76,12 +76,12 @@ if [[ $v6_route != *"dev js6${suffix}"* ]]; then
   echo "dual-stack netns: IPv6 route lookup unexpected: $v6_route" >&2
   exit 1
 fi
-if ! ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.2 >/dev/null; then
-  echo 'dual-stack netns: IPv4 synthetic egress ping failed' >&2
+if ! v4_ping=$(ip netns exec "$server" ping -n -c 1 -W 2 -I 10.200.0.2 198.18.4.2 2>&1); then
+  echo "dual-stack netns: IPv4 synthetic egress ping failed: $v4_ping" >&2
   exit 1
 fi
-if ! ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 >/dev/null; then
-  echo 'dual-stack netns: IPv6 synthetic egress ping failed' >&2
+if ! v6_ping=$(ip netns exec "$server" ping -6 -n -c 1 -W 2 -I 2001:db8:200::2 2001:db8:6::2 2>&1); then
+  echo "dual-stack netns: IPv6 synthetic egress ping failed: $v6_ping" >&2
   exit 1
 fi
 if ! ip -n "$server" -6 addr show dev masque0 | grep -F 'fd00:200::1/128' >/dev/null; then
