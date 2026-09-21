@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.8
 
 require (
+	github.com/metacubex/http v0.1.7
 	github.com/metacubex/quic-go v0.61.1-0.20260921033412-327d53433eaf
 	github.com/metacubex/tls v0.1.8
 	github.com/yosida95/uritemplate/v3 v3.0.2
@@ -13,7 +14,6 @@ require (
 )
 
 require (
-	github.com/metacubex/http v0.1.7 // indirect
 	github.com/metacubex/qpack v0.6.0 // indirect
 	github.com/metacubex/randv2 v0.2.0 // indirect
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e // indirect
@@ -21,7 +21,7 @@ require (
 
 // Keep the upstream module paths and HTTP/3 API while consuming the clean
 // project-maintained candidates for the minimal BBR/runtime port.
-replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921033552-d8f5ba022f1e
+replace github.com/metacubex/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260921033957-4587e96afa35
 
 require (
 	github.com/dunglas/httpsfv v1.1.1 // indirect
