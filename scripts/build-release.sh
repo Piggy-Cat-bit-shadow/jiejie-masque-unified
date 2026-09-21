@@ -27,8 +27,8 @@ pseudo_commit() {
 }
 connect_module_sha=$(pseudo_commit "$connect_version")
 quic_module_sha=$(pseudo_commit "$quic_version")
-connect_commit=$(awk -F'`' '/^## connect-ip-go/{fork=1; next} /^## /&&fork{exit} fork&&/Pinned commit:/{print $2; exit}' docs/FORKS.md)
-quic_commit=$(awk -F'`' '/^## quic-go/{fork=1; next} /^## /&&fork{exit} fork&&/Pinned commit:/{print $2; exit}' docs/FORKS.md)
+connect_commit=$connect_module_sha
+quic_commit=$quic_module_sha
 test "${connect_commit:0:12}" = "$connect_module_sha"
 test "${quic_commit:0:12}" = "$quic_module_sha"
 
