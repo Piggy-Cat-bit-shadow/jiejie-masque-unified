@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.8
 
 require (
-	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921030659-43c4ae5f3722
+	github.com/Piggy-Cat-bit-shadow/connect-ip-go v0.0.0-20260921032013-13e480e35ff7
 	github.com/metacubex/quic-go v0.61.1-0.20260921003739-655218e5a172
 	github.com/metacubex/tls v0.1.8
 	github.com/yosida95/uritemplate/v3 v3.0.2
