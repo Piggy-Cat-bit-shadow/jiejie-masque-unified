@@ -22,12 +22,9 @@ import (
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/auth"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/dnsgateway"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/hostnet"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/packet"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/quicstate"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/session"
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/tunnel"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/notify"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
 	"github.com/yosida95/uritemplate/v3"
@@ -73,13 +70,6 @@ func serveConnectIPArgs(args []string) error {
 	}
 	log.Printf("build provenance main_commit=%s connect_ip_go_commit=%s quic_go_commit=%s build_time=%s go_version=%s", commit, connectIPGoCommit, quicGoCommit, buildTime, runtime.Version())
 	serverAddresses, err := c.ServerAddresses()
-	if err != nil {
-		return err
-	}
-	if err := hostnet.CheckForwarding(serverAddresses.Prefixes()); err != nil {
-		return err
-	}
-	resetKey, err := quicstate.LoadOrCreate(c.QUIC.StatelessResetKeyFile)
 	if err != nil {
 		return err
 	}
@@ -133,62 +123,17 @@ func serveConnectIPArgs(args []string) error {
 		return err
 	}
 	defer packetConn.Close()
-	var preSocketBuffers socketBufferSizes
-	if buffers, berr := readSocketBufferSizes(packetConn); berr != nil {
-		log.Printf("CONNECT-IP UDP socket buffers unavailable: %v", berr)
-	} else {
-		preSocketBuffers = buffers
-		log.Printf("CONNECT-IP UDP socket buffers before quic-go tuning: rcv=%d send=%d bytes", buffers.Receive, buffers.Send)
-	}
 	mgr := session.NewManager(len(clients))
-	packetPool := session.NewPacketPool(tunnelMTU)
 	fatal := make(chan error, 2)
-	go tunDispatcher(tun, mgr, packetPool, fatal)
+	go tunDispatcher(tun, mgr, fatal)
 	qc := &quic.Config{EnableDatagrams: true, HandshakeIdleTimeout: 10 * time.Second, MaxIdleTimeout: 2 * time.Minute, KeepAlivePeriod: 15 * time.Second, MaxIncomingStreams: 1}
-	transport := &quic.Transport{Conn: packetConn, StatelessResetKey: &resetKey}
+	transport := &quic.Transport{Conn: packetConn}
 	ql, err := transport.Listen(http3.ConfigureTLSConfig(tc), qc)
 	if err != nil {
 		return err
 	}
-	if postSocketBuffers, berr := readSocketBufferSizes(packetConn); berr != nil {
-		log.Printf("CONNECT-IP UDP socket buffers after quic-go tuning unavailable: %v", berr)
-	} else {
-		log.Printf("%s", formatSocketBufferLog(preSocketBuffers, postSocketBuffers, 7340032))
-	}
 	defer ql.Close()
 	defer transport.Close()
-	externalIPv4, externalIPv6 := c.HostNetwork.ExternalInterfaceIPv4, c.HostNetwork.ExternalInterfaceIPv6
-	if externalIPv4 == "" {
-		externalIPv4 = c.HostNetwork.ExternalInterface
-	}
-	if externalIPv6 == "" {
-		externalIPv6 = c.HostNetwork.ExternalInterface
-	}
-	if serverAddresses.IPv4.IsValid() && externalIPv4 == "" {
-		externalIPv4, err = hostnet.DefaultExternalInterface4()
-		if err != nil {
-			return fmt.Errorf("detect IPv4 external interface: %w", err)
-		}
-	}
-	if serverAddresses.IPv6.IsValid() && c.Server.AdvertiseIPv6DefaultRoute && externalIPv6 == "" {
-		externalIPv6, err = hostnet.DefaultExternalInterface6()
-		if err != nil {
-			return fmt.Errorf("detect IPv6 external interface: %w", err)
-		}
-	}
-	probe := hostnet.Probe{
-		TunnelName: "masque0", TunnelPrefix: firstPrefix(serverAddresses), TunnelPrefixes: serverAddresses.Prefixes(), TunnelMTU: tunnelMTU,
-		ExternalInterfaceIPv4: externalIPv4,
-		ExternalInterfaceIPv6: externalIPv6,
-		TunnelCheck:           tunnel.CheckInterface,
-		ForwardingCheck:       func() error { return hostnet.CheckForwarding(serverAddresses.Prefixes()) },
-		NATCheck:              hostnet.CheckNAT,
-		IPv6EgressCheck:       hostnet.CheckIPv6Egress,
-		RequireIPv6Egress:     c.Server.AdvertiseIPv6DefaultRoute,
-	}
-	if err := probe.Check(); err != nil {
-		return fmt.Errorf("data-plane unhealthy: %w", err)
-	}
 	log.Printf("CONNECT-IP QUIC congestion controller: %s", c.QUIC.CongestionController)
 	if serverAddresses.IPv6.IsValid() && !c.Server.AdvertiseIPv6DefaultRoute {
 		log.Printf("IPv6 egress note: routed public egress is not advertised; ULA is suitable only for tunnel-local services, provider prefix routing is not verified locally")
@@ -197,16 +142,13 @@ func serveConnectIPArgs(args []string) error {
 		log.Printf("IPv6 egress warning: server tunnel is configured as a single /128; a routed client prefix/provider return path is not established")
 	}
 	s := &http3.Server{TLSConfig: tc, QUICConfig: qc, EnableDatagrams: true, ConnContext: connectIPConnContext(c.QUIC.CongestionController), Handler: stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		handleRequest(w, r, c, serverAddresses, byKey, mgr, tun, packetPool)
+		handleRequest(w, r, c, serverAddresses, byKey, mgr, tun)
 	})}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.ServeListener(ql) }()
 	appCtx, stopDiagnostics := context.WithCancel(context.Background())
 	defer stopDiagnostics()
 	go connectIPDiagnostics(appCtx, mgr, tun)
-	if err := notify.Send("READY=1"); err != nil {
-		log.Printf("systemd notify failed: %v", err)
-	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -284,7 +226,7 @@ func isServerClosed(err error) bool {
 	return errors.Is(err, stdhttp.ErrServerClosed) || errors.Is(err, quic.ErrServerClosed) || errors.Is(err, net.ErrClosed)
 }
 
-func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, serverAddresses config.TunnelAddresses, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device, packetPool *session.PacketPool) {
+func handleRequest(w stdhttp.ResponseWriter, r *stdhttp.Request, c config.Config, serverAddresses config.TunnelAddresses, byKey map[string]config.ResolvedClient, mgr *session.Manager, tun *tunnel.Device) {
 	parseProtocol, ok := protocolForParse(r.Proto)
 	if !ok {
 		log.Printf("CONNECT-IP rejected: unsupported protocol %q", r.Proto)
@@ -390,23 +332,28 @@ type tunPacketDevice interface {
 	tunPacketWriter
 }
 
-func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, pool *session.PacketPool, fatal chan<- error) {
-	tunDispatcherReadLoop(tun, mgr, pool, fatal)
+func tunDispatcher(tun *tunnel.Device, mgr *session.Manager, fatal chan<- error) {
+	buf := make([]byte, tunnelMTU)
+	for {
+		n, err := tun.Read(buf)
+		if err != nil {
+			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
+			return
+		}
+		dispatchTUNPacket(buf[:n], mgr, tun)
+	}
 }
 
-func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, pool *session.PacketPool, tun tunPacketWriter) {
-	dst, ok := packet.Destination(pkt.Data)
+func dispatchTUNPacket(data []byte, mgr *session.Manager, tun tunPacketWriter) {
+	dst, ok := packet.Destination(data)
 	if !ok {
-		pool.Put(pkt)
 		return
 	}
 	s := mgr.Lookup(dst)
 	if s == nil {
-		pool.Put(pkt)
 		return
 	}
-	icmp, err := s.Conn.WritePacketBufferOwned(pkt.Buffer, session.PacketPoolHeadroom, len(pkt.Data), pkt)
-	// The pinned owned API consumes the owner on every return path.
+	icmp, err := s.Conn.WritePacket(data)
 	if len(icmp) != 0 {
 		if _, writeErr := tun.Write(icmp); writeErr != nil {
 			s.SetCloseReason("icmp-write-error")
@@ -419,32 +366,16 @@ func dispatchTUNPacket(pkt *session.PacketBuffer, mgr *session.Manager, pool *se
 			return
 		}
 		s.SetCloseReason("write-error")
-		log.Printf("session=%d packet write failed: %v", s.ID, err)
+		log.Printf("CONNECT-IP packet write failed: %v", err)
 		s.Close()
 		return
 	}
 }
 
-func tunDispatcherReadLoop(tun tunPacketDevice, mgr *session.Manager, pool *session.PacketPool, fatal chan<- error) {
-	for {
-		pkt := pool.AcquireForRead()
-		n, err := tun.Read(pkt.Data)
-		if err != nil {
-			pool.Put(pkt)
-			fatal <- fmt.Errorf("TUN dispatcher: %w", err)
-			return
-		}
-		if !pool.CommitRead(pkt, n) {
-			pool.Put(pkt)
-			continue
-		}
-		dispatchTUNPacket(pkt, mgr, pool, tun)
-	}
-}
-
 func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverAddresses config.TunnelAddresses, dnsEnabled bool, dnsPort uint16) {
+	buf := make([]byte, tunnelMTU)
 	for s.Ctx.Err() == nil {
-		owned, err := s.Conn.ReadPacketBuffer()
+		n, err := s.Conn.ReadPacket(buf)
 		if err != nil {
 			if normalSessionError(err, s.Ctx) {
 				return
@@ -454,19 +385,16 @@ func sessionReaderWithAddresses(s *session.Session, tun tunPacketWriter, serverA
 			s.Close()
 			return
 		}
-		pkt := owned.Data
+		pkt := buf[:n]
 		if !prepareSessionPacket(pkt, s, serverAddresses, dnsEnabled, dnsPort) {
-			owned.Release()
 			continue
 		}
 		if _, err = tun.Write(pkt); err != nil {
-			owned.Release()
 			s.SetCloseReason("tun-write-error")
 			log.Printf("session=%d TUN write failed: %v", s.ID, err)
 			s.Close()
 			return
 		}
-		owned.Release()
 	}
 }
 

@@ -19,17 +19,16 @@ CUBIC/实验性 BBR 控制器，以及 QUIC 外层 UDP GSO。
 ```bash
 go build ./cmd/jiejie-masque
 ./jiejie-masque check-config --config configs/connect-ip.example.yaml
-./jiejie-masque doctor --config configs/connect-ip.example.yaml
 ./jiejie-masque serve --config /etc/jiejie-masque/connect-ip.yaml
 ```
 
-保留的命令是 `serve`、`check-config`、`doctor`、`mihomo-config`、`keygen`、
-`server-keygen` 和 `version`。network prepare helper 通过
-`network-prepare-info` 读取配置，避免 shell 解析 YAML。
+保留的命令是 `serve`、`check-config`、`mihomo-config`、`keygen`、
+`server-keygen` 和 `version`。网络/NAT/sysctl 配置由部署系统负责，不由服务
+进程动态修改。
 
 主项目依赖固定到维护 fork 的 pseudo-version；生产默认 congestion controller
 仍是 CUBIC。任何 BBR、PMTU 或其他传输实验都必须独立 benchmark，并且不会因
 默认配置缺省而自动启用。
 
-systemd 单元位于 `contrib/jiejie-masque-connect-ip.service`，启动顺序是
-`check-config`、network prepare、服务本身；停止超时为 5 秒。
+systemd 单元位于 `contrib/jiejie-masque-connect-ip.service`，服务使用
+`Type=simple`，停止超时为 5 秒。

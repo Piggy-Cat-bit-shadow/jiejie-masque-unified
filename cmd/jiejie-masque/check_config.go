@@ -9,16 +9,12 @@ import (
 	"os"
 
 	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/quicstate"
 	"github.com/metacubex/tls"
 )
 
 func checkConfig(path string) error {
 	c, err := config.Load(path)
 	if err != nil {
-		return err
-	}
-	if err := quicstate.ValidateExisting(c.QUIC.StatelessResetKeyFile); err != nil {
 		return err
 	}
 	pair, err := tls.LoadX509KeyPair(c.TLS.Cert, c.TLS.Key)

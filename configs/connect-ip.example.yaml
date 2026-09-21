@@ -5,16 +5,9 @@ tls:
   cert: /etc/jiejie-masque/connect-ip/server.crt
   key: /etc/jiejie-masque/connect-ip/server.key
 quic:
-  stateless_reset_key_file: /var/lib/jiejie-masque-connect-ip/stateless-reset.key
   # Production default remains CUBIC. bbr is experimental; use only for
   # controlled field comparison against CUBIC on the same real WAN path.
   congestion_controller: cubic
-host_network:
-  # Legacy override applies to both families. Otherwise each active family is detected independently.
-  external_interface: eth0
-  # Optional overrides when IPv4 and IPv6 leave through different WAN interfaces.
-  # external_interface_ipv4: eth0
-  # external_interface_ipv6: eth1
 client:
   # Example-only public key; replace it with the client's raw P-256 public key.
   public_keys: [BIU3CobtJ5y6P+wvKc7M1XBfS5FhcvLeVkPhObW4s5QY4UvNYuKxtYrZF+4eCxv2AW4OmvowLmN1v6CQVsJ+f9M=]

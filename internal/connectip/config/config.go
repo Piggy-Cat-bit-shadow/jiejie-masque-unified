@@ -12,29 +12,17 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const (
-	ConnectIPStateDirectory      = "jiejie-masque-connect-ip"
-	DefaultStatelessResetKeyFile = "/var/lib/" + ConnectIPStateDirectory + "/stateless-reset.key"
-)
-
 type Config struct {
-	Listen      string      `yaml:"listen"`
-	TLS         TLS         `yaml:"tls"`
-	QUIC        QUIC        `yaml:"quic"`
-	HostNetwork HostNetwork `yaml:"host_network,omitempty"`
-	Client      Client      `yaml:"client"`
-	Clients     []Client    `yaml:"clients,omitempty"`
-	Server      Server      `yaml:"server"`
-	DNSGateway  DNSGateway  `yaml:"dns_gateway,omitempty"`
+	Listen     string     `yaml:"listen"`
+	TLS        TLS        `yaml:"tls"`
+	QUIC       QUIC       `yaml:"quic"`
+	Client     Client     `yaml:"client"`
+	Clients    []Client   `yaml:"clients,omitempty"`
+	Server     Server     `yaml:"server"`
+	DNSGateway DNSGateway `yaml:"dns_gateway,omitempty"`
 }
 type QUIC struct {
-	StatelessResetKeyFile string `yaml:"stateless_reset_key_file"`
-	CongestionController  string `yaml:"congestion_controller"`
-}
-type HostNetwork struct {
-	ExternalInterface     string `yaml:"external_interface"`
-	ExternalInterfaceIPv4 string `yaml:"external_interface_ipv4,omitempty"`
-	ExternalInterfaceIPv6 string `yaml:"external_interface_ipv6,omitempty"`
+	CongestionController string `yaml:"congestion_controller"`
 }
 type TLS struct {
 	Cert string `yaml:"cert"`
@@ -174,9 +162,6 @@ func Load(path string) (Config, error) {
 			e = fmt.Errorf("multiple YAML documents are not allowed")
 		}
 		return c, e
-	}
-	if c.QUIC.StatelessResetKeyFile == "" {
-		c.QUIC.StatelessResetKeyFile = DefaultStatelessResetKeyFile
 	}
 	if c.QUIC.CongestionController == "" {
 		c.QUIC.CongestionController = "cubic"

@@ -5,19 +5,15 @@ import (
 	"net/netip"
 	"testing"
 
-	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/metacubex/quic-go"
 )
 
 type lookupBenchConn struct{}
 
-func (lookupBenchConn) ReadPacketBuffer() (*connectip.PacketBuffer, error)    { return nil, nil }
-func (lookupBenchConn) TryReadPacketBuffer() (*connectip.PacketBuffer, error) { return nil, nil }
-func (lookupBenchConn) WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error) {
-	return nil, nil
-}
-func (lookupBenchConn) RuntimeStats() quic.RuntimeStats { return quic.RuntimeStats{} }
-func (lookupBenchConn) Close() error                    { return nil }
+func (lookupBenchConn) ReadPacket([]byte) (int, error)     { return 0, nil }
+func (lookupBenchConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
+func (lookupBenchConn) RuntimeStats() quic.RuntimeStats    { return quic.RuntimeStats{} }
+func (lookupBenchConn) Close() error                       { return nil }
 
 func BenchmarkManagerLookup(b *testing.B) {
 	m := NewManager()

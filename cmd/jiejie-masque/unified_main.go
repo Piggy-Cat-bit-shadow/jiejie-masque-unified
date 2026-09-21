@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-
-	"github.com/Piggy-Cat-bit-shadow/jiejie-masque-unified/internal/connectip/config"
 )
 
 var version = "dev"
@@ -43,41 +41,8 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "network-prepare-info" {
-		fs := flag.NewFlagSet("network-prepare-info", flag.ContinueOnError)
-		path := fs.String("config", "", "configuration file")
-		field := fs.String("field", "", "field to output: tunnel-prefix, tunnel-address, tunnel-network, dns-port, or external-interface")
-		if err := fs.Parse(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		if *path == "" {
-			log.Fatal("--config is required")
-		}
-		if err := networkPrepareInfo(os.Stdout, *path, *field); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "doctor" {
-		fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-		path := fs.String("config", "", "configuration file")
-		if err := fs.Parse(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		if *path == "" {
-			log.Fatal("--config is required")
-		}
-		c, err := config.Load(*path)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if runDoctor(os.Stdout, c, defaultDoctorRuntime()) {
-			os.Exit(1)
-		}
-		return
-	}
 	if len(os.Args) < 2 {
-		log.Fatal("usage: jiejie-masque serve|check-config|doctor|mihomo-config|network-prepare-info --config PATH")
+		log.Fatal("usage: jiejie-masque serve|check-config|mihomo-config --config PATH")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	path := fs.String("config", "", "configuration file")

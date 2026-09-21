@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/metacubex/quic-go"
 )
 
@@ -16,18 +15,8 @@ type managerTestConn struct {
 	closed bool
 }
 
-func (c *managerTestConn) ReadPacketBuffer() (*connectip.PacketBuffer, error) {
-	return nil, context.Canceled
-}
-func (c *managerTestConn) TryReadPacketBuffer() (*connectip.PacketBuffer, error) {
-	return nil, context.Canceled
-}
-func (c *managerTestConn) WritePacketBufferOwned(_ []byte, _, _ int, owner connectip.PacketPayloadOwner) ([]byte, error) {
-	if owner != nil {
-		owner.Release()
-	}
-	return nil, nil
-}
+func (c *managerTestConn) ReadPacket([]byte) (int, error)     { return 0, context.Canceled }
+func (c *managerTestConn) WritePacket([]byte) ([]byte, error) { return nil, nil }
 func (c *managerTestConn) RuntimeStats() quic.RuntimeStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()

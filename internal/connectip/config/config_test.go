@@ -4,8 +4,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -40,9 +38,6 @@ func TestLoadDefaultsAndRetiredFields(t *testing.T) {
 	if c.QUIC.CongestionController != "cubic" {
 		t.Fatalf("unexpected lean defaults: %+v", c)
 	}
-	if c.QUIC.StatelessResetKeyFile != DefaultStatelessResetKeyFile {
-		t.Fatalf("reset key default=%q", c.QUIC.StatelessResetKeyFile)
-	}
 	for _, field := range []string{"  outbound_queue_size: 1024\n", "  session_nat:\n    enabled: true\n", "diagnostics:\n  pipeline:\n    enabled: true\n"} {
 		if err := os.WriteFile(path, []byte(base+field), 0600); err != nil {
 			t.Fatal(err)
@@ -50,27 +45,6 @@ func TestLoadDefaultsAndRetiredFields(t *testing.T) {
 		if _, err := Load(path); err == nil {
 			t.Fatalf("retired field accepted: %q", field)
 		}
-	}
-}
-
-func TestDefaultStatelessResetKeyMatchesPackagedStateDirectory(t *testing.T) {
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	unit, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../contrib/jiejie-masque-connect-ip.service"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	for _, line := range strings.Split(string(unit), "\n") {
-		if strings.HasPrefix(line, "StateDirectory=") {
-			state = strings.TrimSpace(strings.TrimPrefix(line, "StateDirectory="))
-			break
-		}
-	}
-	if state != ConnectIPStateDirectory || DefaultStatelessResetKeyFile != filepath.Join("/var/lib", state, "stateless-reset.key") {
-		t.Fatalf("state=%q reset=%q", state, DefaultStatelessResetKeyFile)
 	}
 }
 

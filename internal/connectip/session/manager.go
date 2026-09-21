@@ -8,16 +8,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	connectip "github.com/Piggy-Cat-bit-shadow/connect-ip-go"
 	"github.com/metacubex/quic-go"
 )
 
-// PacketConn is the pinned CONNECT-IP API used by the lean server datapath.
-// Owned writes block on transport backpressure and consume the packet owner on
-// every return path; reads return buffers that the caller must Release.
+// PacketConn is the small CONNECT-IP API used by the server datapath. The
+// transport copies or consumes each payload before the call returns.
 type PacketConn interface {
-	ReadPacketBuffer() (*connectip.PacketBuffer, error)
-	WritePacketBufferOwned([]byte, int, int, connectip.PacketPayloadOwner) ([]byte, error)
+	ReadPacket([]byte) (int, error)
+	WritePacket([]byte) ([]byte, error)
 	RuntimeStats() quic.RuntimeStats
 	Close() error
 }
