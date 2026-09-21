@@ -48,7 +48,8 @@ func TestConfigureIPv6AddressReportsTimeout(t *testing.T) {
 		if time.Until(deadline) > 2*time.Second {
 			t.Fatal("timeout exceeds two seconds")
 		}
-		return nil, context.DeadlineExceeded
+		<-ctx.Done()
+		return nil, ctx.Err()
 	})
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("error = %v", err)
